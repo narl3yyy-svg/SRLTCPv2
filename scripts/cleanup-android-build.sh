@@ -6,29 +6,51 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ANDROID_DIR="$ROOT_DIR/android"
 DIST_DIR="$ROOT_DIR/dist"
+VERSION="0.2.1"
+APK_NAME="SRLTCPv2-v${VERSION}-debug.apk"
+
+FULL_CLEAN=false
+for arg in "$@"; do
+    case "$arg" in
+        --full) FULL_CLEAN=true ;;
+    esac
+done
 
 BLUE='\033[0;34m'
 GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
 NC='\033[0m'
 
 log() { echo -e "${BLUE}[cleanup-android]${NC} $*"; }
 ok()  { echo -e "${GREEN}[cleanup-android]${NC} $*"; }
+warn() { echo -e "${YELLOW}[cleanup-android]${NC} $*"; }
 
 log "Cleaning Android build artifacts..."
 
-# Preserve APK in dist/ if present
+# Preserve APK in dist/ if present in build output
 if [[ -f "$ANDROID_DIR/app/build/outputs/apk/debug/app-debug.apk" ]]; then
     mkdir -p "$DIST_DIR"
     cp -f "$ANDROID_DIR/app/build/outputs/apk/debug/app-debug.apk" \
-        "$DIST_DIR/SRLTCPv2-v0.2.1-debug.apk"
-    ok "APK preserved at dist/SRLTCPv2-v0.2.1-debug.apk"
+        "$DIST_DIR/$APK_NAME"
+    ok "APK preserved at dist/$APK_NAME"
+elif [[ -f "$DIST_DIR/$APK_NAME" ]]; then
+    ok "APK already in dist/$APK_NAME"
+else
+    warn "No APK found to preserve"
 fi
 
-# Remove large Gradle/R build directories
+# Remove Gradle build caches
 rm -rf "$ANDROID_DIR/app/build"
 rm -rf "$ANDROID_DIR/.gradle"
 rm -rf "$ANDROID_DIR/build"
 
 ok "Removed android/app/build, android/.gradle, android/build"
-log "Native libs (jniLibs/) and source are kept for incremental rebuilds."
-log "Run scripts/build-android.sh to rebuild from scratch."
+
+if [[ "$FULL_CLEAN" == true ]]; then
+    rm -rf "$ANDROID_DIR/app/src/main/jniLibs"
+    rm -rf "$ANDROID_DIR/app/src/main/java/uniffi"
+    warn "Removed jniLibs/ and UniFFI bindings (--full)"
+fi
+
+log "Kept: source code, gradle wrapper, jniLibs/ (unless --full)"
+log "Rebuild: ./scripts/build-android.sh  |  APK only: ./scripts/assemble-apk.sh"

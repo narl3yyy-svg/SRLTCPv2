@@ -1,133 +1,110 @@
-# Build Instructions
-
-Building SRLTCP v0.2.1 on all platforms.
+# Build Instructions — SRLTCP v0.2.1
 
 ## Prerequisites
 
-### All Platforms
+| Component | Requirement |
+|-----------|-------------|
+| Rust | 1.85+ (auto-installed by `run.sh`) |
+| Desktop Linux | `webkit2gtk-4.1`, `gtk3`, `base-devel` |
+| Android SDK | API 35 (`sdkmanager "platforms;android-35"`) |
+| Android NDK | r27+ (`sdkmanager "ndk;27.2.12479018"`) |
+| JDK | **17 only** — JDK 21+ breaks Gradle |
+| cargo-ndk | `cargo install cargo-ndk` |
 
-- **Rust** 1.85+ (installed automatically by `run.sh` / `run.bat`)
-- **Git**
-
-### Desktop (Tauri v2)
-
-| Platform | Additional Dependencies |
-|----------|------------------------|
-| **Linux (Arch)** | `sudo pacman -S base-devel webkit2gtk-4.1 gtk3` |
-| **Linux (Debian/Ubuntu)** | `sudo apt install build-essential libwebkit2gtk-4.1-dev libgtk-3-dev` |
-| **macOS** | Xcode Command Line Tools |
-| **Windows** | Visual Studio Build Tools, WebView2 |
-
-### Android
-
-- **Android SDK** API 35
-- **NDK** r27+ (`sdkmanager "ndk;27.2.12479018"`)
-- **JDK 17** (required — JDK 21+ breaks Gradle)
-- **cargo-ndk**: `cargo install cargo-ndk`
-
-## Quick Build (Desktop)
+## Desktop
 
 ```bash
-./run.sh          # Linux/macOS
-run.bat           # Windows
+./run.sh                              # Build (first run) + launch
+cargo build --release -p srltcp-desktop   # Manual rebuild
 ```
 
-Manual build:
+Ctrl+C triggers graceful shutdown (releases serial ports and QUIC).
 
-```bash
-cargo build --release -p srltcp-desktop
-./target/release/srltcp-desktop
-```
+## Android — Recommended
 
-Press **Ctrl+C** for graceful shutdown.
-
-## Android Build (Recommended)
+### Full build (first time or after `git clone`)
 
 ```bash
 ./scripts/build-android.sh
 ```
 
-This pipeline:
+This script:
+1. Auto-detects JDK 17, Android SDK, and NDK
+2. Cross-compiles `libsrltcp_core.so` for 3 ABIs
+3. Generates UniFFI Kotlin bindings
+4. Runs `./gradlew assembleDebug`
+5. Copies APK to `dist/SRLTCPv2-v0.2.1-debug.apk`
+6. Cleans Gradle caches automatically
 
-1. Cross-compiles `libsrltcp_core.so` for arm64, armeabi-v7a, x86_64
-2. Generates UniFFI Kotlin bindings
-3. Builds debug APK with Gradle (Compose BOM `2024.10.01`)
-4. Copies APK to `dist/SRLTCPv2-v0.2.1-debug.apk`
-5. Runs `scripts/cleanup-android-build.sh` automatically
+### APK only (jniLibs already built)
 
-Install:
+```bash
+./scripts/assemble-apk.sh
+# equivalent to: ./scripts/build-android.sh --apk-only
+```
+
+### Manual Gradle (developers)
+
+```bash
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk   # REQUIRED
+cd android
+./gradlew assembleDebug
+```
+
+### Install
 
 ```bash
 adb install dist/SRLTCPv2-v0.2.1-debug.apk
 ```
 
-### Manual Android Build
+## Cleanup
 
 ```bash
-export ANDROID_NDK_HOME=$HOME/Android/Sdk/ndk/27.2.12479018
-export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
-
-cd core
-cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 \
-    -o ../android/app/src/main/jniLibs build --release
-
-cargo run --release --bin uniffi-bindgen -- generate \
-    --language kotlin --out-dir ../android/app/src/main/java src/srltcp_core.udl
-
-cd ../android
-echo "sdk.dir=$HOME/Android/Sdk" > local.properties
-./gradlew assembleDebug
-```
-
-### Android Build Cleanup
-
-After building, remove Gradle caches (APK is preserved in `dist/`):
-
-```bash
+# After every APK build (automatic in build-android.sh):
 ./scripts/cleanup-android-build.sh
-# or
+
+# Also from root cleanup:
 ./cleanup.sh --android-build
+
+# Nuclear — remove native libs too (forces full rebuild):
+./scripts/cleanup-android-build.sh --full
 ```
 
 Removes: `android/app/build/`, `android/.gradle/`, `android/build/`
+Keeps: `dist/*.apk`, source, `jniLibs/` (unless `--full`)
 
-## GitHub Release v0.2.1
+## GitHub Release
 
 ```bash
-# 1. Build everything
-cargo build --release -p srltcp-desktop
 ./scripts/build-android.sh
-
-# 2. Commit, tag, and publish release with APK
-git add -A && git commit -m "Release v0.2.1"
-./scripts/create-github-release.sh
+git add -A && git commit -m "Release v0.2.2"
+./scripts/create-github-release.sh    # edit VERSION in script first
 ```
 
 Or manually:
 
 ```bash
 git tag -a v0.2.1 -m "SRLTCP v0.2.1"
-git push origin main && git push origin v0.2.1
-gh release create v0.2.1 \
-  --title "SRLTCP v0.2.1" \
-  --notes "Release notes here" \
-  dist/SRLTCPv2-v0.2.1-debug.apk
+git push origin main --tags
+gh release create v0.2.1 dist/SRLTCPv2-v0.2.1-debug.apk
 ```
 
-## Workspace Commands
+## Rust Core
 
 ```bash
-cargo check -p srltcp-core
-cargo test -p srltcp-core
-cargo build --release -p srltcp-desktop
+cargo check -p srltcp-core       # Fast check
+cargo test -p srltcp-core        # Run tests
+cargo build -p srltcp-core       # Library only
 ```
 
 ## Troubleshooting
 
-| Issue | Solution |
-|-------|----------|
-| Gradle error `26.0.1` | Set `JAVA_HOME` to JDK 17 |
-| Compose BOM resolution fails | Use BOM `2024.10.01` (already set in build.gradle.kts) |
-| Android NDK not found | `export ANDROID_NDK_HOME=~/Android/Sdk/ndk/<version>` |
-| Port 9473 in use | `./cleanup.sh` or `SRLTCP_PORT=9474 ./run.sh` |
-| UniFFI bindgen fails | `cargo build -p srltcp-core` then re-run bindgen |
+| Symptom | Fix |
+|---------|-----|
+| `* What went wrong: 26.0.1` | Set `JAVA_HOME` to JDK 17 |
+| `Plugin compose not found` | Ensure `android/build.gradle.kts` has compose plugin |
+| `ANDROID_NDK_HOME` missing | `sdkmanager "ndk;27.2.12479018"` |
+| `Missing native libs` | Run full `./scripts/build-android.sh` |
+| Compose BOM resolution error | BOM pinned to `2024.10.01` in `app/build.gradle.kts` |
+| Port 9473 in use | `./cleanup.sh` |
+| Tauri webkit error | Install `webkit2gtk-4.1-dev` |

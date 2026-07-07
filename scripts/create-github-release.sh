@@ -1,42 +1,38 @@
 #!/usr/bin/env bash
-# Create GitHub Release v0.2.1 with debug APK attached
+# Create GitHub Release with debug APK attached
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-VERSION="v0.2.1"
-APK="$ROOT_DIR/dist/SRLTCPv2-v0.2.1-debug.apk"
 REPO="narl3yyy-svg/SRLTCPv2"
+
+VERSION=$(grep '^version' "$ROOT_DIR/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+TAG="v${VERSION}"
+APK="$ROOT_DIR/dist/SRLTCPv2-v${VERSION}-debug.apk"
 
 cd "$ROOT_DIR"
 
 if [[ ! -f "$APK" ]]; then
-    echo "[release] APK not found. Run ./scripts/build-android.sh first."
+    echo "[release] APK not found at dist/SRLTCPv2-v${VERSION}-debug.apk"
+    echo "[release] Run: ./scripts/build-android.sh"
     exit 1
 fi
 
 if ! command -v gh &>/dev/null; then
-    echo "[release] ERROR: GitHub CLI (gh) is required."
+    echo "[release] ERROR: GitHub CLI (gh) required."
     exit 1
 fi
 
-echo "[release] Pushing commits and tag $VERSION..."
+echo "[release] Pushing main and tag $TAG..."
 git push origin main
-git tag -a "$VERSION" -m "SRLTCP $VERSION" 2>/dev/null || true
-git push origin "$VERSION"
+git tag -a "$TAG" -m "SRLTCP $TAG" 2>/dev/null || git tag -f -a "$TAG" -m "SRLTCP $TAG"
+git push origin "$TAG" --force
 
-echo "[release] Creating GitHub Release..."
-gh release create "$VERSION" \
+echo "[release] Creating GitHub Release $TAG..."
+gh release create "$TAG" \
     --repo "$REPO" \
-    --title "SRLTCP $VERSION" \
-    --notes "## SRLTCP $VERSION
-
-### Highlights
-- Stable Compose BOM for Android builds
-- Desktop UI: peers, messaging, file transfer, voice/video calls
-- Android foreground service with file transfer and call UI
-- Graceful shutdown in run.sh / run.bat
-- Build artifact cleanup scripts
+    --title "SRLTCP $TAG" \
+    --notes "## SRLTCP $TAG
 
 ### Install
 \`\`\`bash
@@ -44,8 +40,11 @@ gh release create "$VERSION" \
 git clone https://github.com/$REPO.git && cd SRLTCPv2 && ./run.sh
 
 # Android
-adb install SRLTCPv2-v0.2.1-debug.apk
-\`\`\`" \
-    "$APK"
+adb install SRLTCPv2-v${VERSION}-debug.apk
+\`\`\`
 
-echo "[release] Done: https://github.com/$REPO/releases/tag/$VERSION"
+See [BUILD.md](docs/BUILD.md) for full build instructions." \
+    "$APK" 2>/dev/null || \
+gh release upload "$TAG" "$APK" --repo "$REPO" --clobber
+
+echo "[release] Done: https://github.com/$REPO/releases/tag/$TAG"

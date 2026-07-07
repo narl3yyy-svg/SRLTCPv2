@@ -1,23 +1,15 @@
 // SRLTCP v0.2.1 Desktop Frontend
 
 const invoke = window.__TAURI__?.core?.invoke
-  ?? (async (cmd, args) => {
-      console.log(`[mock] ${cmd}`, args);
-      return null;
-    });
-
-const listen = window.__TAURI__?.event?.listen
-  ?? (async () => () => {});
-
-const openFileDialog = window.__TAURI__?.dialog?.open
-  ?? (async () => null);
-
-const convertFileSrc = window.__TAURI__?.core?.convertFileSrc
-  ?? ((path) => path);
+  ?? (async (cmd, args) => { console.log(`[mock] ${cmd}`, args); return null; });
+const listen = window.__TAURI__?.event?.listen ?? (async () => () => {});
+const openFileDialog = window.__TAURI__?.dialog?.open ?? (async () => null);
+const convertFileSrc = window.__TAURI__?.core?.convertFileSrc ?? ((p) => p);
 
 let activePeer = null;
 let peers = [];
 let activeCall = null;
+const transfers = new Map();
 
 const IMAGE_EXT = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp']);
 const VIDEO_EXT = new Set(['mp4', 'webm', 'mkv', 'mov', '3gp']);
@@ -29,6 +21,20 @@ function mediaKind(filename) {
   return 'file';
 }
 
+function nowTime() {
+  return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// ── Sidebar navigation ─────────────────────────────────────────────
+document.querySelectorAll('.nav-btn').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(`panel-${btn.dataset.panel}`).classList.add('active');
+  };
+});
+
 async function init() {
   try {
     const qr = await invoke('get_qr_payload');
@@ -36,72 +42,59 @@ async function init() {
 
     const ports = await invoke('list_serial_ports');
     const select = document.getElementById('serial-port');
-    select.innerHTML = '';
-    if (ports.length === 0) {
-      select.innerHTML = '<option value="">No ports found</option>';
-    } else {
-      ports.forEach(p => {
-        const opt = document.createElement('option');
-        opt.value = p;
-        opt.textContent = p;
-        select.appendChild(opt);
-      });
-    }
+    select.innerHTML = ports.length === 0
+      ? '<option value="">No ports found</option>'
+      : ports.map(p => `<option value="${p}">${p}</option>`).join('');
 
     const existingPeers = await invoke('get_peers');
     existingPeers.forEach(addPeer);
-
     setStatus('Online', true);
   } catch (e) {
     console.error('Init failed:', e);
     setStatus('Offline', false);
+    toast('Failed to initialize engine', true);
   }
 
-  await listen('srltcp-event', (event) => {
-    handleEvent(event.payload);
-  });
+  await listen('srltcp-event', (e) => handleEvent(e.payload));
 }
 
-function handleEvent(payload) {
-  switch (payload.type) {
+function handleEvent(p) {
+  switch (p.type) {
     case 'message':
-      appendMessage(payload.content, 'received', payload.sender);
+      appendMessage(p.content, 'received', p.sender);
       break;
     case 'peer_connected':
-      addPeer(payload.peer_id);
-      showToast(`Peer connected: ${payload.peer_id}`);
+      addPeer(p.peer_id);
+      toast(`Connected: ${p.peer_id}`);
       break;
     case 'peer_disconnected':
-      removePeer(payload.peer_id);
-      showToast(`Peer disconnected: ${payload.peer_id}`);
+      removePeer(p.peer_id);
+      toast(`Disconnected: ${p.peer_id}`);
       break;
     case 'sas_ready':
-      showSas(payload.sas);
+      showSas(p.sas);
       break;
     case 'transfer_progress':
-      showTransferProgress(payload.filename, payload.progress);
+      updateTransfer(p.id, p.filename, p.progress, false);
       break;
     case 'transfer_complete':
-      hideTransferProgress();
-      appendMessage(`📁 ${payload.filename}`, 'received', 'Transfer');
+      updateTransfer(p.id, p.filename, 1, false);
+      setTimeout(() => removeTransfer(p.id), 2000);
+      appendMessage(`📁 ${p.filename}`, 'system', 'Transfer complete');
       break;
     case 'call_started':
-      activeCall = { id: payload.call_id, peer: payload.peer_id, video: payload.is_video };
+      activeCall = { id: p.call_id, peer: p.peer_id, video: p.is_video };
       updateCallUI();
       break;
     case 'call_ended':
       activeCall = null;
       updateCallUI();
       break;
-    case 'started':
-      setStatus('Online', true);
-      break;
-    case 'stopped':
-      setStatus('Offline', false);
-      break;
+    case 'started': setStatus('Online', true); break;
+    case 'stopped': setStatus('Offline', false); break;
     case 'error':
-      console.error('Engine error:', payload.message);
-      showToast(`Error: ${payload.message}`, true);
+      console.error(p.message);
+      toast(p.message, true);
       break;
   }
 }
@@ -112,11 +105,12 @@ function setStatus(text, online) {
   el.classList.toggle('offline', !online);
 }
 
-function showToast(msg, isError = false) {
+function toast(msg, isError = false) {
+  const c = document.getElementById('toast-container');
   const el = document.createElement('div');
   el.className = `toast${isError ? ' error' : ''}`;
   el.textContent = msg;
-  document.body.appendChild(el);
+  c.appendChild(el);
   setTimeout(() => el.remove(), 4000);
 }
 
@@ -124,12 +118,14 @@ function addPeer(id) {
   if (peers.includes(id)) return;
   peers.push(id);
   renderPeers();
+  renderPeerChips();
   if (!activePeer) selectPeer(id);
 }
 
 function removePeer(id) {
   peers = peers.filter(p => p !== id);
   renderPeers();
+  renderPeerChips();
   if (activePeer === id) {
     activePeer = peers[0] || null;
     updateChatHeader();
@@ -140,39 +136,60 @@ function removePeer(id) {
 function renderPeers() {
   const list = document.getElementById('peer-list');
   const noPeers = document.getElementById('no-peers');
-  const count = document.getElementById('peer-count');
-  list.innerHTML = '';
-  count.textContent = peers.length;
+  document.getElementById('peer-count').textContent = peers.length;
   noPeers.classList.toggle('hidden', peers.length > 0);
-  peers.forEach(id => {
-    const li = document.createElement('li');
-    li.textContent = id;
-    li.className = id === activePeer ? 'active' : '';
-    li.onclick = () => selectPeer(id);
-    list.appendChild(li);
+  list.innerHTML = peers.map(id => `
+    <li class="${id === activePeer ? 'active' : ''}" data-peer="${id}">
+      <span class="peer-dot"></span>${escapeHtml(id)}
+    </li>`).join('');
+  list.querySelectorAll('li').forEach(li => {
+    li.onclick = () => selectPeer(li.dataset.peer);
+  });
+}
+
+function renderPeerChips() {
+  const bar = document.getElementById('peer-chips');
+  if (peers.length === 0) { bar.classList.add('hidden'); return; }
+  bar.classList.remove('hidden');
+  bar.innerHTML = peers.map(id =>
+    `<button class="chip${id === activePeer ? ' active' : ''}" data-peer="${id}">${escapeHtml(id.slice(0, 12))}</button>`
+  ).join('');
+  bar.querySelectorAll('.chip').forEach(c => {
+    c.onclick = () => selectPeer(c.dataset.peer);
   });
 }
 
 function selectPeer(id) {
   activePeer = id;
   renderPeers();
+  renderPeerChips();
   updateChatHeader();
   updateInputState();
   document.getElementById('empty-state')?.classList.add('hidden');
 }
 
 function updateChatHeader() {
-  document.getElementById('chat-title').textContent =
-    activePeer ? `Chat with ${activePeer}` : 'Select or connect a peer';
+  const title = document.getElementById('chat-title');
+  const sub = document.getElementById('chat-subtitle');
+  if (activePeer) {
+    title.textContent = activePeer;
+    sub.textContent = 'End-to-end encrypted';
+  } else {
+    title.textContent = 'Select a peer';
+    sub.textContent = 'Connect or select a peer to start';
+  }
 }
 
 function updateInputState() {
-  const enabled = !!activePeer && !activeCall;
-  document.getElementById('message-input').disabled = !enabled;
-  document.getElementById('send-btn').disabled = !enabled;
-  document.getElementById('send-file-btn').disabled = !enabled;
-  document.getElementById('voice-call-btn').disabled = !activePeer || !!activeCall;
-  document.getElementById('video-call-btn').disabled = !activePeer || !!activeCall;
+  const hasPeer = !!activePeer;
+  const inCall = !!activeCall;
+  const enabled = hasPeer && !inCall;
+  ['message-input', 'send-btn', 'send-file-btn'].forEach(id => {
+    document.getElementById(id).disabled = !enabled;
+  });
+  document.getElementById('voice-call-btn').disabled = !hasPeer || inCall;
+  document.getElementById('video-call-btn').disabled = !hasPeer || inCall;
+  document.getElementById('disconnect-btn').disabled = !hasPeer;
 }
 
 function updateCallUI() {
@@ -180,7 +197,7 @@ function updateCallUI() {
   const endBtn = document.getElementById('end-call-btn');
   if (activeCall) {
     const kind = activeCall.video ? 'Video' : 'Voice';
-    bar.textContent = `${kind} call with ${activeCall.peer}`;
+    bar.innerHTML = `<span class="call-pulse"></span> ${kind} call active — ${activeCall.peer}`;
     bar.classList.remove('hidden');
     endBtn.classList.remove('hidden');
   } else {
@@ -198,8 +215,8 @@ function appendMessage(content, direction, sender, opts = {}) {
   if (opts.kind === 'image' && opts.path) {
     const img = document.createElement('img');
     img.src = convertFileSrc(opts.path);
-    img.alt = content;
     img.className = 'msg-media';
+    img.alt = content;
     div.appendChild(img);
   } else if (opts.kind === 'video' && opts.path) {
     const vid = document.createElement('video');
@@ -209,22 +226,24 @@ function appendMessage(content, direction, sender, opts = {}) {
     div.appendChild(vid);
   } else {
     const text = document.createElement('div');
-    text.innerHTML = escapeHtml(content);
+    text.className = 'msg-text';
+    text.textContent = content;
     div.appendChild(text);
   }
 
   const meta = document.createElement('div');
   meta.className = 'meta';
-  meta.textContent = sender || '';
+  meta.textContent = `${sender || ''} · ${nowTime()}`;
   div.appendChild(meta);
 
-  document.getElementById('messages').appendChild(div);
+  const container = document.getElementById('messages');
+  container.appendChild(div);
   div.scrollIntoView({ behavior: 'smooth' });
 }
 
-function escapeHtml(text) {
+function escapeHtml(t) {
   const d = document.createElement('div');
-  d.textContent = text;
+  d.textContent = t;
   return d.innerHTML;
 }
 
@@ -232,25 +251,34 @@ function showSas(sas) {
   const el = document.getElementById('sas-display');
   el.textContent = sas;
   el.classList.remove('hidden');
+  document.querySelector('[data-panel="identity"]').click();
 }
 
-function showTransferProgress(filename, progress) {
-  const bar = document.getElementById('transfer-bar');
-  const label = document.getElementById('transfer-label');
-  const fill = document.getElementById('transfer-progress');
-  bar.classList.remove('hidden');
-  label.textContent = `${filename}: ${Math.round(progress * 100)}%`;
-  fill.style.width = `${Math.round(progress * 100)}%`;
+function updateTransfer(id, filename, progress, outgoing) {
+  transfers.set(id, { filename, progress, outgoing });
+  renderTransfers();
 }
 
-function hideTransferProgress() {
-  document.getElementById('transfer-bar').classList.add('hidden');
+function removeTransfer(id) {
+  transfers.delete(id);
+  renderTransfers();
 }
 
+function renderTransfers() {
+  const panel = document.getElementById('transfers-panel');
+  if (transfers.size === 0) { panel.classList.add('hidden'); return; }
+  panel.classList.remove('hidden');
+  panel.innerHTML = [...transfers.entries()].map(([id, t]) => `
+    <div class="transfer-item">
+      <span>${t.outgoing ? '↑' : '↓'} ${escapeHtml(t.filename)} — ${Math.round(t.progress * 100)}%</span>
+      <div class="progress-track"><div class="progress-fill" style="width:${Math.round(t.progress * 100)}%"></div></div>
+    </div>`).join('');
+}
+
+// ── Event bindings ─────────────────────────────────────────────────
 document.getElementById('copy-qr').onclick = async () => {
-  const qr = document.getElementById('qr-payload').textContent;
-  await navigator.clipboard.writeText(qr);
-  showToast('QR payload copied');
+  await navigator.clipboard.writeText(document.getElementById('qr-payload').textContent);
+  toast('QR payload copied');
 };
 
 document.getElementById('connect-serial').onclick = async () => {
@@ -258,10 +286,8 @@ document.getElementById('connect-serial').onclick = async () => {
   if (!port) return;
   try {
     await invoke('connect_serial', { portName: port, baudRate: 115200 });
-    showToast(`Connecting serial: ${port}`);
-  } catch (e) {
-    showToast(`Serial error: ${e}`, true);
-  }
+    toast(`Serial: ${port}`);
+  } catch (e) { toast(`Serial error: ${e}`, true); }
 };
 
 document.getElementById('connect-quic').onclick = async () => {
@@ -269,10 +295,8 @@ document.getElementById('connect-quic').onclick = async () => {
   if (!addr) return;
   try {
     await invoke('connect_quic', { addr });
-    showToast(`Connecting QUIC: ${addr}`);
-  } catch (e) {
-    showToast(`QUIC error: ${e}`, true);
-  }
+    toast(`QUIC: ${addr}`);
+  } catch (e) { toast(`QUIC error: ${e}`, true); }
 };
 
 document.getElementById('verify-peer').onclick = async () => {
@@ -281,33 +305,47 @@ document.getElementById('verify-peer').onclick = async () => {
   try {
     const sas = await invoke('handshake', { peerId: activePeer, remoteQr: qr });
     showSas(sas);
-  } catch (e) {
-    showToast(`Handshake error: ${e}`, true);
-  }
+  } catch (e) { toast(`Handshake error: ${e}`, true); }
+};
+
+document.getElementById('refresh-peers').onclick = async () => {
+  try {
+    const list = await invoke('get_peers');
+    peers = [];
+    list.forEach(addPeer);
+    toast(`Peers refreshed (${list.length})`);
+  } catch (e) { toast(`Refresh error: ${e}`, true); }
+};
+
+document.getElementById('disconnect-btn').onclick = async () => {
+  if (!activePeer) return;
+  try {
+    await invoke('disconnect_peer', { peerId: activePeer });
+    removePeer(activePeer);
+    toast(`Disconnected ${activePeer}`);
+  } catch (e) { toast(`Disconnect error: ${e}`, true); }
 };
 
 document.getElementById('voice-call-btn').onclick = async () => {
   if (!activePeer) return;
   try {
     const callId = await invoke('start_voice_call', { peerId: activePeer });
+    if (callId.startsWith('error:')) throw new Error(callId);
     activeCall = { id: callId, peer: activePeer, video: false };
     updateCallUI();
-    showToast(`Voice call started (${callId})`);
-  } catch (e) {
-    showToast(`Call error: ${e}`, true);
-  }
+    toast(`Voice call started`);
+  } catch (e) { toast(`Call error: ${e}`, true); }
 };
 
 document.getElementById('video-call-btn').onclick = async () => {
   if (!activePeer) return;
   try {
     const callId = await invoke('start_video_call', { peerId: activePeer });
+    if (callId.startsWith('error:')) throw new Error(callId);
     activeCall = { id: callId, peer: activePeer, video: true };
     updateCallUI();
-    showToast(`Video call started (${callId})`);
-  } catch (e) {
-    showToast(`Call error: ${e}`, true);
-  }
+    toast(`Video call started`);
+  } catch (e) { toast(`Call error: ${e}`, true); }
 };
 
 document.getElementById('end-call-btn').onclick = async () => {
@@ -316,41 +354,30 @@ document.getElementById('end-call-btn').onclick = async () => {
     await invoke('end_call', { callId: activeCall.id });
     activeCall = null;
     updateCallUI();
-    showToast('Call ended');
-  } catch (e) {
-    showToast(`End call error: ${e}`, true);
-  }
-};
-
-document.getElementById('send-btn').onclick = sendMessage;
-document.getElementById('message-input').onkeydown = (e) => {
-  if (e.key === 'Enter') sendMessage();
+    toast('Call ended');
+  } catch (e) { toast(`End call error: ${e}`, true); }
 };
 
 document.getElementById('send-file-btn').onclick = async () => {
   if (!activePeer) return;
-
-  let filePath = null;
-  try {
-    filePath = await openFileDialog({ multiple: false });
-  } catch (e) {
-    console.warn('Dialog open failed:', e);
-  }
-
+  let filePath;
+  try { filePath = await openFileDialog({ multiple: false }); } catch (_) {}
   if (!filePath) return;
-
   try {
     const result = await invoke('send_file', { peerId: activePeer, filePath });
     const kind = mediaKind(result.filename);
+    updateTransfer(result.transfer_id, result.filename, result.progress || 0, true);
     if (kind === 'image' || kind === 'video') {
       appendMessage(result.filename, 'sent', 'You', { kind, path: filePath });
     } else {
-      appendMessage(`📤 Sending: ${result.filename}`, 'sent', 'You');
+      appendMessage(`Sending: ${result.filename}`, 'sent', 'You');
     }
-    showTransferProgress(result.filename, result.progress || 0);
-  } catch (e) {
-    showToast(`File send error: ${e}`, true);
-  }
+  } catch (e) { toast(`File error: ${e}`, true); }
+};
+
+document.getElementById('send-btn').onclick = sendMessage;
+document.getElementById('message-input').onkeydown = (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
 };
 
 async function sendMessage() {
@@ -361,9 +388,7 @@ async function sendMessage() {
     await invoke('send_message', { peerId: activePeer, content });
     appendMessage(content, 'sent', 'You');
     input.value = '';
-  } catch (e) {
-    showToast(`Send error: ${e}`, true);
-  }
+  } catch (e) { toast(`Send error: ${e}`, true); }
 }
 
 init();

@@ -14,14 +14,17 @@ log() { echo -e "${BLUE}[cleanup]${NC} $*"; }
 ok()  { echo -e "${GREEN}[cleanup]${NC} $*"; }
 
 usage() {
-    echo "Usage: ./cleanup.sh [--android-build]"
-    echo "  --android-build   Also remove Android Gradle caches (keeps dist/*.apk)"
+    echo "Usage: ./cleanup.sh [--android-build] [--android-full]"
+    echo "  --android-build   Remove Android Gradle caches (keeps dist/*.apk)"
+    echo "  --android-full    Also remove jniLibs and UniFFI bindings"
 }
 
 ANDROID_BUILD=false
+ANDROID_FULL=false
 for arg in "$@"; do
     case "$arg" in
         --android-build) ANDROID_BUILD=true ;;
+        --android-full) ANDROID_BUILD=true; ANDROID_FULL=true ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown option: $arg"; usage; exit 1 ;;
     esac
@@ -64,7 +67,11 @@ rm -f "$SCRIPT_DIR/.srltcp.log"
 rm -rf "$SCRIPT_DIR/.srltcp-tmp" 2>/dev/null || true
 
 if [[ "$ANDROID_BUILD" == true ]]; then
-    "$SCRIPT_DIR/scripts/cleanup-android-build.sh"
+    if [[ "$ANDROID_FULL" == true ]]; then
+        "$SCRIPT_DIR/scripts/cleanup-android-build.sh" --full
+    else
+        "$SCRIPT_DIR/scripts/cleanup-android-build.sh"
+    fi
 fi
 
 log "Android: use App Info → Force Stop to fully stop the background service."

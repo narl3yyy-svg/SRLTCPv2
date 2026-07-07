@@ -2,74 +2,85 @@
 
 **Secure Reliable LAN/TCP/Serial P2P Messaging — v0.2.1**
 
-SRLTCP is a security-focused peer-to-peer messaging stack with a Rust core, Tauri desktop app, and Android foreground-service client. It supports COBS+CRC serial links, QUIC networking, hybrid post-quantum crypto, file transfer, and voice/video calls.
+Rust core + Tauri desktop + Android foreground service. COBS/CRC serial, QUIC networking, hybrid post-quantum crypto, file transfer, and voice/video calls.
 
 ## Quick Start
 
-### Desktop (Linux / macOS / Windows)
+### Desktop
 
 ```bash
 git clone https://github.com/narl3yyy-svg/SRLTCPv2.git
 cd SRLTCPv2
 ./run.sh          # Linux/macOS
-# or
 run.bat           # Windows
 ```
 
-Press **Ctrl+C** for graceful shutdown (releases serial ports and QUIC listeners).
+Press **Ctrl+C** for graceful shutdown.
 
 ### Android
 
 ```bash
-./scripts/build-android.sh
+./scripts/build-android.sh          # Full build (native + APK + cleanup)
+# or, if jniLibs already exist:
+./scripts/assemble-apk.sh           # Gradle only
+
 adb install dist/SRLTCPv2-v0.2.1-debug.apk
 ```
 
-Requires Android NDK, Android SDK API 35, and **JDK 17** for Gradle.
+**Requirements:** Android NDK, Android SDK API 35, **JDK 17** (JDK 21+ will fail).
 
 ## Features
 
 | Feature | Desktop | Android |
 |---------|---------|---------|
-| E2EE messaging | Yes | Yes |
-| QUIC P2P | Yes | Yes |
-| Serial transport | Yes | — |
-| File transfer | Yes | Yes |
-| Voice / video calls | Yes | Yes |
+| E2EE messaging | ✓ | ✓ |
+| QUIC P2P | ✓ | ✓ |
+| Serial transport | ✓ | — |
+| File transfer + progress | ✓ | ✓ |
+| Voice / video calls | ✓ | ✓ |
+| Inline images / video | ✓ | ✓ |
 | Background service | — | Foreground Service |
-| Inline images / video | Yes | Yes |
 
 ## Project Structure
 
 ```
 SRLTCPv2/
-├── run.sh / run.bat           # Build (if needed) and launch desktop
-├── cleanup.sh / cleanup.bat   # Stop processes, release ports
+├── run.sh / run.bat                 # Launch desktop
+├── cleanup.sh                       # Stop processes, optional --android-build
 ├── scripts/
-│   ├── build-android.sh       # Full Android build pipeline
-│   └── cleanup-android-build.sh
-├── core/                      # Rust library + UniFFI
-├── desktop/                   # Tauri v2 desktop app
-├── android/                   # Kotlin + Jetpack Compose
-├── dist/                      # Built APK output (after android build)
-└── docs/                      # Detailed documentation
+│   ├── build-android.sh             # Full Android pipeline
+│   ├── assemble-apk.sh              # Gradle-only (needs jniLibs)
+│   ├── cleanup-android-build.sh     # Remove Gradle caches
+│   ├── create-github-release.sh     # Tag + release + APK
+│   └── lib/android-env.sh           # JDK/SDK/NDK detection
+├── core/                            # Rust library + UniFFI
+├── desktop/                         # Tauri v2 app
+├── android/                         # Kotlin + Compose
+└── dist/                            # Built APK output
 ```
-
-## Documentation
-
-- [docs/BUILD.md](docs/BUILD.md) — Build instructions for all platforms
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — System design
-- [docs/SECURITY.md](docs/SECURITY.md) — Threat model
-- [docs/USER_GUIDE.md](docs/USER_GUIDE.md) — End-user guide
-- [docs/CRYPTO.md](docs/CRYPTO.md) — Cryptographic primitives
-- [docs/SERIAL_PROTOCOL.md](docs/SERIAL_PROTOCOL.md) — Serial framing
 
 ## Cleanup
 
 ```bash
-./cleanup.sh                  # Stop desktop app, release ports
-./cleanup.sh --android-build  # Also remove Android Gradle caches
+./cleanup.sh                         # Stop desktop, release ports
+./cleanup.sh --android-build         # Also remove Gradle caches
+./scripts/cleanup-android-build.sh --full  # Also remove jniLibs
 ```
+
+## Known Issues
+
+| Issue | Workaround |
+|-------|------------|
+| Gradle fails with `26.0.1` | Use JDK 17: `export JAVA_HOME=/usr/lib/jvm/java-17-openjdk` |
+| No jniLibs after clone | Run `./scripts/build-android.sh` (not just gradlew) |
+| Desktop needs rebuild after pull | `cargo build --release -p srltcp-desktop` |
+
+## Documentation
+
+- [docs/BUILD.md](docs/BUILD.md) — Detailed build instructions
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — System design
+- [docs/SECURITY.md](docs/SECURITY.md) — Threat model
+- [docs/USER_GUIDE.md](docs/USER_GUIDE.md) — End-user guide
 
 ## License
 

@@ -10,14 +10,18 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -100,6 +104,10 @@ fun ChatScreen() {
     var engineOnline by remember { mutableStateOf(false) }
     val transfers = remember { mutableStateMapOf<String, TransferState>() }
     var callState by remember { mutableStateOf<CallState?>(null) }
+    var snackbarMessage by remember { mutableStateOf<String?>(null) }
+    val listState = rememberLazyListState()
+
+    fun showSnackbar(msg: String) { snackbarMessage = msg }
 
     fun addMediaMessage(path: String, filename: String, isSent: Boolean, sender: String) {
         val kind = mediaKindForPath(path, filename)
@@ -141,41 +149,48 @@ fun ChatScreen() {
             }
             "transfer_complete" -> event.transferId?.let { id ->
                 val filename = event.filename ?: "file"
-                transfers[id] = TransferState(id, filename, 1f, transfers[id]?.isOutgoing ?: false, true)
-                val savedPath = File(context.filesDir, "received/$filename").absolutePath
-                if (File(savedPath).exists()) {
-                    addMediaMessage(savedPath, filename, false, event.peerId ?: "peer")
+                val wasOutgoing = transfers[id]?.isOutgoing ?: false
+                transfers.remove(id)
+                val cachePath = File(context.cacheDir, filename)
+                val recvPath = File(context.filesDir, "received/$filename")
+                val mediaPath = when {
+                    recvPath.exists() -> recvPath.absolutePath
+                    cachePath.exists() -> cachePath.absolutePath
+                    else -> null
+                }
+                if (mediaPath != null) {
+                    addMediaMessage(mediaPath, filename, wasOutgoing, if (wasOutgoing) "You" else event.peerId ?: "peer")
                 } else {
                     messages = messages + ChatMessage(
-                        content = "📁 Received: $filename",
-                        isSent = false,
-                        sender = event.peerId ?: "peer",
+                        content = if (wasOutgoing) "📤 Sent: $filename" else "📁 Received: $filename",
+                        isSent = wasOutgoing,
+                        sender = if (wasOutgoing) "You" else event.peerId ?: "peer",
                         kind = MessageKind.FILE,
                     )
                 }
+                showSnackbar(if (wasOutgoing) "Upload complete: $filename" else "Download complete: $filename")
             }
             "voice_call_started" -> {
-                callState = CallState(
-                    callId = event.callId ?: "",
-                    peerId = event.peerId ?: activePeer ?: "",
-                    isVideo = false,
-                )
+                val callId = event.callId ?: ""
+                if (callId.startsWith("error:")) {
+                    showSnackbar(callId.removePrefix("error: ").trim())
+                } else {
+                    callState = CallState(callId, event.peerId ?: activePeer ?: "", false)
+                }
             }
             "video_call_started" -> {
-                callState = CallState(
-                    callId = event.callId ?: "",
-                    peerId = event.peerId ?: activePeer ?: "",
-                    isVideo = true,
-                )
+                val callId = event.callId ?: ""
+                if (callId.startsWith("error:")) {
+                    showSnackbar(callId.removePrefix("error: ").trim())
+                } else {
+                    callState = CallState(callId, event.peerId ?: activePeer ?: "", true)
+                }
             }
-            "call_ended" -> callState = null
-            "error" -> {
-                messages = messages + ChatMessage(
-                    content = "⚠ ${event.error ?: "Unknown error"}",
-                    isSent = false,
-                    sender = "System",
-                )
+            "call_ended" -> {
+                callState = null
+                showSnackbar("Call ended")
             }
+            "error" -> showSnackbar(event.error ?: "Unknown error")
         }
     }
 
@@ -188,7 +203,9 @@ fun ChatScreen() {
             val result = withContext(Dispatchers.IO) {
                 SrltcpEngineHolder.getOrCreate().sendFile(peer, path)
             }
-            if (result.transferId.isNotEmpty()) {
+            if (result.filename.startsWith("error:")) {
+                showSnackbar(result.filename.removePrefix("error: ").trim())
+            } else if (result.transferId.isNotEmpty()) {
                 transfers[result.transferId] = TransferState(
                     id = result.transferId,
                     filename = result.filename,
@@ -220,7 +237,22 @@ fun ChatScreen() {
         onDispose { SrltcpEngineHolder.removeEventListener(eventListener) }
     }
 
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.size - 1)
+        }
+    }
+
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(snackbarMessage) {
+        snackbarMessage?.let {
+            snackbarHostState.showSnackbar(it)
+            snackbarMessage = null
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -244,7 +276,10 @@ fun ChatScreen() {
                         onClick = {
                             val peer = activePeer ?: return@IconButton
                             scope.launch(Dispatchers.IO) {
-                                SrltcpEngineHolder.getOrCreate().startVoiceCall(peer)
+                                val id = SrltcpEngineHolder.getOrCreate().startVoiceCall(peer)
+                                if (id.startsWith("error:")) {
+                                    showSnackbar(id.removePrefix("error: ").trim())
+                                }
                             }
                         },
                         enabled = activePeer != null && callState == null,
@@ -255,7 +290,10 @@ fun ChatScreen() {
                         onClick = {
                             val peer = activePeer ?: return@IconButton
                             scope.launch(Dispatchers.IO) {
-                                SrltcpEngineHolder.getOrCreate().startVideoCall(peer)
+                                val id = SrltcpEngineHolder.getOrCreate().startVideoCall(peer)
+                                if (id.startsWith("error:")) {
+                                    showSnackbar(id.removePrefix("error: ").trim())
+                                }
                             }
                         },
                         enabled = activePeer != null && callState == null,
@@ -326,10 +364,11 @@ fun ChatScreen() {
                 )
             }
             if (peers.isNotEmpty()) {
-                Text(
-                    "Peers: ${peers.joinToString()}",
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    fontSize = 12.sp,
+                PeerChipRow(
+                    peers = peers,
+                    activePeer = activePeer,
+                    onSelect = { activePeer = it },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                 )
             }
             if (messages.isEmpty()) {
@@ -346,6 +385,7 @@ fun ChatScreen() {
                 }
             } else {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(vertical = 8.dp),
@@ -353,6 +393,27 @@ fun ChatScreen() {
                     items(messages, key = { it.id }) { msg -> MessageBubble(msg) }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun PeerChipRow(
+    peers: List<String>,
+    activePeer: String?,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        peers.forEach { peer ->
+            FilterChip(
+                selected = peer == activePeer,
+                onClick = { onSelect(peer) },
+                label = { Text(peer.take(16), fontSize = 11.sp) },
+            )
         }
     }
 }
@@ -428,10 +489,17 @@ fun MessageBubble(message: ChatMessage) {
                     }
                     else -> {}
                 }
-                if (message.kind != MessageKind.IMAGE) {
+                if (message.kind != MessageKind.IMAGE && message.kind != MessageKind.VIDEO) {
                     Text(
                         text = message.content,
                         color = if (message.isSent) MaterialTheme.colorScheme.onPrimary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else if (message.kind == MessageKind.VIDEO) {
+                    Text(
+                        text = message.content,
+                        fontSize = 11.sp,
+                        color = if (message.isSent) MaterialTheme.colorScheme.onPrimary.copy(0.8f)
                         else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
