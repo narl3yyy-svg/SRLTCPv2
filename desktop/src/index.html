@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SRLTCP v0.2.0</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <aside class="sidebar">
+      <header class="sidebar-header">
+        <h1>SRLTCP</h1>
+        <span class="version">v0.2.0</span>
+      </header>
+
+      <section class="identity-section">
+        <h2>Your Identity</h2>
+        <div class="qr-box" id="qr-display">
+          <code id="qr-payload">Loading...</code>
+        </div>
+        <button class="btn secondary" id="copy-qr">Copy QR Payload</button>
+      </section>
+
+      <section class="peers-section">
+        <h2>Peers</h2>
+        <ul id="peer-list" class="peer-list"></ul>
+      </section>
+
+      <section class="connect-section">
+        <h2>Connect</h2>
+        <div class="form-group">
+          <label>Serial Port</label>
+          <select id="serial-port"></select>
+        </div>
+        <button class="btn" id="connect-serial">Connect Serial</button>
+        <div class="form-group">
+          <label>QUIC Address</label>
+          <input type="text" id="quic-addr" placeholder="192.168.1.10:9473" />
+        </div>
+        <button class="btn" id="connect-quic">Connect LAN/WAN</button>
+      </section>
+
+      <section class="verify-section">
+        <h2>Verify Peer</h2>
+        <input type="text" id="remote-qr" placeholder="Paste peer QR payload" />
+        <button class="btn" id="verify-peer">Handshake + SAS</button>
+        <div id="sas-display" class="sas-display hidden"></div>
+      </section>
+    </aside>
+
+    <main class="chat-area">
+      <header class="chat-header">
+        <h2 id="chat-title">Select or connect a peer</h2>
+        <div class="status-indicator" id="status">Connecting...</div>
+      </header>
+
+      <div id="messages" class="messages"></div>
+
+      <div class="file-transfer-bar">
+        <button class="btn secondary" id="send-file-btn" disabled>Send File</button>
+        <input type="file" id="file-input" disabled hidden />
+        <div id="transfer-status" class="transfer-status hidden"></div>
+      </div>
+
+      <footer class="chat-input">
+        <input type="text" id="message-input" placeholder="Type a message..." disabled />
+        <button class="btn send-btn" id="send-btn" disabled>Send</button>
+      </footer>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

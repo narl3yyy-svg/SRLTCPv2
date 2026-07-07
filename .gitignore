@@ -1,0 +1,42 @@
+# Rust build artifacts
+target/
+desktop/src-tauri/target/
+
+# Runtime state
+.srltcp.pid
+.srltcp.log
+.srltcp-tmp/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Android — generated / local
+android/app/build/
+android/.gradle/
+android/build/
+android/local.properties
+android/app/libs/
+android/app/src/main/jniLibs/
+android/app/src/main/java/uniffi/
+
+# APK/AAB outputs (use dist/ for release artifacts)
+*.apk
+*.aab
+!dist/.gitkeep
+
+# Secrets
+*.key
+*.pem
+.env
+
+# Gradle
+.gradle/
+*.class

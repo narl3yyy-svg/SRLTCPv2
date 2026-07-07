@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SRLTCP</string>
+    <string name="notification_channel_name">SRLTCP P2P Service</string>
+    <string name="notification_channel_desc">Keeps SRLTCP connected for incoming messages</string>
+    <string name="notification_title">SRLTCP</string>
+    <string name="notification_listening">Listening for peers…</string>
+</resources>

@@ -1,0 +1,245 @@
+//! SRLTCP v0.2.0 Desktop — Tauri v2 backend with graceful shutdown.
+
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+use std::sync::Arc;
+
+use srltcp_core::p2p::{EngineEvent, P2pEngine};
+use tauri::{Emitter, Manager, State};
+use tokio::sync::Mutex;
+
+struct AppState {
+    engine: Arc<Mutex<P2pEngine>>,
+}
+
+#[tauri::command]
+async fn get_public_key(state: State<'_, AppState>) -> Result<String, String> {
+    Ok(state.engine.lock().await.public_key_hex())
+}
+
+#[tauri::command]
+async fn get_qr_payload(state: State<'_, AppState>) -> Result<String, String> {
+    Ok(state.engine.lock().await.qr_payload())
+}
+
+#[tauri::command]
+async fn list_serial_ports() -> Result<Vec<String>, String> {
+    Ok(P2pEngine::available_serial_ports())
+}
+
+#[tauri::command]
+async fn connect_serial(
+    state: State<'_, AppState>,
+    port_name: String,
+    baud_rate: u32,
+) -> Result<(), String> {
+    state
+        .engine
+        .lock()
+        .await
+        .connect_serial(&port_name, baud_rate)
+        .await
+}
+
+#[tauri::command]
+async fn connect_quic(state: State<'_, AppState>, addr: String) -> Result<(), String> {
+    state.engine.lock().await.connect_quic(&addr).await
+}
+
+#[tauri::command]
+async fn disconnect_peer(state: State<'_, AppState>, peer_id: String) -> Result<(), String> {
+    state.engine.lock().await.disconnect_peer(&peer_id).await
+}
+
+#[tauri::command]
+async fn handshake(
+    state: State<'_, AppState>,
+    peer_id: String,
+    remote_qr: String,
+) -> Result<String, String> {
+    state
+        .engine
+        .lock()
+        .await
+        .handshake_with(&peer_id, &remote_qr)
+        .await
+}
+
+#[tauri::command]
+async fn send_message(
+    state: State<'_, AppState>,
+    peer_id: String,
+    content: String,
+) -> Result<(), String> {
+    state
+        .engine
+        .lock()
+        .await
+        .send_message(&peer_id, &content)
+        .await
+}
+
+#[tauri::command]
+async fn send_file(
+    state: State<'_, AppState>,
+    peer_id: String,
+    file_path: String,
+) -> Result<serde_json::Value, String> {
+    let (transfer_id, filename, progress) = state
+        .engine
+        .lock()
+        .await
+        .send_file(&peer_id, &file_path)
+        .await?;
+    Ok(serde_json::json!({
+        "transfer_id": transfer_id,
+        "filename": filename,
+        "progress": progress,
+    }))
+}
+
+#[tauri::command]
+async fn get_peers(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    Ok(state.engine.lock().await.connected_peers().await)
+}
+
+#[tauri::command]
+async fn shutdown_engine(state: State<'_, AppState>) -> Result<(), String> {
+    state.engine.lock().await.shutdown().await;
+    Ok(())
+}
+
+fn install_shutdown_handler(engine: Arc<Mutex<P2pEngine>>) {
+    std::thread::spawn(move || {
+        use signal_hook::consts::signal::{SIGINT, SIGTERM};
+        use signal_hook::iterator::Signals;
+
+        let mut signals = Signals::new([SIGTERM, SIGINT]).expect("signal handler");
+        for _ in signals.forever() {
+            tracing::info!("shutdown signal received — releasing resources");
+            tauri::async_runtime::block_on(async {
+                engine.lock().await.shutdown().await;
+            });
+            std::process::exit(0);
+        }
+    });
+}
+
+fn main() {
+    srltcp_core::init_crypto();
+    srltcp_core::init_logging("info");
+
+    let (engine, mut event_rx) = P2pEngine::new();
+    let engine = Arc::new(Mutex::new(engine));
+
+    install_shutdown_handler(engine.clone());
+
+    tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![
+            get_public_key,
+            get_qr_payload,
+            list_serial_ports,
+            connect_serial,
+            connect_quic,
+            disconnect_peer,
+            handshake,
+            send_message,
+            send_file,
+            get_peers,
+            shutdown_engine,
+        ])
+        .manage(AppState {
+            engine: engine.clone(),
+        })
+        .setup(move |app| {
+            let handle = app.handle().clone();
+            let eng = engine.clone();
+
+            tauri::async_runtime::spawn(async move {
+                let e = eng.lock().await;
+                if let Err(err) = e.start(9473).await {
+                    tracing::error!(error = %err, "failed to start engine");
+                }
+            });
+
+            tauri::async_runtime::spawn(async move {
+                while let Some(event) = event_rx.recv().await {
+                    let payload = match event {
+                        EngineEvent::MessageReceived(msg) => serde_json::json!({
+                            "type": "message",
+                            "id": msg.id.to_string(),
+                            "sender": msg.sender_id,
+                            "content": msg.content,
+                            "timestamp": msg.timestamp.to_rfc3339(),
+                        }),
+                        EngineEvent::PeerConnected { peer_id, transport } => {
+                            serde_json::json!({
+                                "type": "peer_connected",
+                                "peer_id": peer_id,
+                                "transport": format!("{transport:?}"),
+                            })
+                        }
+                        EngineEvent::PeerDisconnected { peer_id, reason } => {
+                            serde_json::json!({
+                                "type": "peer_disconnected",
+                                "peer_id": peer_id,
+                                "reason": reason,
+                            })
+                        }
+                        EngineEvent::SasReady { peer_id, sas } => serde_json::json!({
+                            "type": "sas_ready",
+                            "peer_id": peer_id,
+                            "sas": sas,
+                        }),
+                        EngineEvent::TransferProgress { id, filename, progress } => {
+                            serde_json::json!({
+                                "type": "transfer_progress",
+                                "id": id,
+                                "filename": filename,
+                                "progress": progress,
+                            })
+                        }
+                        EngineEvent::TransferComplete { id, filename } => {
+                            serde_json::json!({
+                                "type": "transfer_complete",
+                                "id": id,
+                                "filename": filename,
+                            })
+                        }
+                        EngineEvent::CallStarted { call_id, peer_id, is_video } => {
+                            serde_json::json!({
+                                "type": "call_started",
+                                "call_id": call_id,
+                                "peer_id": peer_id,
+                                "is_video": is_video,
+                            })
+                        }
+                        EngineEvent::CallEnded { call_id } => {
+                            serde_json::json!({ "type": "call_ended", "call_id": call_id })
+                        }
+                        EngineEvent::Started => serde_json::json!({ "type": "started" }),
+                        EngineEvent::Stopped => serde_json::json!({ "type": "stopped" }),
+                        EngineEvent::Error(e) => {
+                            serde_json::json!({ "type": "error", "message": e })
+                        }
+                    };
+                    let _ = handle.emit("srltcp-event", payload);
+                }
+            });
+
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                let state = window.state::<AppState>();
+                let eng = state.engine.clone();
+                tauri::async_runtime::block_on(async {
+                    eng.lock().await.shutdown().await;
+                });
+            }
+        })
+        .run(tauri::generate_context!())
+        .expect("error running SRLTCP desktop");
+}

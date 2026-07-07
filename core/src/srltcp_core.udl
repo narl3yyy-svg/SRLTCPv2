@@ -1,0 +1,54 @@
+namespace srltcp_core {
+    string version();
+    void init_crypto();
+};
+
+dictionary SrltcpEvent {
+    string event_type;
+    string? peer_id;
+    string? message;
+    string? content;
+    string? sas;
+    string? transfer_id;
+    string? filename;
+    double? progress;
+    string? transport;
+    string? call_id;
+    string? error;
+};
+
+dictionary TransferInfo {
+    string transfer_id;
+    string filename;
+    u64 total_size;
+    double progress;
+};
+
+interface SrltcpEngine {
+    constructor();
+
+    string public_key_hex();
+    string qr_payload();
+    sequence<string> available_serial_ports();
+
+    void start(u16 quic_port);
+    void connect_serial(string port_name, u32 baud_rate);
+    void connect_quic(string addr);
+    void disconnect_peer(string peer_id);
+
+    string handshake_with(string peer_id, string remote_qr);
+    void send_message(string peer_id, string content);
+
+    TransferInfo send_file(string peer_id, string file_path);
+    string start_voice_call(string peer_id);
+    string start_video_call(string peer_id);
+    void end_call(string call_id);
+
+    SrltcpEvent? poll_event();
+    sequence<SrltcpEvent> drain_events();
+
+    void shutdown();
+    boolean is_running();
+    sequence<string> connected_peers();
+    u16 default_quic_port();
+};
