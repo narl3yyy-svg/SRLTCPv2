@@ -1,5 +1,5 @@
 @echo off
-REM SRLTCP v0.2.0 — Full cleanup (Windows)
+REM SRLTCP v0.2.1 — Full cleanup (Windows)
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 

@@ -1,4 +1,4 @@
-// SRLTCP v0.2.0 Desktop Frontend
+// SRLTCP v0.2.1 Desktop Frontend
 
 const invoke = window.__TAURI__?.core?.invoke
   ?? (async (cmd, args) => {
@@ -12,8 +12,22 @@ const listen = window.__TAURI__?.event?.listen
 const openFileDialog = window.__TAURI__?.dialog?.open
   ?? (async () => null);
 
+const convertFileSrc = window.__TAURI__?.core?.convertFileSrc
+  ?? ((path) => path);
+
 let activePeer = null;
 let peers = [];
+let activeCall = null;
+
+const IMAGE_EXT = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp']);
+const VIDEO_EXT = new Set(['mp4', 'webm', 'mkv', 'mov', '3gp']);
+
+function mediaKind(filename) {
+  const ext = (filename || '').split('.').pop()?.toLowerCase() || '';
+  if (IMAGE_EXT.has(ext)) return 'image';
+  if (VIDEO_EXT.has(ext)) return 'video';
+  return 'file';
+}
 
 async function init() {
   try {
@@ -37,10 +51,10 @@ async function init() {
     const existingPeers = await invoke('get_peers');
     existingPeers.forEach(addPeer);
 
-    document.getElementById('status').textContent = 'Online';
+    setStatus('Online', true);
   } catch (e) {
     console.error('Init failed:', e);
-    document.getElementById('status').textContent = 'Offline';
+    setStatus('Offline', false);
   }
 
   await listen('srltcp-event', (event) => {
@@ -55,30 +69,55 @@ function handleEvent(payload) {
       break;
     case 'peer_connected':
       addPeer(payload.peer_id);
+      showToast(`Peer connected: ${payload.peer_id}`);
       break;
     case 'peer_disconnected':
       removePeer(payload.peer_id);
+      showToast(`Peer disconnected: ${payload.peer_id}`);
       break;
     case 'sas_ready':
       showSas(payload.sas);
       break;
     case 'transfer_progress':
-      showTransferStatus(`${payload.filename}: ${Math.round(payload.progress * 100)}%`);
+      showTransferProgress(payload.filename, payload.progress);
       break;
     case 'transfer_complete':
-      showTransferStatus(`Transfer complete: ${payload.filename}`);
-      appendMessage(`📁 File sent: ${payload.filename}`, 'sent', 'System');
+      hideTransferProgress();
+      appendMessage(`📁 ${payload.filename}`, 'received', 'Transfer');
+      break;
+    case 'call_started':
+      activeCall = { id: payload.call_id, peer: payload.peer_id, video: payload.is_video };
+      updateCallUI();
+      break;
+    case 'call_ended':
+      activeCall = null;
+      updateCallUI();
       break;
     case 'started':
-      document.getElementById('status').textContent = 'Online';
+      setStatus('Online', true);
       break;
     case 'stopped':
-      document.getElementById('status').textContent = 'Offline';
+      setStatus('Offline', false);
       break;
     case 'error':
       console.error('Engine error:', payload.message);
+      showToast(`Error: ${payload.message}`, true);
       break;
   }
+}
+
+function setStatus(text, online) {
+  const el = document.getElementById('status');
+  el.textContent = text;
+  el.classList.toggle('offline', !online);
+}
+
+function showToast(msg, isError = false) {
+  const el = document.createElement('div');
+  el.className = `toast${isError ? ' error' : ''}`;
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 4000);
 }
 
 function addPeer(id) {
@@ -100,7 +139,11 @@ function removePeer(id) {
 
 function renderPeers() {
   const list = document.getElementById('peer-list');
+  const noPeers = document.getElementById('no-peers');
+  const count = document.getElementById('peer-count');
   list.innerHTML = '';
+  count.textContent = peers.length;
+  noPeers.classList.toggle('hidden', peers.length > 0);
   peers.forEach(id => {
     const li = document.createElement('li');
     li.textContent = id;
@@ -115,6 +158,7 @@ function selectPeer(id) {
   renderPeers();
   updateChatHeader();
   updateInputState();
+  document.getElementById('empty-state')?.classList.add('hidden');
 }
 
 function updateChatHeader() {
@@ -123,17 +167,57 @@ function updateChatHeader() {
 }
 
 function updateInputState() {
-  const enabled = !!activePeer;
+  const enabled = !!activePeer && !activeCall;
   document.getElementById('message-input').disabled = !enabled;
   document.getElementById('send-btn').disabled = !enabled;
-  document.getElementById('file-input').disabled = !enabled;
   document.getElementById('send-file-btn').disabled = !enabled;
+  document.getElementById('voice-call-btn').disabled = !activePeer || !!activeCall;
+  document.getElementById('video-call-btn').disabled = !activePeer || !!activeCall;
 }
 
-function appendMessage(content, direction, sender) {
+function updateCallUI() {
+  const bar = document.getElementById('call-status');
+  const endBtn = document.getElementById('end-call-btn');
+  if (activeCall) {
+    const kind = activeCall.video ? 'Video' : 'Voice';
+    bar.textContent = `${kind} call with ${activeCall.peer}`;
+    bar.classList.remove('hidden');
+    endBtn.classList.remove('hidden');
+  } else {
+    bar.classList.add('hidden');
+    endBtn.classList.add('hidden');
+  }
+  updateInputState();
+}
+
+function appendMessage(content, direction, sender, opts = {}) {
+  document.getElementById('empty-state')?.classList.add('hidden');
   const div = document.createElement('div');
   div.className = `message ${direction}`;
-  div.innerHTML = `${escapeHtml(content)}<div class="meta">${sender || ''}</div>`;
+
+  if (opts.kind === 'image' && opts.path) {
+    const img = document.createElement('img');
+    img.src = convertFileSrc(opts.path);
+    img.alt = content;
+    img.className = 'msg-media';
+    div.appendChild(img);
+  } else if (opts.kind === 'video' && opts.path) {
+    const vid = document.createElement('video');
+    vid.src = convertFileSrc(opts.path);
+    vid.controls = true;
+    vid.className = 'msg-media';
+    div.appendChild(vid);
+  } else {
+    const text = document.createElement('div');
+    text.innerHTML = escapeHtml(content);
+    div.appendChild(text);
+  }
+
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  meta.textContent = sender || '';
+  div.appendChild(meta);
+
   document.getElementById('messages').appendChild(div);
   div.scrollIntoView({ behavior: 'smooth' });
 }
@@ -150,34 +234,92 @@ function showSas(sas) {
   el.classList.remove('hidden');
 }
 
-function showTransferStatus(text) {
-  const el = document.getElementById('transfer-status');
-  el.textContent = text;
-  el.classList.remove('hidden');
+function showTransferProgress(filename, progress) {
+  const bar = document.getElementById('transfer-bar');
+  const label = document.getElementById('transfer-label');
+  const fill = document.getElementById('transfer-progress');
+  bar.classList.remove('hidden');
+  label.textContent = `${filename}: ${Math.round(progress * 100)}%`;
+  fill.style.width = `${Math.round(progress * 100)}%`;
+}
+
+function hideTransferProgress() {
+  document.getElementById('transfer-bar').classList.add('hidden');
 }
 
 document.getElementById('copy-qr').onclick = async () => {
   const qr = document.getElementById('qr-payload').textContent;
   await navigator.clipboard.writeText(qr);
+  showToast('QR payload copied');
 };
 
 document.getElementById('connect-serial').onclick = async () => {
   const port = document.getElementById('serial-port').value;
   if (!port) return;
-  await invoke('connect_serial', { portName: port, baudRate: 115200 });
+  try {
+    await invoke('connect_serial', { portName: port, baudRate: 115200 });
+    showToast(`Connecting serial: ${port}`);
+  } catch (e) {
+    showToast(`Serial error: ${e}`, true);
+  }
 };
 
 document.getElementById('connect-quic').onclick = async () => {
   const addr = document.getElementById('quic-addr').value;
   if (!addr) return;
-  await invoke('connect_quic', { addr });
+  try {
+    await invoke('connect_quic', { addr });
+    showToast(`Connecting QUIC: ${addr}`);
+  } catch (e) {
+    showToast(`QUIC error: ${e}`, true);
+  }
 };
 
 document.getElementById('verify-peer').onclick = async () => {
   const qr = document.getElementById('remote-qr').value;
   if (!qr || !activePeer) return;
-  const sas = await invoke('handshake', { peerId: activePeer, remoteQr: qr });
-  showSas(sas);
+  try {
+    const sas = await invoke('handshake', { peerId: activePeer, remoteQr: qr });
+    showSas(sas);
+  } catch (e) {
+    showToast(`Handshake error: ${e}`, true);
+  }
+};
+
+document.getElementById('voice-call-btn').onclick = async () => {
+  if (!activePeer) return;
+  try {
+    const callId = await invoke('start_voice_call', { peerId: activePeer });
+    activeCall = { id: callId, peer: activePeer, video: false };
+    updateCallUI();
+    showToast(`Voice call started (${callId})`);
+  } catch (e) {
+    showToast(`Call error: ${e}`, true);
+  }
+};
+
+document.getElementById('video-call-btn').onclick = async () => {
+  if (!activePeer) return;
+  try {
+    const callId = await invoke('start_video_call', { peerId: activePeer });
+    activeCall = { id: callId, peer: activePeer, video: true };
+    updateCallUI();
+    showToast(`Video call started (${callId})`);
+  } catch (e) {
+    showToast(`Call error: ${e}`, true);
+  }
+};
+
+document.getElementById('end-call-btn').onclick = async () => {
+  if (!activeCall) return;
+  try {
+    await invoke('end_call', { callId: activeCall.id });
+    activeCall = null;
+    updateCallUI();
+    showToast('Call ended');
+  } catch (e) {
+    showToast(`End call error: ${e}`, true);
+  }
 };
 
 document.getElementById('send-btn').onclick = sendMessage;
@@ -192,23 +334,22 @@ document.getElementById('send-file-btn').onclick = async () => {
   try {
     filePath = await openFileDialog({ multiple: false });
   } catch (e) {
-    console.warn('Dialog open failed, falling back to file input:', e);
+    console.warn('Dialog open failed:', e);
   }
 
-  if (!filePath) {
-    const fileInput = document.getElementById('file-input');
-    const file = fileInput.files[0];
-    if (!file) return;
-    filePath = file.path || file.name;
-  }
+  if (!filePath) return;
 
   try {
     const result = await invoke('send_file', { peerId: activePeer, filePath });
-    showTransferStatus(`Sending ${result.filename}…`);
-    appendMessage(`📁 Sending: ${result.filename}`, 'sent', 'You');
+    const kind = mediaKind(result.filename);
+    if (kind === 'image' || kind === 'video') {
+      appendMessage(result.filename, 'sent', 'You', { kind, path: filePath });
+    } else {
+      appendMessage(`📤 Sending: ${result.filename}`, 'sent', 'You');
+    }
+    showTransferProgress(result.filename, result.progress || 0);
   } catch (e) {
-    console.error('File send failed:', e);
-    showTransferStatus(`Error: ${e}`);
+    showToast(`File send error: ${e}`, true);
   }
 };
 
@@ -221,7 +362,7 @@ async function sendMessage() {
     appendMessage(content, 'sent', 'You');
     input.value = '';
   } catch (e) {
-    console.error('Send failed:', e);
+    showToast(`Send error: ${e}`, true);
   }
 }
 

@@ -85,8 +85,8 @@ fi
 APK="$ANDROID_DIR/app/build/outputs/apk/debug/app-debug.apk"
 if [[ -f "$APK" ]]; then
     mkdir -p "$DIST_DIR"
-    cp -f "$APK" "$DIST_DIR/SRLTCPv2-debug.apk"
-    echo "[android] APK ready: $DIST_DIR/SRLTCPv2-debug.apk"
+    cp -f "$APK" "$DIST_DIR/SRLTCPv2-v0.2.1-debug.apk"
+    echo "[android] APK ready: $DIST_DIR/SRLTCPv2-v0.2.1-debug.apk"
     echo "[android] Cleaning build artifacts..."
     "$SCRIPT_DIR/cleanup-android-build.sh"
 else

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SRLTCP v0.2.0 — Download and Run (Linux/macOS)
+# SRLTCP v0.2.1 — Download and Run (Linux/macOS)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -111,7 +111,7 @@ check_stale() {
 main() {
     echo ""
     echo "  ╔══════════════════════════════════════╗"
-    echo "  ║       SRLTCP v0.2.0 — Desktop        ║"
+    echo "  ║       SRLTCP v0.2.1 — Desktop        ║"
     echo "  ║   Secure P2P over Serial/LAN/WAN     ║"
     echo "  ╚══════════════════════════════════════╝"
     echo ""

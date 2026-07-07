@@ -1,6 +1,6 @@
 # SRLTCPv2
 
-**Secure Reliable LAN/TCP/Serial P2P Messaging — v0.2.0**
+**Secure Reliable LAN/TCP/Serial P2P Messaging — v0.2.1**
 
 SRLTCP is a security-focused peer-to-peer messaging stack with a Rust core, Tauri desktop app, and Android foreground-service client. It supports COBS+CRC serial links, QUIC networking, hybrid post-quantum crypto, file transfer, and voice/video calls.
 
@@ -22,7 +22,7 @@ Press **Ctrl+C** for graceful shutdown (releases serial ports and QUIC listeners
 
 ```bash
 ./scripts/build-android.sh
-adb install dist/SRLTCPv2-debug.apk
+adb install dist/SRLTCPv2-v0.2.1-debug.apk
 ```
 
 Requires Android NDK, Android SDK API 35, and **JDK 17** for Gradle.

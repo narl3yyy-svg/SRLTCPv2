@@ -1,4 +1,4 @@
-//! SRLTCP v0.2.0 Desktop — Tauri v2 backend with graceful shutdown.
+//! SRLTCP v0.2.1 Desktop — Tauri v2 backend with graceful shutdown.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -104,6 +104,21 @@ async fn get_peers(state: State<'_, AppState>) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
+async fn start_voice_call(state: State<'_, AppState>, peer_id: String) -> Result<String, String> {
+    state.engine.lock().await.start_call(&peer_id, false).await
+}
+
+#[tauri::command]
+async fn start_video_call(state: State<'_, AppState>, peer_id: String) -> Result<String, String> {
+    state.engine.lock().await.start_call(&peer_id, true).await
+}
+
+#[tauri::command]
+async fn end_call(state: State<'_, AppState>, call_id: String) -> Result<(), String> {
+    state.engine.lock().await.end_call(&call_id).await
+}
+
+#[tauri::command]
 async fn shutdown_engine(state: State<'_, AppState>) -> Result<(), String> {
     state.engine.lock().await.shutdown().await;
     Ok(())
@@ -148,6 +163,9 @@ fn main() {
             send_message,
             send_file,
             get_peers,
+            start_voice_call,
+            start_video_call,
+            end_call,
             shutdown_engine,
         ])
         .manage(AppState {

@@ -20,8 +20,8 @@ log "Cleaning Android build artifacts..."
 if [[ -f "$ANDROID_DIR/app/build/outputs/apk/debug/app-debug.apk" ]]; then
     mkdir -p "$DIST_DIR"
     cp -f "$ANDROID_DIR/app/build/outputs/apk/debug/app-debug.apk" \
-        "$DIST_DIR/SRLTCPv2-debug.apk"
-    ok "APK preserved at dist/SRLTCPv2-debug.apk"
+        "$DIST_DIR/SRLTCPv2-v0.2.1-debug.apk"
+    ok "APK preserved at dist/SRLTCPv2-v0.2.1-debug.apk"
 fi
 
 # Remove large Gradle/R build directories

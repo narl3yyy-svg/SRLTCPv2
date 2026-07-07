@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SRLTCP v0.2.0</title>
+  <title>SRLTCP v0.2.1</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -11,7 +11,7 @@
     <aside class="sidebar">
       <header class="sidebar-header">
         <h1>SRLTCP</h1>
-        <span class="version">v0.2.0</span>
+        <span class="version">v0.2.1</span>
       </header>
 
       <section class="identity-section">
@@ -23,8 +23,9 @@
       </section>
 
       <section class="peers-section">
-        <h2>Peers</h2>
+        <h2>Peers <span id="peer-count" class="badge">0</span></h2>
         <ul id="peer-list" class="peer-list"></ul>
+        <p id="no-peers" class="hint">Connect via QUIC or serial to add peers.</p>
       </section>
 
       <section class="connect-section">
@@ -51,16 +52,35 @@
 
     <main class="chat-area">
       <header class="chat-header">
-        <h2 id="chat-title">Select or connect a peer</h2>
-        <div class="status-indicator" id="status">Connecting...</div>
+        <div>
+          <h2 id="chat-title">Select or connect a peer</h2>
+          <div id="call-status" class="call-status hidden"></div>
+        </div>
+        <div class="header-actions">
+          <button class="btn icon-btn" id="voice-call-btn" disabled title="Voice call">📞</button>
+          <button class="btn icon-btn" id="video-call-btn" disabled title="Video call">📹</button>
+          <button class="btn icon-btn danger hidden" id="end-call-btn" title="End call">✕</button>
+          <div class="status-indicator" id="status">Connecting...</div>
+        </div>
       </header>
 
-      <div id="messages" class="messages"></div>
+      <div id="messages" class="messages">
+        <div class="empty-state" id="empty-state">
+          <p>Secure P2P Messaging</p>
+          <span>Select a peer or connect to start chatting</span>
+        </div>
+      </div>
+
+      <div id="transfer-bar" class="transfer-bar hidden">
+        <div class="transfer-info">
+          <span id="transfer-label">Transfer</span>
+          <div class="progress-track"><div id="transfer-progress" class="progress-fill"></div></div>
+        </div>
+      </div>
 
       <div class="file-transfer-bar">
         <button class="btn secondary" id="send-file-btn" disabled>Send File</button>
         <input type="file" id="file-input" disabled hidden />
-        <div id="transfer-status" class="transfer-status hidden"></div>
       </div>
 
       <footer class="chat-input">
