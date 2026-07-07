@@ -1,6 +1,6 @@
 # SRLTCPv2
 
-**Secure Reliable LAN/TCP/Serial P2P Messaging — v0.2.1**
+**Secure Reliable LAN/TCP/Serial P2P Messaging — v0.2.2**
 
 Rust core + Tauri desktop + Android foreground service. COBS/CRC serial, QUIC networking, hybrid post-quantum crypto, file transfer, and voice/video calls.
 
@@ -24,7 +24,7 @@ Press **Ctrl+C** for graceful shutdown.
 # or, if jniLibs already exist:
 ./scripts/assemble-apk.sh           # Gradle only
 
-adb install dist/SRLTCPv2-v0.2.1-debug.apk
+adb install dist/SRLTCPv2-0.2.2.apk
 ```
 
 **Requirements:** Android NDK, Android SDK API 35, **JDK 17** (JDK 21+ will fail).

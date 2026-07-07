@@ -4,7 +4,9 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
+use quinn::Connection;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{info, warn};
 
@@ -108,10 +110,87 @@ impl P2pEngine {
             quic.listen(addr).await.map_err(|e| e.to_string())?;
         }
 
+        self.spawn_quic_accept_loop();
+
         *running = true;
         info!(port = quic_port, "P2P engine started");
         let _ = self.event_tx.send(EngineEvent::Started).await;
         Ok(())
+    }
+
+    fn spawn_quic_accept_loop(&self) {
+        let quic = self.quic.clone();
+        let event_tx = self.event_tx.clone();
+        let peers = self.peers.clone();
+        let running = self.running.clone();
+
+        tokio::spawn(async move {
+            loop {
+                if !*running.read().await {
+                    break;
+                }
+
+                let accepted = {
+                    let transport = quic.read().await;
+                    match transport.try_accept().await {
+                        Ok(result) => result,
+                        Err(e) => {
+                            warn!(error = %e, "QUIC accept failed");
+                            break;
+                        }
+                    }
+                };
+
+                let Some((conn, remote)) = accepted else {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    continue;
+                };
+
+                let peer_id = format!("quic:{remote}");
+                quic.read().await.register(peer_id.clone(), conn.clone()).await;
+                Self::spawn_quic_read_loop(conn, event_tx.clone());
+
+                peers.write().await.insert(
+                    peer_id.clone(),
+                    PeerSession {
+                        transport: TransportKind::Lan,
+                        sas: None,
+                    },
+                );
+
+                let _ = event_tx
+                    .send(EngineEvent::PeerConnected {
+                        peer_id,
+                        transport: TransportKind::Lan,
+                    })
+                    .await;
+            }
+        });
+    }
+
+    fn spawn_quic_read_loop(conn: Connection, event_tx: mpsc::Sender<EngineEvent>) {
+        tokio::spawn(async move {
+            loop {
+                match conn.accept_bi().await {
+                    Ok((_send, mut recv)) => match recv.read_to_end(16 * 1024 * 1024).await {
+                        Ok(data) if !data.is_empty() => {
+                            Self::handle_inbound_data(&event_tx, &data).await;
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            warn!(error = %e, "QUIC stream read error");
+                            break;
+                        }
+                    },
+                    Err(quinn::ConnectionError::ApplicationClosed { .. })
+                    | Err(quinn::ConnectionError::LocallyClosed) => break,
+                    Err(e) => {
+                        warn!(error = %e, "QUIC accept_bi error");
+                        break;
+                    }
+                }
+            }
+        });
     }
 
     pub async fn connect_serial(&self, port_name: &str, baud_rate: u32) -> Result<(), String> {
@@ -182,8 +261,11 @@ impl P2pEngine {
             .map_err(|e| format!("invalid address: {e}"))?;
 
         let quic = self.quic.read().await;
-        let _conn = quic.connect(socket_addr).await.map_err(|e| e.to_string())?;
+        let conn = quic.connect(socket_addr).await.map_err(|e| e.to_string())?;
         let peer_id = format!("quic:{addr}");
+
+        quic.register(peer_id.clone(), conn.clone()).await;
+        Self::spawn_quic_read_loop(conn, self.event_tx.clone());
 
         self.peers.write().await.insert(
             peer_id.clone(),
@@ -213,11 +295,17 @@ impl P2pEngine {
             .map(|s| s.transport);
 
         if let Some(kind) = transport {
-            if kind == TransportKind::Serial {
-                if let Some(ref transport) = *self.serial.read().await {
-                    transport.shutdown().await;
+            match kind {
+                TransportKind::Serial => {
+                    if let Some(ref transport) = *self.serial.read().await {
+                        transport.shutdown().await;
+                    }
+                    *self.serial.write().await = None;
                 }
-                *self.serial.write().await = None;
+                TransportKind::Lan | TransportKind::Wan => {
+                    self.quic.read().await.unregister(peer_id).await;
+                }
+                TransportKind::Relay => {}
             }
         }
 
@@ -389,7 +477,13 @@ impl P2pEngine {
                 }
             }
             TransportKind::Lan | TransportKind::Wan => {
-                info!(peer = peer_id, len = wire.len(), "sending via QUIC");
+                self.quic
+                    .read()
+                    .await
+                    .send(peer_id, &wire)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                info!(peer = peer_id, len = wire.len(), "sent via QUIC");
             }
             TransportKind::Relay => {
                 info!(peer = peer_id, "sending via relay");

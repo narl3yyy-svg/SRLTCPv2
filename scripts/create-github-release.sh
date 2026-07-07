@@ -8,12 +8,12 @@ REPO="narl3yyy-svg/SRLTCPv2"
 
 VERSION=$(grep '^version' "$ROOT_DIR/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*/\1/')
 TAG="v${VERSION}"
-APK="$ROOT_DIR/dist/SRLTCPv2-v${VERSION}-debug.apk"
+APK="$ROOT_DIR/dist/SRLTCPv2-${VERSION}.apk"
 
 cd "$ROOT_DIR"
 
 if [[ ! -f "$APK" ]]; then
-    echo "[release] APK not found at dist/SRLTCPv2-v${VERSION}-debug.apk"
+    echo "[release] APK not found at dist/SRLTCPv2-${VERSION}.apk"
     echo "[release] Run: ./scripts/build-android.sh"
     exit 1
 fi
@@ -34,13 +34,20 @@ gh release create "$TAG" \
     --title "SRLTCP $TAG" \
     --notes "## SRLTCP $TAG
 
+### Changes in v0.2.2
+- **QUIC messaging fixed** — bidirectional streams now send/receive encrypted messages over the network
+- QUIC accept loop and per-connection read loops for inbound peers
+- Desktop auto-test mode (\`SRLTCP_AUTO_TEST=1\`) for connectivity validation
+- APK naming: \`SRLTCPv2-${VERSION}.apk\`
+- Version bump across Android, desktop, and scripts
+
 ### Install
 \`\`\`bash
 # Desktop
 git clone https://github.com/$REPO.git && cd SRLTCPv2 && ./run.sh
 
 # Android
-adb install SRLTCPv2-v${VERSION}-debug.apk
+adb install SRLTCPv2-${VERSION}.apk
 \`\`\`
 
 See [BUILD.md](docs/BUILD.md) for full build instructions." \

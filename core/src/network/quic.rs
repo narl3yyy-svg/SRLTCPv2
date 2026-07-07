@@ -1,7 +1,9 @@
 //! QUIC transport via quinn for LAN/WAN P2P connections.
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+
 use quinn::{ClientConfig, Connection, Endpoint, ServerConfig};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use thiserror::Error;
@@ -16,12 +18,14 @@ pub enum QuicError {
     Connection(String),
     #[error("not running")]
     NotRunning,
+    #[error("peer not connected: {0}")]
+    PeerNotFound(String),
 }
 
 /// QUIC endpoint wrapper with graceful lifecycle.
 pub struct QuicTransport {
     endpoint: Option<Endpoint>,
-    connections: Arc<RwLock<Vec<Connection>>>,
+    connections: Arc<RwLock<HashMap<String, Connection>>>,
     listen_addr: Option<SocketAddr>,
 }
 
@@ -29,7 +33,7 @@ impl QuicTransport {
     pub fn new() -> Self {
         Self {
             endpoint: None,
-            connections: Arc::new(RwLock::new(Vec::new())),
+            connections: Arc::new(RwLock::new(HashMap::new())),
             listen_addr: None,
         }
     }
@@ -58,7 +62,7 @@ impl QuicTransport {
         Ok(())
     }
 
-    /// Connect to a remote peer.
+    /// Connect to a remote peer (caller registers the connection).
     pub async fn connect(&self, addr: SocketAddr) -> Result<Connection, QuicError> {
         let endpoint = self
             .endpoint
@@ -81,35 +85,68 @@ impl QuicTransport {
             .await
             .map_err(|e| QuicError::Connection(e.to_string()))?;
 
-        self.connections.write().await.push(conn.clone());
         info!(%addr, "QUIC connected");
         Ok(conn)
     }
 
-    /// Accept an incoming connection.
-    pub async fn accept(&self) -> Result<Connection, QuicError> {
+    /// Accept an incoming connection if one is pending.
+    pub async fn try_accept(&self) -> Result<Option<(Connection, SocketAddr)>, QuicError> {
         let endpoint = self
             .endpoint
             .as_ref()
             .ok_or(QuicError::NotRunning)?;
 
-        let incoming = endpoint
-            .accept()
-            .await
-            .ok_or(QuicError::NotRunning)?;
+        let Some(incoming) = endpoint.accept().await else {
+            return Ok(None);
+        };
 
         let conn = incoming
             .await
             .map_err(|e| QuicError::Connection(e.to_string()))?;
 
-        self.connections.write().await.push(conn.clone());
-        Ok(conn)
+        let remote = conn.remote_address();
+        info!(%remote, "QUIC inbound connection accepted");
+        Ok(Some((conn, remote)))
+    }
+
+    pub async fn register(&self, peer_id: String, conn: Connection) {
+        self.connections.write().await.insert(peer_id, conn);
+    }
+
+    pub async fn unregister(&self, peer_id: &str) {
+        if let Some(conn) = self.connections.write().await.remove(peer_id) {
+            conn.close(0u32.into(), b"disconnect");
+        }
+    }
+
+    /// Send a framed message over a bidirectional QUIC stream.
+    pub async fn send(&self, peer_id: &str, data: &[u8]) -> Result<(), QuicError> {
+        let conn = {
+            let map = self.connections.read().await;
+            map.get(peer_id)
+                .cloned()
+                .ok_or_else(|| QuicError::PeerNotFound(peer_id.to_string()))?
+        };
+
+        let (mut send, recv) = conn
+            .open_bi()
+            .await
+            .map_err(|e| QuicError::Connection(e.to_string()))?;
+
+        send.write_all(data)
+            .await
+            .map_err(|e| QuicError::Connection(e.to_string()))?;
+        send.finish()
+            .map_err(|e| QuicError::Connection(e.to_string()))?;
+        drop(recv);
+
+        Ok(())
     }
 
     /// Gracefully close all connections and the endpoint.
     pub async fn shutdown(&mut self) {
         let mut conns = self.connections.write().await;
-        for conn in conns.drain(..) {
+        for (_, conn) in conns.drain() {
             conn.close(0u32.into(), b"shutdown");
         }
 

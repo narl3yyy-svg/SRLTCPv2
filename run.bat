@@ -1,5 +1,5 @@
 @echo off
-REM SRLTCP v0.2.1 — Download and Run (Windows)
+REM SRLTCP v0.2.2 — Download and Run (Windows)
 setlocal EnableDelayedExpansion
 
 cd /d "%~dp0"
@@ -11,7 +11,7 @@ if "%QUIC_PORT%"=="" set QUIC_PORT=9473
 
 echo.
 echo   ========================================
-echo        SRLTCP v0.2.1 - Desktop
+echo        SRLTCP v0.2.2 - Desktop
 echo    Secure P2P over Serial/LAN/WAN
 echo   ========================================
 echo.
