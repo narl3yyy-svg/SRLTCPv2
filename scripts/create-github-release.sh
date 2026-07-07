@@ -34,12 +34,12 @@ gh release create "$TAG" \
     --title "SRLTCP $TAG" \
     --notes "## SRLTCP $TAG
 
-### Changes in v0.2.2
-- **QUIC messaging fixed** — bidirectional streams now send/receive encrypted messages over the network
-- QUIC accept loop and per-connection read loops for inbound peers
-- Desktop auto-test mode (\`SRLTCP_AUTO_TEST=1\`) for connectivity validation
-- APK naming: \`SRLTCPv2-${VERSION}.apk\`
-- Version bump across Android, desktop, and scripts
+### Changes in v0.2.3
+- **Desktop shutdown fix** — window X button now cleanly exits (no hang)
+- **QR-first connection flow** — visual QR codes, SAS verification modal, IP marked as less secure
+- **Cross-platform run.sh** — Ubuntu/Arch/macOS detection, dependency hints, prebuilt binary support
+- **Android UX** — connect sheet, SAS dialog, verified-peer gating for messaging/calls
+- APK: \`SRLTCPv2-${VERSION}.apk\`
 
 ### Install
 \`\`\`bash

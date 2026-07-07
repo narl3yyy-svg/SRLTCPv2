@@ -12,7 +12,7 @@ ANDROID_DIR="$ROOT_DIR/android"
 JNI_DIR="$ANDROID_DIR/app/src/main/jniLibs"
 JAVA_OUT="$ANDROID_DIR/app/src/main/java"
 DIST_DIR="$ROOT_DIR/dist"
-VERSION="0.2.2"
+VERSION="0.2.3"
 APK_NAME="SRLTCPv2-${VERSION}.apk"
 
 SKIP_NATIVE=false

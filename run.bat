@@ -1,5 +1,5 @@
 @echo off
-REM SRLTCP v0.2.2 — Download and Run (Windows)
+REM SRLTCP v0.2.3 — Download and Run (Windows)
 setlocal EnableDelayedExpansion
 
 cd /d "%~dp0"
@@ -8,10 +8,11 @@ set PID_FILE=%~dp0.srltcp.pid
 set LOG_FILE=%~dp0.srltcp.log
 set QUIC_PORT=%SRLTCP_PORT%
 if "%QUIC_PORT%"=="" set QUIC_PORT=9473
+set VERSION=0.2.3
 
 echo.
 echo   ========================================
-echo        SRLTCP v0.2.2 - Desktop
+echo        SRLTCP v%VERSION% - Desktop
 echo    Secure P2P over Serial/LAN/WAN
 echo   ========================================
 echo.
@@ -39,30 +40,36 @@ if exist "%PID_FILE%" (
     del "%PID_FILE%"
 )
 
-REM ── Build if needed ──────────────────────────────────────────────
+REM ── Find binary (prebuilt or compiled) ───────────────────────────
 set BINARY=target\release\srltcp-desktop.exe
-if not exist "%BINARY%" (
-    echo [SRLTCP] First run - building ^(may take a few minutes^)...
-    cargo build --release -p srltcp-desktop >> "%LOG_FILE%" 2>&1
-    if %ERRORLEVEL% neq 0 (
-        echo [SRLTCP] Build failed. Check %LOG_FILE%
-        exit /b 1
-    )
-    echo [SRLTCP] Build complete.
-) else (
+set PREBUILT=dist\bin\windows-x86_64\srltcp-desktop.exe
+
+if "%1"=="--rebuild" goto :build
+if exist "%PREBUILT%" (
+    set BINARY=%PREBUILT%
+    echo [SRLTCP] Using prebuilt binary.
+    goto :launch
+)
+if exist "%BINARY%" (
     echo [SRLTCP] Binary found - skipping build.
+    goto :launch
 )
 
-REM ── Launch in foreground (Ctrl+C goes directly to app for graceful shutdown) ──
+:build
+echo [SRLTCP] Building ^(may take a few minutes^)...
+cargo build --release -p srltcp-desktop >> "%LOG_FILE%" 2>&1
+if %ERRORLEVEL% neq 0 (
+    echo [SRLTCP] Build failed. Check %LOG_FILE%
+    exit /b 1
+)
+echo [SRLTCP] Build complete.
+set BINARY=target\release\srltcp-desktop.exe
+
+:launch
 echo [SRLTCP] Launching...
-echo [SRLTCP] Press Ctrl+C to shut down gracefully.
+echo [SRLTCP] Close the window or press Ctrl+C to shut down.
 echo.
 set RUST_LOG=info
-if exist "%BINARY%" (
-    "%BINARY%"
-) else (
-    cargo run --release -p srltcp-desktop
-)
-
-echo [SRLTCP] Shutdown complete - ports and resources released.
+"%BINARY%"
+echo [SRLTCP] Shutdown complete.
 exit /b 0

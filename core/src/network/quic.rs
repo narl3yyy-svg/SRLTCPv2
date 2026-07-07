@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use quinn::{ClientConfig, Connection, Endpoint, ServerConfig};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
@@ -96,8 +97,10 @@ impl QuicTransport {
             .as_ref()
             .ok_or(QuicError::NotRunning)?;
 
-        let Some(incoming) = endpoint.accept().await else {
-            return Ok(None);
+        let incoming = match tokio::time::timeout(Duration::from_millis(250), endpoint.accept()).await
+        {
+            Ok(Some(incoming)) => incoming,
+            Ok(None) | Err(_) => return Ok(None),
         };
 
         let conn = incoming

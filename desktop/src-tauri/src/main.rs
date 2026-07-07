@@ -1,8 +1,10 @@
-//! SRLTCP v0.2.2 Desktop — Tauri v2 backend with graceful shutdown.
+//! SRLTCP v0.2.3 Desktop — Tauri v2 backend with graceful shutdown.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use srltcp_core::p2p::{EngineEvent, P2pEngine};
 use tauri::{Emitter, Manager, State};
@@ -10,6 +12,14 @@ use tokio::sync::Mutex;
 
 struct AppState {
     engine: Arc<Mutex<P2pEngine>>,
+    shutting_down: Arc<AtomicBool>,
+}
+
+async fn graceful_shutdown(engine: Arc<Mutex<P2pEngine>>) {
+    let _ = tokio::time::timeout(Duration::from_secs(5), async {
+        engine.lock().await.shutdown().await;
+    })
+    .await;
 }
 
 #[tauri::command]
@@ -20,6 +30,12 @@ async fn get_public_key(state: State<'_, AppState>) -> Result<String, String> {
 #[tauri::command]
 async fn get_qr_payload(state: State<'_, AppState>) -> Result<String, String> {
     Ok(state.engine.lock().await.qr_payload())
+}
+
+#[tauri::command]
+async fn get_qr_image(state: State<'_, AppState>) -> Result<String, String> {
+    let payload = state.engine.lock().await.qr_payload();
+    srltcp_core::qr_png_data_url(&payload)
 }
 
 #[tauri::command]
@@ -42,8 +58,38 @@ async fn connect_serial(
 }
 
 #[tauri::command]
-async fn connect_quic(state: State<'_, AppState>, addr: String) -> Result<(), String> {
-    state.engine.lock().await.connect_quic(&addr).await
+async fn connect_quic(state: State<'_, AppState>, addr: String) -> Result<String, String> {
+    state.engine.lock().await.connect_quic(&addr).await?;
+    Ok(format!("quic:{addr}"))
+}
+
+#[tauri::command]
+async fn connect_and_verify(
+    state: State<'_, AppState>,
+    remote_qr: String,
+    addr: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let engine = state.engine.lock().await;
+    let peer_id = if let Some(ref address) = addr {
+        if !address.is_empty() {
+            engine.connect_quic(address).await?;
+            format!("quic:{address}")
+        } else {
+            return Err("address required for outbound connection".into());
+        }
+    } else {
+        let peers = engine.connected_peers().await;
+        peers
+            .first()
+            .cloned()
+            .ok_or_else(|| {
+                "No peer connected yet. Share your QR and wait for a peer, or use Advanced IP connect."
+                    .to_string()
+            })?
+    };
+
+    let sas = engine.handshake_with(&peer_id, &remote_qr).await?;
+    Ok(serde_json::json!({ "peer_id": peer_id, "sas": sas }))
 }
 
 #[tauri::command]
@@ -120,21 +166,22 @@ async fn end_call(state: State<'_, AppState>, call_id: String) -> Result<(), Str
 
 #[tauri::command]
 async fn shutdown_engine(state: State<'_, AppState>) -> Result<(), String> {
-    state.engine.lock().await.shutdown().await;
+    graceful_shutdown(state.engine.clone()).await;
     Ok(())
 }
 
-fn install_shutdown_handler(engine: Arc<Mutex<P2pEngine>>) {
+fn install_shutdown_handler(engine: Arc<Mutex<P2pEngine>>, shutting_down: Arc<AtomicBool>) {
     std::thread::spawn(move || {
         use signal_hook::consts::signal::{SIGINT, SIGTERM};
         use signal_hook::iterator::Signals;
 
         let mut signals = Signals::new([SIGTERM, SIGINT]).expect("signal handler");
         for _ in signals.forever() {
+            if shutting_down.swap(true, Ordering::SeqCst) {
+                std::process::exit(0);
+            }
             tracing::info!("shutdown signal received — releasing resources");
-            tauri::async_runtime::block_on(async {
-                engine.lock().await.shutdown().await;
-            });
+            tauri::async_runtime::block_on(graceful_shutdown(engine.clone()));
             std::process::exit(0);
         }
     });
@@ -145,7 +192,7 @@ async fn run_auto_peer_test(engine: Arc<Mutex<P2pEngine>>) -> Result<(), String>
     let remote_qr = std::env::var("SRLTCP_TEST_QR")
         .unwrap_or_else(|_| "AjTqU9MmHMBy3dpi6xmxRTloSwOTD46pCpIN55kWHq3Z".into());
     let message = std::env::var("SRLTCP_TEST_MSG")
-        .unwrap_or_else(|_| "SRLTCPv2-0.2.2 desktop auto-test message".into());
+        .unwrap_or_else(|_| "SRLTCPv2-0.2.3 desktop auto-test message".into());
 
     let client_port: u16 = std::env::var("SRLTCP_CLIENT_PORT")
         .ok()
@@ -161,7 +208,7 @@ async fn run_auto_peer_test(engine: Arc<Mutex<P2pEngine>>) -> Result<(), String>
         e.send_message(&peer_id, &message).await?;
         tracing::info!(%addr, %message, "desktop auto-test message sent");
     }
-    engine.lock().await.shutdown().await;
+    graceful_shutdown(engine).await;
     Ok(())
 }
 
@@ -187,8 +234,9 @@ fn main() {
 
     let (engine, mut event_rx) = P2pEngine::new();
     let engine = Arc::new(Mutex::new(engine));
+    let shutting_down = Arc::new(AtomicBool::new(false));
 
-    install_shutdown_handler(engine.clone());
+    install_shutdown_handler(engine.clone(), shutting_down.clone());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -196,9 +244,11 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_public_key,
             get_qr_payload,
+            get_qr_image,
             list_serial_ports,
             connect_serial,
             connect_quic,
+            connect_and_verify,
             disconnect_peer,
             handshake,
             send_message,
@@ -211,6 +261,7 @@ fn main() {
         ])
         .manage(AppState {
             engine: engine.clone(),
+            shutting_down: shutting_down.clone(),
         })
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -291,11 +342,21 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window
+                    .state::<AppState>()
+                    .shutting_down
+                    .swap(true, Ordering::SeqCst)
+                {
+                    return;
+                }
+                api.prevent_close();
                 let state = window.state::<AppState>();
                 let eng = state.engine.clone();
-                tauri::async_runtime::block_on(async {
-                    eng.lock().await.shutdown().await;
+                let app_handle = window.app_handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    graceful_shutdown(eng).await;
+                    app_handle.exit(0);
                 });
             }
         })

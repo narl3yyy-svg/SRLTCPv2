@@ -105,6 +105,13 @@ fun ChatScreen() {
     val transfers = remember { mutableStateMapOf<String, TransferState>() }
     var callState by remember { mutableStateOf<CallState?>(null) }
     var snackbarMessage by remember { mutableStateOf<String?>(null) }
+    var showConnectSheet by remember { mutableStateOf(false) }
+    var showSasDialog by remember { mutableStateOf(false) }
+    var sasCode by remember { mutableStateOf("") }
+    var sasPeerId by remember { mutableStateOf<String?>(null) }
+    var remoteQrInput by remember { mutableStateOf("") }
+    var ipInput by remember { mutableStateOf("") }
+    val peerVerified = remember { mutableStateMapOf<String, Boolean>() }
     val listState = rememberLazyListState()
 
     fun showSnackbar(msg: String) { snackbarMessage = msg }
@@ -126,7 +133,16 @@ fun ChatScreen() {
             "stopped" -> engineOnline = false
             "peer_connected" -> event.peerId?.let { id ->
                 if (!peers.contains(id)) peers.add(id)
+                if (!peerVerified.containsKey(id)) peerVerified[id] = false
                 if (activePeer == null) activePeer = id
+                showSnackbar("Peer connected — verify with QR + SAS")
+            }
+            "sas_ready" -> {
+                event.sas?.let { sas ->
+                    sasCode = sas
+                    sasPeerId = event.peerId
+                    showSasDialog = true
+                }
             }
             "peer_disconnected" -> event.peerId?.let { peers.remove(it) }
             "message" -> event.content?.let { content ->
@@ -259,16 +275,19 @@ fun ChatScreen() {
                     Column {
                         Text("SRLTCP", fontWeight = FontWeight.Bold)
                         Text(
-                            "v0.2.2 • ${if (engineOnline) "Online" else "Offline"} • bg active",
+                            "v0.2.3 • ${if (engineOnline) "Online" else "Offline"} • bg active",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 },
                 actions = {
+                    IconButton(onClick = { showConnectSheet = true }) {
+                        Icon(Icons.Default.QrCode, contentDescription = "Connect peer")
+                    }
                     IconButton(
                         onClick = { filePicker.launch("*/*") },
-                        enabled = activePeer != null,
+                        enabled = activePeer != null && peerVerified[activePeer] == true,
                     ) {
                         Icon(Icons.Default.AttachFile, contentDescription = "Send file")
                     }
@@ -282,7 +301,7 @@ fun ChatScreen() {
                                 }
                             }
                         },
-                        enabled = activePeer != null && callState == null,
+                        enabled = activePeer != null && peerVerified[activePeer] == true && callState == null,
                     ) {
                         Icon(Icons.Default.Call, contentDescription = "Voice call")
                     }
@@ -296,7 +315,7 @@ fun ChatScreen() {
                                 }
                             }
                         },
-                        enabled = activePeer != null && callState == null,
+                        enabled = activePeer != null && peerVerified[activePeer] == true && callState == null,
                     ) {
                         Icon(Icons.Default.Videocam, contentDescription = "Video call")
                     }
@@ -329,12 +348,16 @@ fun ChatScreen() {
                             modifier = Modifier.weight(1f),
                             placeholder = { Text("Message…") },
                             singleLine = true,
-                            enabled = activePeer != null,
+                            enabled = activePeer != null && peerVerified[activePeer] == true,
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         FilledIconButton(
                             onClick = {
                                 val peer = activePeer ?: return@FilledIconButton
+                                if (peerVerified[peer] != true) {
+                                    showSnackbar("Verify peer with SAS first")
+                                    return@FilledIconButton
+                                }
                                 if (inputText.isNotBlank()) {
                                     SrltcpEngineHolder.getOrCreate().sendMessage(peer, inputText)
                                     messages = messages + ChatMessage(
@@ -345,7 +368,7 @@ fun ChatScreen() {
                                     inputText = ""
                                 }
                             },
-                            enabled = activePeer != null,
+                            enabled = activePeer != null && peerVerified[activePeer] == true,
                         ) {
                             Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
                         }
@@ -356,12 +379,51 @@ fun ChatScreen() {
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             if (qrPayload.isNotEmpty()) {
-                Text(
-                    "QR: ${qrPayload.take(48)}…",
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                    fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    ),
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("Your QR (share with peers)", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                        Text(
+                            qrPayload,
+                            fontSize = 9.sp,
+                            modifier = Modifier.padding(top = 4.dp),
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    }
+                }
+            }
+            activePeer?.let { peer ->
+                if (peerVerified[peer] != true) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 4.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                        ),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "⚠ Peer not verified",
+                                modifier = Modifier.weight(1f),
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                            TextButton(onClick = { showConnectSheet = true }) {
+                                Text("Verify", fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
             }
             if (peers.isNotEmpty()) {
                 PeerChipRow(
@@ -395,6 +457,169 @@ fun ChatScreen() {
             }
         }
     }
+
+    if (showConnectSheet) {
+        ConnectPeerSheet(
+            qrPayload = qrPayload,
+            remoteQr = remoteQrInput,
+            onRemoteQrChange = { remoteQrInput = it },
+            ipAddress = ipInput,
+            onIpChange = { ipInput = it },
+            onDismiss = { showConnectSheet = false },
+            onVerify = {
+                scope.launch(Dispatchers.IO) {
+                    val engine = SrltcpEngineHolder.getOrCreate()
+                    val qr = remoteQrInput.trim()
+                    if (qr.isEmpty()) {
+                        showSnackbar("Paste peer QR code first")
+                        return@launch
+                    }
+                    var peer = activePeer
+                    val ip = ipInput.trim()
+                    if (ip.isNotEmpty()) {
+                        engine.connectQuic(ip)
+                        peer = "quic:$ip"
+                        withContext(Dispatchers.Main) {
+                            if (!peers.contains(peer)) peers.add(peer!!)
+                            activePeer = peer
+                        }
+                    }
+                    if (peer == null) {
+                        val connected = engine.connectedPeers()
+                        peer = connected.firstOrNull()
+                    }
+                    if (peer == null) {
+                        showSnackbar("No peer connected — share your QR first")
+                        return@launch
+                    }
+                    val sas = engine.handshakeWith(peer, qr)
+                    withContext(Dispatchers.Main) {
+                        if (sas.startsWith("error:")) {
+                            showSnackbar(sas.removePrefix("error: ").trim())
+                        } else {
+                            sasCode = sas
+                            sasPeerId = peer
+                            showSasDialog = true
+                            showConnectSheet = false
+                        }
+                    }
+                }
+            },
+        )
+    }
+
+    if (showSasDialog) {
+        SasVerificationDialog(
+            sasCode = sasCode,
+            peerId = sasPeerId ?: "",
+            onConfirm = {
+                sasPeerId?.let { peerVerified[it] = true }
+                showSasDialog = false
+                showSnackbar("Peer verified — secure channel established")
+            },
+            onReject = {
+                sasPeerId?.let { peer ->
+                    scope.launch(Dispatchers.IO) {
+                        SrltcpEngineHolder.getOrCreate().disconnectPeer(peer)
+                    }
+                    peers.remove(peer)
+                    peerVerified.remove(peer)
+                    if (activePeer == peer) activePeer = peers.firstOrNull()
+                }
+                showSasDialog = false
+                showSnackbar("SAS mismatch — peer disconnected")
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ConnectPeerSheet(
+    qrPayload: String,
+    remoteQr: String,
+    onRemoteQrChange: (String) -> Unit,
+    ipAddress: String,
+    onIpChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onVerify: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(modifier = Modifier.padding(20.dp).padding(bottom = 32.dp)) {
+            Text("Connect Securely", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                "Paste the peer's QR code to verify identity via SAS.",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            if (qrPayload.isNotEmpty()) {
+                Text("Your QR:", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                Text(qrPayload, fontSize = 9.sp, modifier = Modifier.padding(vertical = 4.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            }
+            OutlinedTextField(
+                value = remoteQr,
+                onValueChange = onRemoteQrChange,
+                label = { Text("Peer QR code") },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 2,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Button(onClick = onVerify, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Verify Peer (QR + SAS)")
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("Advanced — IP connect (less secure)", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
+            OutlinedTextField(
+                value = ipAddress,
+                onValueChange = onIpChange,
+                label = { Text("Peer IP (optional)") },
+                placeholder = { Text("192.168.1.10:9473") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+}
+
+@Composable
+fun SasVerificationDialog(
+    sasCode: String,
+    peerId: String,
+    onConfirm: () -> Unit,
+    onReject: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text("Verify Security Code") },
+        text = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    "Compare this code with your peer. Both must show the same number.",
+                    fontSize = 13.sp,
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    sasCode,
+                    fontSize = 36.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 6.sp,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("Peer: ${peerId.take(24)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        confirmButton = {
+            Button(onClick = onConfirm) { Text("Codes Match") }
+        },
+        dismissButton = {
+            TextButton(onClick = onReject) { Text("Don't Match") }
+        },
+    )
 }
 
 @Composable

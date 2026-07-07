@@ -3,51 +3,66 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SRLTCP v0.2.2</title>
+  <title>SRLTCP v0.2.3</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div id="app">
-    <!-- ── Sidebar ─────────────────────────────────── -->
     <aside class="sidebar">
       <header class="brand">
         <div class="brand-icon">S</div>
         <div>
           <h1>SRLTCP</h1>
-          <span class="version">v0.2.2</span>
+          <span class="version">v0.2.3</span>
         </div>
       </header>
 
       <nav class="sidebar-nav">
-        <button class="nav-btn active" data-panel="identity">Identity</button>
-        <button class="nav-btn" data-panel="connect">Connect</button>
+        <button class="nav-btn active" data-panel="identity">My QR</button>
+        <button class="nav-btn" data-panel="connect">Add Peer</button>
         <button class="nav-btn" data-panel="peers">Peers</button>
       </nav>
 
       <div class="sidebar-panels">
         <section id="panel-identity" class="panel active">
-          <h2>Your Identity</h2>
+          <h2>Share Your Identity</h2>
+          <p class="hint">Let peers scan or copy this QR to connect securely.</p>
+          <div class="qr-visual">
+            <img id="qr-image" alt="Your QR code" />
+          </div>
           <div class="qr-box"><code id="qr-payload">Loading…</code></div>
           <button class="btn secondary" id="copy-qr">Copy QR Payload</button>
-          <div id="sas-display" class="sas-display hidden"></div>
+          <div class="listen-badge">
+            <span class="pulse-dot"></span> Listening on port 9473
+          </div>
         </section>
 
         <section id="panel-connect" class="panel">
-          <h2>Connect</h2>
-          <div class="form-group">
-            <label>Serial Port</label>
-            <select id="serial-port"></select>
-          </div>
-          <button class="btn" id="connect-serial">Connect Serial</button>
-          <div class="form-group">
-            <label>QUIC Address</label>
-            <input type="text" id="quic-addr" placeholder="192.168.1.10:9473" />
-          </div>
-          <button class="btn" id="connect-quic">Connect LAN/WAN</button>
-          <hr class="divider" />
-          <h2>Verify Peer</h2>
-          <input type="text" id="remote-qr" placeholder="Paste peer QR payload" />
-          <button class="btn secondary" id="verify-peer">Handshake + SAS</button>
+          <h2>Connect Securely</h2>
+          <p class="hint secure-hint">Paste the peer's QR code to verify their identity via SAS.</p>
+          <textarea id="remote-qr" rows="3" placeholder="Paste peer QR payload here…"></textarea>
+          <button class="btn primary-btn" id="verify-secure">
+            <span class="btn-icon">🔒</span> Verify Peer (QR + SAS)
+          </button>
+          <p class="hint" id="connect-hint">If a peer already connected to you, verification starts immediately.</p>
+
+          <details class="advanced-section">
+            <summary>Advanced — IP connect (less secure)</summary>
+            <div class="warning-box">
+              ⚠️ Raw IP connections skip visual QR exchange. Always verify the SAS code with your peer out-of-band.
+            </div>
+            <div class="form-group">
+              <label>Peer IP address</label>
+              <input type="text" id="quic-addr" placeholder="192.168.1.10:9473" />
+            </div>
+            <button class="btn warn-btn" id="connect-quic">Connect via IP</button>
+            <hr class="divider" />
+            <div class="form-group">
+              <label>Serial Port</label>
+              <select id="serial-port"></select>
+            </div>
+            <button class="btn secondary" id="connect-serial">Connect Serial</button>
+          </details>
         </section>
 
         <section id="panel-peers" class="panel">
@@ -56,17 +71,20 @@
             <button class="btn-sm" id="refresh-peers" title="Refresh">↻</button>
           </div>
           <ul id="peer-list" class="peer-list"></ul>
-          <p id="no-peers" class="hint">Connect via QUIC or serial to add peers.</p>
+          <p id="no-peers" class="hint">Share your QR — peers appear here when they connect.</p>
         </section>
       </div>
     </aside>
 
-    <!-- ── Main chat area ──────────────────────────── -->
     <main class="chat-area">
       <header class="chat-header">
         <div class="chat-header-info">
           <h2 id="chat-title">Select a peer</h2>
-          <p id="chat-subtitle" class="subtitle">Connect or select a peer to start</p>
+          <p id="chat-subtitle" class="subtitle">Share your QR to get started</p>
+          <div id="verify-banner" class="verify-banner hidden">
+            <span>⚠️ Peer not verified</span>
+            <button class="btn-sm" id="verify-banner-btn">Verify now</button>
+          </div>
           <div id="call-status" class="call-banner hidden"></div>
         </div>
         <div class="toolbar">
@@ -94,14 +112,13 @@
       </header>
 
       <div id="peer-chips" class="peer-chips hidden"></div>
-
       <div id="transfers-panel" class="transfers-panel hidden"></div>
 
       <div id="messages" class="messages">
         <div class="empty-state" id="empty-state">
           <div class="empty-icon">🔒</div>
           <p>Secure P2P Messaging</p>
-          <span>Connect to a peer via QUIC or serial, then select them to chat</span>
+          <span>Share your QR code — when a peer connects, verify them with SAS</span>
         </div>
       </div>
 
@@ -112,6 +129,21 @@
         </button>
       </footer>
     </main>
+  </div>
+
+  <!-- SAS Verification Modal -->
+  <div id="sas-modal" class="modal hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-card">
+      <h2>Verify Security Code</h2>
+      <p class="modal-desc">Compare this 6-digit code with your peer. Both sides must show the <strong>same number</strong>.</p>
+      <div id="sas-code" class="sas-code">------</div>
+      <p class="modal-peer" id="sas-peer-label"></p>
+      <div class="modal-actions">
+        <button class="btn" id="sas-confirm">✓ Codes Match — Trust Peer</button>
+        <button class="btn danger-btn" id="sas-reject">✗ Codes Don't Match</button>
+      </div>
+    </div>
   </div>
 
   <div id="toast-container"></div>

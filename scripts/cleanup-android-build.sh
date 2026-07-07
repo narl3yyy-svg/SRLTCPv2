@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ANDROID_DIR="$ROOT_DIR/android"
 DIST_DIR="$ROOT_DIR/dist"
-VERSION="0.2.2"
+VERSION="0.2.3"
 APK_NAME="SRLTCPv2-${VERSION}.apk"
 
 FULL_CLEAN=false

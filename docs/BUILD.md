@@ -1,4 +1,4 @@
-# Build Instructions — SRLTCP v0.2.2
+# Build Instructions — SRLTCP v0.2.3
 
 ## Prerequisites
 
@@ -33,7 +33,7 @@ This script:
 2. Cross-compiles `libsrltcp_core.so` for 3 ABIs
 3. Generates UniFFI Kotlin bindings
 4. Runs `./gradlew assembleDebug`
-5. Copies APK to `dist/SRLTCPv2-0.2.2.apk`
+5. Copies APK to `dist/SRLTCPv2-0.2.3.apk`
 6. Cleans Gradle caches automatically
 
 ### APK only (jniLibs already built)
@@ -54,7 +54,7 @@ cd android
 ### Install
 
 ```bash
-adb install dist/SRLTCPv2-0.2.2.apk
+adb install dist/SRLTCPv2-0.2.3.apk
 ```
 
 ## Cleanup
@@ -77,16 +77,16 @@ Keeps: `dist/*.apk`, source, `jniLibs/` (unless `--full`)
 
 ```bash
 ./scripts/build-android.sh
-git add -A && git commit -m "Release v0.2.2"
+git add -A && git commit -m "Release v0.2.3"
 ./scripts/create-github-release.sh    # edit VERSION in script first
 ```
 
 Or manually:
 
 ```bash
-git tag -a v0.2.2 -m "SRLTCP v0.2.2"
+git tag -a v0.2.3 -m "SRLTCP v0.2.3"
 git push origin main --tags
-gh release create v0.2.2 dist/SRLTCPv2-0.2.2.apk
+gh release create v0.2.3 dist/SRLTCPv2-0.2.3.apk
 ```
 
 ## Rust Core

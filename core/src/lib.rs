@@ -1,6 +1,7 @@
 //! SRLTCP v0.2.0 — Secure Reliable LAN/TCP/Serial P2P messaging core.
 
 pub mod crypto;
+pub mod qr_image;
 pub mod network;
 pub mod p2p;
 pub mod protocol;
@@ -9,6 +10,7 @@ pub mod transfer;
 pub mod webrtc;
 
 pub use crypto::{compute_sas, DoubleRatchet, HybridKeyExchange, Identity};
+pub use qr_image::qr_png_data_url;
 pub use network::{QuicTransport, TransportKind};
 pub use p2p::{EngineEvent, P2pEngine};
 pub use protocol::{ChatMessage, Envelope, MessageType};
