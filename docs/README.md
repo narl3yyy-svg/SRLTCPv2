@@ -7,7 +7,7 @@ SRLTCP is a bleeding-edge, security-critical peer-to-peer messaging application 
 ## Quick Start
 
 ```bash
-git clone https://github.com/YOUR_USER/SRLTCPv2.git
+git clone https://github.com/narl3yyy-svg/SRLTCPv2.git
 cd SRLTCPv2
 ./run.sh          # Linux/macOS
 # or

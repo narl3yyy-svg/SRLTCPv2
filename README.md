@@ -9,7 +9,7 @@ SRLTCP is a security-focused peer-to-peer messaging stack with a Rust core, Taur
 ### Desktop (Linux / macOS / Windows)
 
 ```bash
-git clone https://github.com/YOUR_USER/SRLTCPv2.git
+git clone https://github.com/narl3yyy-svg/SRLTCPv2.git
 cd SRLTCPv2
 ./run.sh          # Linux/macOS
 # or
