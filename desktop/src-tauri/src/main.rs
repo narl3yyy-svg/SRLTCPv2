@@ -1,4 +1,4 @@
-//! SRLTCP v0.2.7 Desktop — Tauri v2 backend with graceful shutdown.
+//! SRLTCP v0.2.8 Desktop — Tauri v2 backend with graceful shutdown.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -39,7 +39,7 @@ async fn get_qr_image(state: State<'_, AppState>) -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn list_serial_ports() -> Result<Vec<String>, String> {
+async fn list_serial_ports() -> Result<Vec<srltcp_core::serial::SerialPortEntry>, String> {
     Ok(P2pEngine::available_serial_ports())
 }
 

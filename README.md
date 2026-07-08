@@ -1,139 +1,169 @@
-# SRLTCPv2
+# SRLTCP
 
-**Secure Reliable LAN/TCP/Serial P2P Messaging — v0.2.7**
+**Secure, reliable peer-to-peer messaging over LAN, QUIC, and serial.**
 
-Rust core + Tauri desktop + Android foreground service. COBS/CRC serial, QUIC networking, hybrid post-quantum crypto, file transfer, and voice/video calls.
+SRLTCP is privacy-first communication software: no accounts, no central servers, and end-to-end encryption with a human-verifiable SAS step before you trust a peer. A single Rust core powers the desktop (Tauri) and Android (Kotlin/Compose) clients, so crypto and protocol behavior stay consistent everywhere.
 
-## Quick Start (Prebuilt — No Compiler Required)
+**Current release: [v0.2.8](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.8)**
 
-Clone the repo and run the launcher. It downloads the matching prebuilt binary from [GitHub Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases) — no Rust or build tools needed.
+---
 
-### Desktop
+## Why SRLTCP
+
+| Principle | What it means |
+|-----------|----------------|
+| **Freedom to run** | Clone, build, or download prebuilt binaries — no vendor lock-in |
+| **Privacy by design** | Hybrid key exchange, double ratchet, QR + SAS verification |
+| **Works offline** | Serial/USB cable transport for air-gapped or low-power links |
+| **Lightweight** | Rust core tuned for modest hardware (e.g. Raspberry Pi class devices) |
+
+---
+
+## Quick start
+
+### Desktop (Linux / macOS)
 
 ```bash
 git clone https://github.com/narl3yyy-svg/SRLTCPv2.git
 cd SRLTCPv2
-./run.sh          # Linux/macOS
+./run.sh
 ```
+
+**Update an existing checkout** (no need to re-clone):
+
+```bash
+git pull && ./run.sh --pull
+```
+
+`run.sh` downloads the matching prebuilt binary from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases) when available, or builds from source as a fallback.
+
+| Flag | Purpose |
+|------|---------|
+| `--pull` | `git pull --ff-only` from `origin/main` before launch |
+| `--rebuild` | Compile from source, then run |
+| `--no-prebuilt` | Use only local `dist/` binaries |
+
+### Windows
 
 ```bat
 git clone https://github.com/narl3yyy-svg/SRLTCPv2.git
 cd SRLTCPv2
-run.bat           # Windows
+run.bat
 ```
-
-Press **Ctrl+C** or close the window for graceful shutdown. Use `--rebuild` only if you want to compile from source.
-
-| Platform | Prebuilt asset (auto-downloaded) |
-|----------|----------------------------------|
-| Linux x86_64 | `srltcp-desktop-linux-x86_64` |
-| macOS Apple Silicon | `srltcp-desktop-macos-aarch64` |
-| macOS Intel | `srltcp-desktop-macos-x86_64` |
-| Windows x86_64 | `srltcp-desktop-windows-x86_64.exe` |
-
-**Flags:** `--rebuild` compiles from source; `--no-prebuilt` skips GitHub download (uses local `dist/` only).
 
 ### Android
 
-Download `SRLTCPv2-0.2.7.apk` from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest) and install:
+Install the APK from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest):
 
 ```bash
-adb install SRLTCPv2-0.2.7.apk
+adb install dist/SRLTCPv2-0.2.8.apk
 ```
 
-Or build from source (requires NDK, SDK, JDK 17):
+Or build locally (JDK 17, Android SDK/NDK):
 
 ```bash
 ./scripts/build-android.sh
 ```
 
-## Connecting Peers (QR + SAS)
+---
 
-v0.2.7 uses **QR-only** peer discovery — no manual IP entry. QR codes embed the peer's LAN address for automatic connection:
+## Connect securely (QR + SAS)
 
-1. Share your QR code (desktop sidebar or Android connect sheet)
-2. Paste the peer's QR payload and click **Connect & Verify (QR + SAS)**
-3. Compare the 6-digit SAS code out-of-band before trusting
-4. Start messaging once codes match
+1. **Share** your QR code (desktop sidebar or Android connect sheet).
+2. **Paste** the peer's QR payload and tap **Connect & Verify**.
+3. **Compare** the 6-digit SAS code out-of-band (voice, in person, etc.).
+4. **Trust** only when both sides show the same code — then messaging is E2EE.
 
-## Building from Source (Developers)
+Saved contacts persist across restarts. Remove a contact on any platform to revoke trust and disconnect.
 
-See [docs/BUILD.md](docs/BUILD.md) for full instructions. Desktop requires Rust 1.85+ and platform libraries (webkit2gtk on Linux).
-
-```bash
-./run.sh --rebuild                    # Desktop (compile + launch)
-./scripts/build-desktop.sh            # Desktop prebuilt only
-./scripts/build-android.sh            # Android APK
-```
+---
 
 ## Features
 
 | Feature | Desktop | Android |
-|---------|---------|---------|
+|---------|:-------:|:-------:|
 | E2EE messaging | ✓ | ✓ |
 | QUIC P2P (QR discovery) | ✓ | ✓ |
-| Serial transport | ✓ | — |
+| USB / serial transport | ✓ | — |
 | File transfer + progress | ✓ | ✓ |
-| Voice / video calls | ✓ | ✓ |
-| Inline images / video | ✓ | ✓ |
-| Background service | — | Foreground Service |
+| Saved contacts & settings | ✓ | ✓ |
+| Display name after auth | ✓ | ✓ |
+| Voice / video calls | ✓* | ✓* |
+| Foreground background service | — | ✓ |
 
-## Project Structure
+\*Voice and video are experimental on some platforms.
+
+### v0.2.8 highlights
+
+- Desktop SAS verification modal shows codes reliably (high-contrast UI)
+- Android chat input rises with the keyboard; keyboard **Send** submits messages
+- Disconnect button and saved peers sheet on Android
+- Remove trusted contacts on desktop and Android
+- USB serial ports show manufacturer/product names, not only `/dev/tty*`
+- Modern QR and serial-picker styling
+- `git pull && ./run.sh --pull` update workflow
+
+---
+
+## Project layout
 
 ```
 SRLTCPv2/
-├── run.sh / run.bat                 # Launch desktop (prebuilt auto-download)
-├── cleanup.sh                       # Stop processes, optional --android-build
+├── run.sh / run.bat              # Launch desktop (prebuilt auto-download)
+├── cleanup.sh                    # Stop processes, release ports
 ├── scripts/
-│   ├── build-desktop.sh             # Build + stage desktop prebuilt
-│   ├── build-android.sh             # Full Android pipeline
-│   ├── assemble-apk.sh              # Gradle-only (needs jniLibs)
-│   ├── create-github-release.sh     # Manual release fallback
-│   └── lib/
-│       ├── version.sh               # Read version from Cargo.toml
-│       └── android-env.sh           # JDK/SDK/NDK detection
-├── .github/workflows/release.yml    # CI: build all platforms on tag push
-├── core/                            # Rust library + UniFFI
-├── desktop/                         # Tauri v2 app
-├── android/                         # Kotlin + Compose
-└── dist/                            # Built APK + prebuilt binaries
+│   ├── build-desktop.sh
+│   ├── build-android.sh
+│   └── lib/version.sh            # Version from Cargo.toml
+├── core/                         # Rust: crypto, QUIC, serial, UniFFI
+├── desktop/                      # Tauri v2 UI
+├── android/                      # Kotlin + Compose
+│   └── app/src/main/java/com/srltcp/v2/
+│       ├── data/                 # Preferences, saved contacts
+│       └── ui/                   # Settings, peers sheets
+└── dist/                         # APK + prebuilt binaries
 ```
+
+---
+
+## Building from source
+
+See [docs/BUILD.md](docs/BUILD.md). Desktop needs Rust 1.85+ and platform libraries (e.g. webkit2gtk on Linux).
+
+```bash
+./run.sh --rebuild
+./scripts/build-desktop.sh
+./scripts/build-android.sh
+```
+
+---
+
+## Security
+
+SRLTCP uses hybrid post-quantum key exchange, a double ratchet for forward secrecy, and SAS verification to mitigate MITM during first contact. See [docs/SECURITY.md](docs/SECURITY.md) and [docs/CRYPTO.md](docs/CRYPTO.md).
+
+---
 
 ## Releases
 
-Every version tag (`v*`) triggers GitHub Actions to build and publish:
-
-- Desktop prebuilts for Linux, macOS (Intel + Apple Silicon), and Windows
-- Android APK (`SRLTCPv2-<version>.apk`)
+Pushing a version tag triggers CI to publish desktop prebuilts and the Android APK:
 
 ```bash
-git tag -a v0.2.7 -m "SRLTCP v0.2.7"
+git tag -a v0.2.8 -m "SRLTCP v0.2.8"
 git push origin main
-git push origin v0.2.7
+git push origin v0.2.8
 ```
 
-## Cleanup
-
-```bash
-./cleanup.sh                         # Stop desktop, release ports
-./cleanup.sh --android-build         # Also remove Gradle caches
-./scripts/cleanup-android-build.sh --full  # Also remove jniLibs
-```
-
-## Known Issues
-
-| Issue | Workaround |
-|-------|------------|
-| Gradle fails with `26.0.1` | Use JDK 17: `export JAVA_HOME=/usr/lib/jvm/java-17-openjdk` |
-| No jniLibs after clone | Run `./scripts/build-android.sh` (not just gradlew) |
-| Prebuilt download fails | Check [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases) for your platform; use `--rebuild` as fallback |
+---
 
 ## Documentation
 
-- [docs/BUILD.md](docs/BUILD.md) — Detailed build instructions
+- [docs/USER_GUIDE.md](docs/USER_GUIDE.md) — End-user guide
+- [docs/BUILD.md](docs/BUILD.md) — Build instructions
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — System design
 - [docs/SECURITY.md](docs/SECURITY.md) — Threat model
-- [docs/USER_GUIDE.md](docs/USER_GUIDE.md) — End-user guide
+
+---
 
 ## License
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SRLTCP v0.2.7</title>
+  <title>SRLTCP v0.2.8</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -13,7 +13,7 @@
         <div class="brand-icon">S</div>
         <div>
           <h1>SRLTCP</h1>
-          <span class="version">v0.2.7</span>
+          <span class="version">v0.2.8</span>
         </div>
       </header>
 
@@ -21,6 +21,7 @@
         <button class="nav-btn active" data-panel="identity">My QR</button>
         <button class="nav-btn" data-panel="connect">Add Peer</button>
         <button class="nav-btn" data-panel="peers">Peers</button>
+        <button class="nav-btn" data-panel="settings">Settings</button>
       </nav>
 
       <div class="sidebar-panels">
@@ -73,6 +74,22 @@
           </div>
           <ul id="peer-list" class="peer-list"></ul>
           <p id="no-peers" class="hint">Verified peers appear here after SAS confirmation.</p>
+          <h2 class="sub-heading">Saved Contacts</h2>
+          <div id="contacts-list" class="contacts-list"></div>
+        </section>
+
+        <section id="panel-settings" class="panel">
+          <h2>Settings</h2>
+          <label class="field-label" for="display-name">Display name</label>
+          <input type="text" id="display-name" placeholder="Shown to peers after verification" />
+          <button class="btn secondary" id="save-display-name">Save display name</button>
+          <div class="settings-card">
+            <h3>Update app</h3>
+            <p class="hint">Stay on <code>main</code> and run:</p>
+            <code class="update-cmd">git pull && ./run.sh</code>
+            <button class="btn secondary" id="check-updates">How to update</button>
+          </div>
+          <p class="hint settings-note">Voice/video calls are experimental on some platforms.</p>
         </section>
       </div>
     </aside>

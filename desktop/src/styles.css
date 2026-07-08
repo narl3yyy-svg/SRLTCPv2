@@ -128,8 +128,8 @@ body {
 }
 
 .qr-box {
-  background: #ffffff;
-  border: 1px solid #b8c4d8;
+  background: linear-gradient(145deg, #1e293b 0%, #0f172a 100%);
+  border: 1px solid #475569;
   border-radius: var(--radius-sm);
   padding: 12px 14px;
   word-break: break-all;
@@ -142,7 +142,7 @@ body {
 }
 
 .qr-box code {
-  color: #0f172a;
+  color: #e2e8f0;
   font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
   font-weight: 500;
   letter-spacing: 0.01em;
@@ -151,8 +151,8 @@ body {
 .endpoint-card {
   margin-top: 10px;
   padding: 10px 12px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border);
+  background: linear-gradient(135deg, rgba(124, 108, 240, 0.12), rgba(45, 212, 160, 0.08));
+  border: 1px solid rgba(124, 108, 240, 0.35);
   border-radius: var(--radius-sm);
   display: flex;
   flex-direction: column;
@@ -169,7 +169,7 @@ body {
 
 .endpoint-card code {
   font-size: 0.82rem;
-  color: var(--success);
+  color: #6ee7b7;
   font-family: 'SF Mono', 'Fira Code', monospace;
   word-break: break-all;
 }
@@ -274,10 +274,21 @@ textarea:focus { border-color: var(--accent); }
 
 .serial-section {
   margin-top: 20px;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(124, 108, 240, 0.3);
   border-radius: var(--radius-sm);
   padding: 12px;
-  background: var(--bg-tertiary);
+  background: linear-gradient(160deg, #1a2030 0%, #141a28 100%);
+}
+
+.serial-section select {
+  background: #0f1520;
+  border-color: #3d4a63;
+  color: #e8edf7;
+}
+
+.serial-section select option {
+  background: #0f1520;
+  color: #e8edf7;
 }
 
 .serial-section summary {
@@ -375,17 +386,21 @@ textarea:focus { border-color: var(--accent); }
 }
 
 .sas-code {
-  font-size: 2.6rem;
+  font-size: 2.8rem;
   font-weight: 800;
-  letter-spacing: 0.3em;
-  color: #0f172a;
-  padding: 18px 20px;
-  background: #ffffff;
+  letter-spacing: 0.22em;
+  color: #6ee7b7;
+  padding: 20px 16px;
+  background: #0b1220;
   border: 2px solid var(--success);
   border-radius: var(--radius);
   font-family: 'SF Mono', 'Fira Code', monospace;
   text-align: center;
-  box-shadow: 0 4px 20px rgba(45, 212, 160, 0.15);
+  box-shadow: 0 0 24px rgba(45, 212, 160, 0.25);
+  min-height: 4.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .modal-peer { font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 16px; }
@@ -481,6 +496,76 @@ input:focus, select:focus { border-color: var(--accent); }
 
 .peer-list li.active { background: var(--accent-dim); border: 1px solid var(--accent); }
 .peer-list li.active .peer-dot { background: var(--success); }
+
+.peer-list li {
+  justify-content: space-between;
+}
+
+.peer-remove, .danger-sm {
+  background: transparent;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  margin-left: auto;
+}
+
+.contacts-list { margin-top: 8px; }
+
+.contact-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.contact-select {
+  flex: 1;
+  text-align: left;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.contact-name { display: block; font-size: 0.82rem; font-weight: 600; }
+.contact-meta { display: block; font-size: 0.68rem; color: var(--text-secondary); }
+
+.settings-card {
+  margin-top: 16px;
+  padding: 14px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.settings-card h3 {
+  font-size: 0.85rem;
+  margin-bottom: 8px;
+}
+
+.update-cmd {
+  display: block;
+  margin: 8px 0;
+  padding: 8px 10px;
+  background: #0f1520;
+  border-radius: 6px;
+  color: #a5b4fc;
+  font-size: 0.78rem;
+}
+
+.sub-heading {
+  margin-top: 16px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.settings-note { margin-top: 12px; font-style: normal; }
 
 .sas-display {
   margin-top: 10px;

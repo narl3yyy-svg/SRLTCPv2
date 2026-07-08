@@ -9,4 +9,4 @@ pub mod transport;
 
 pub use frame::{Frame, FrameFlags, FrameError, MAX_PAYLOAD_SIZE};
 pub use reliability::{ReliabilityLayer, ReceiveResult, DEFAULT_RTO_MS, DEFAULT_WINDOW_SIZE};
-pub use transport::{SerialConfig, SerialEvent, SerialTransport, SerialReader, list_ports};
+pub use transport::{SerialConfig, SerialEvent, SerialPortEntry, SerialTransport, SerialReader, list_ports};

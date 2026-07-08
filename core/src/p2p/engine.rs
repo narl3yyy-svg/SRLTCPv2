@@ -539,7 +539,7 @@ impl P2pEngine {
         }
     }
 
-    pub fn available_serial_ports() -> Vec<String> {
+    pub fn available_serial_ports() -> Vec<crate::serial::SerialPortEntry> {
         list_ports()
     }
 

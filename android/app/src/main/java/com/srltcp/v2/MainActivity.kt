@@ -14,6 +14,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -29,11 +32,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import coil.compose.AsyncImage
+import com.srltcp.v2.data.AppPreferences
+import com.srltcp.v2.data.SavedContact
 import com.srltcp.v2.service.SrltcpForegroundService
+import com.srltcp.v2.ui.PeersSheet
+import com.srltcp.v2.ui.SettingsSheet
 import com.srltcp.v2.ui.theme.SRLTCPTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -112,10 +120,51 @@ fun ChatScreen() {
     var sasCode by remember { mutableStateOf("") }
     var sasPeerId by remember { mutableStateOf<String?>(null) }
     var remoteQrInput by remember { mutableStateOf("") }
+    var showSettingsSheet by remember { mutableStateOf(false) }
+    var showPeersSheet by remember { mutableStateOf(false) }
+    var displayName by remember { mutableStateOf("") }
+    val savedContacts = remember { mutableStateListOf<SavedContact>() }
+    val prefs = remember { AppPreferences(context) }
     val peerVerified = remember { mutableStateMapOf<String, Boolean>() }
     val listState = rememberLazyListState()
 
     fun showSnackbar(msg: String) { snackbarMessage = msg }
+
+    fun sendCurrentMessage() {
+        val peer = activePeer ?: return
+        if (peerVerified[peer] != true) {
+            showSnackbar("Verify peer with SAS first")
+            return
+        }
+        val text = inputText.trim()
+        if (text.isEmpty()) return
+        SrltcpEngineHolder.getOrCreate().sendMessage(peer, text)
+        val sender = displayName.ifBlank { "You" }
+        messages = messages + ChatMessage(content = text, isSent = true, sender = sender)
+        inputText = ""
+    }
+
+    fun removeContact(peerId: String) {
+        scope.launch(Dispatchers.IO) {
+            SrltcpEngineHolder.getOrCreate().disconnectPeer(peerId)
+        }
+        peers.remove(peerId)
+        peerVerified.remove(peerId)
+        savedContacts.removeAll { it.peerId == peerId }
+        prefs.removeContact(peerId)
+        if (activePeer == peerId) activePeer = peers.firstOrNull()
+        showSnackbar("Contact removed")
+    }
+
+    LaunchedEffect(Unit) {
+        displayName = prefs.displayName
+        savedContacts.clear()
+        savedContacts.addAll(prefs.loadContacts())
+        prefs.loadContacts().forEach { c ->
+            if (!peers.contains(c.peerId)) peers.add(c.peerId)
+            peerVerified[c.peerId] = c.verified
+        }
+    }
 
     fun addMediaMessage(path: String, filename: String, isSent: Boolean, sender: String) {
         val kind = mediaKindForPath(path, filename)
@@ -269,6 +318,7 @@ fun ChatScreen() {
     }
 
     Scaffold(
+        modifier = Modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
@@ -276,13 +326,33 @@ fun ChatScreen() {
                     Column {
                         Text("SRLTCP", fontWeight = FontWeight.Bold)
                         Text(
-                            "v0.2.7 • ${if (engineOnline) "Online" else "Offline"} • bg active",
+                            "v0.2.8 • ${if (engineOnline) "Online" else "Offline"} • bg active",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 },
                 actions = {
+                    if (activePeer != null) {
+                        IconButton(onClick = {
+                            val peer = activePeer ?: return@IconButton
+                            scope.launch(Dispatchers.IO) {
+                                SrltcpEngineHolder.getOrCreate().disconnectPeer(peer)
+                            }
+                            peers.remove(peer)
+                            peerVerified.remove(peer)
+                            if (activePeer == peer) activePeer = peers.firstOrNull()
+                            showSnackbar("Disconnected")
+                        }) {
+                            Icon(Icons.Default.LinkOff, contentDescription = "Disconnect")
+                        }
+                    }
+                    IconButton(onClick = { showPeersSheet = true }) {
+                        Icon(Icons.Default.People, contentDescription = "Peers")
+                    }
+                    IconButton(onClick = { showSettingsSheet = true }) {
+                        Icon(Icons.Default.Settings, contentDescription = "Settings")
+                    }
                     IconButton(onClick = { showConnectSheet = true }) {
                         Icon(Icons.Default.QrCode, contentDescription = "Connect peer")
                     }
@@ -324,7 +394,7 @@ fun ChatScreen() {
             )
         },
         bottomBar = {
-            Column {
+            Column(Modifier.imePadding()) {
                 callState?.let { call ->
                     CallStatusBar(
                         call = call,
@@ -350,25 +420,15 @@ fun ChatScreen() {
                             placeholder = { Text("Message…") },
                             singleLine = true,
                             enabled = activePeer != null && peerVerified[activePeer] == true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(onSend = {
+                                sendCurrentMessage()
+                                true
+                            }),
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         FilledIconButton(
-                            onClick = {
-                                val peer = activePeer ?: return@FilledIconButton
-                                if (peerVerified[peer] != true) {
-                                    showSnackbar("Verify peer with SAS first")
-                                    return@FilledIconButton
-                                }
-                                if (inputText.isNotBlank()) {
-                                    SrltcpEngineHolder.getOrCreate().sendMessage(peer, inputText)
-                                    messages = messages + ChatMessage(
-                                        content = inputText,
-                                        isSent = true,
-                                        sender = "You",
-                                    )
-                                    inputText = ""
-                                }
-                            },
+                            onClick = { sendCurrentMessage() },
                             enabled = activePeer != null && peerVerified[activePeer] == true,
                         ) {
                             Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
@@ -385,7 +445,7 @@ fun ChatScreen() {
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 4.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
                     ),
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
@@ -408,12 +468,19 @@ fun ChatScreen() {
                                 Icon(Icons.Default.ContentCopy, contentDescription = "Copy QR")
                             }
                         }
-                        Text(
-                            qrPayload,
-                            fontSize = 9.sp,
-                            modifier = Modifier.padding(top = 4.dp),
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        )
+                        Surface(
+                            color = MaterialTheme.colorScheme.inverseSurface,
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        ) {
+                            Text(
+                                qrPayload,
+                                fontSize = 10.sp,
+                                modifier = Modifier.padding(10.dp),
+                                color = MaterialTheme.colorScheme.inverseOnSurface,
+                                lineHeight = 14.sp,
+                            )
+                        }
                     }
                 }
             }
@@ -467,7 +534,9 @@ fun ChatScreen() {
             } else {
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(vertical = 8.dp),
                 ) {
@@ -519,7 +588,17 @@ fun ChatScreen() {
             sasCode = sasCode,
             peerId = sasPeerId ?: "",
             onConfirm = {
-                sasPeerId?.let { peerVerified[it] = true }
+                sasPeerId?.let { peerId ->
+                    peerVerified[peerId] = true
+                    val contact = SavedContact(
+                        peerId = peerId,
+                        displayName = displayName.ifBlank { peerId.take(20) },
+                        verified = true,
+                    )
+                    prefs.upsertContact(contact)
+                    val idx = savedContacts.indexOfFirst { it.peerId == peerId }
+                    if (idx >= 0) savedContacts[idx] = contact else savedContacts.add(contact)
+                }
                 showSasDialog = false
                 showSnackbar("Peer verified — secure channel established")
             },
@@ -535,6 +614,37 @@ fun ChatScreen() {
                 showSasDialog = false
                 showSnackbar("SAS mismatch — peer disconnected")
             },
+        )
+    }
+
+    if (showSettingsSheet) {
+        SettingsSheet(
+            version = "0.2.8",
+            displayName = displayName,
+            onDisplayNameChange = { name ->
+                displayName = name
+                prefs.displayName = name
+            },
+            onDismiss = { showSettingsSheet = false },
+        )
+    }
+
+    if (showPeersSheet) {
+        PeersSheet(
+            contacts = savedContacts.toList(),
+            activePeer = activePeer,
+            onSelect = { activePeer = it },
+            onRemove = { removeContact(it) },
+            onDisconnect = { peerId ->
+                scope.launch(Dispatchers.IO) {
+                    SrltcpEngineHolder.getOrCreate().disconnectPeer(peerId)
+                }
+                peers.remove(peerId)
+                peerVerified.remove(peerId)
+                if (activePeer == peerId) activePeer = peers.firstOrNull()
+                showSnackbar("Disconnected")
+            },
+            onDismiss = { showPeersSheet = false },
         )
     }
 }

@@ -322,6 +322,9 @@ impl SrltcpEngine {
 
     pub fn available_serial_ports(&self) -> Vec<String> {
         P2pEngine::available_serial_ports()
+            .into_iter()
+            .map(|e| e.label)
+            .collect()
     }
 
     pub fn start(&self, quic_port: u16) {

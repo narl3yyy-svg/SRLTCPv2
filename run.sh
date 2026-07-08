@@ -27,22 +27,42 @@ err()  { echo -e "${RED}[SRLTCP]${NC} $*" >&2; }
 
 FORCE_REBUILD=false
 USE_PREBUILT=true
+GIT_PULL=false
 
 usage() {
-    echo "Usage: $0 [--rebuild] [--no-prebuilt]"
+    echo "Usage: $0 [--pull] [--rebuild] [--no-prebuilt]"
     echo "  (default)      Launch prebuilt binary (local or downloaded from Releases)"
+    echo "  --pull         git pull --ff-only from origin/main before launch"
     echo "  --rebuild      Compile from source, then launch"
     echo "  --no-prebuilt  Skip prebuilt download (use local dist/ only)"
 }
 
 for arg in "$@"; do
     case "$arg" in
+        --pull) GIT_PULL=true ;;
         --rebuild) FORCE_REBUILD=true ;;
         --no-prebuilt) USE_PREBUILT=false ;;
         -h|--help) usage; exit 0 ;;
         *) err "Unknown option: $arg"; usage; exit 1 ;;
     esac
 done
+
+maybe_git_pull() {
+    if [[ "$GIT_PULL" != true ]]; then
+        return 0
+    fi
+    if [[ ! -d "$SCRIPT_DIR/.git" ]] || ! command -v git &>/dev/null; then
+        warn "git pull skipped — not a git checkout"
+        return 0
+    fi
+    log "Updating from origin/main (git pull --ff-only)..."
+    if git -C "$SCRIPT_DIR" pull --ff-only origin main; then
+        VERSION="$(get_workspace_version "$SCRIPT_DIR")"
+        ok "Updated to v${VERSION}"
+    else
+        warn "git pull failed — continuing with local tree"
+    fi
+}
 
 cleanup() {
     log "Shutting down gracefully (Ctrl+C)..."
@@ -324,13 +344,13 @@ resolve_binary() {
     if [[ "$FORCE_REBUILD" == true ]]; then
         ensure_rust
         build_from_source
-        echo "target/release/srltcp-desktop"
+        printf '%s' "target/release/srltcp-desktop"
         return 0
     fi
 
     bin="$(find_binary)"
     if [[ -n "$bin" ]]; then
-        echo "$bin"
+        printf '%s' "$bin"
         return 0
     fi
 
@@ -386,6 +406,7 @@ main() {
     log "Platform: ${os} / ${arch}"
 
     check_stale
+    maybe_git_pull
 
     local binary
     binary="$(resolve_binary)"

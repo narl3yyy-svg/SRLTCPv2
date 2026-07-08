@@ -217,14 +217,50 @@ fn extract_frame(buf: &mut BytesMut) -> Option<Vec<u8>> {
     }
 }
 
-/// List available serial ports.
-pub fn list_ports() -> Vec<String> {
+/// Serial port with human-readable label for UI dropdowns.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SerialPortEntry {
+    pub path: String,
+    pub label: String,
+}
+
+#[cfg(all(not(target_os = "android"), feature = "desktop"))]
+fn port_label(p: &serialport::SerialPortInfo) -> String {
+    use serialport::SerialPortType;
+    let path = &p.port_name;
+    match &p.port_type {
+        SerialPortType::UsbPort(info) => {
+            let product = info
+                .product
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .unwrap_or("USB Serial");
+            let vendor = info
+                .manufacturer
+                .as_deref()
+                .filter(|s| !s.is_empty());
+            match vendor {
+                Some(v) => format!("{v} {product} ({path})"),
+                None => format!("{product} ({path})"),
+            }
+        }
+        SerialPortType::PciPort => format!("PCI adapter ({path})"),
+        SerialPortType::BluetoothPort => format!("Bluetooth ({path})"),
+        SerialPortType::Unknown => path.clone(),
+    }
+}
+
+/// List available serial ports with descriptive labels.
+pub fn list_ports() -> Vec<SerialPortEntry> {
     #[cfg(all(not(target_os = "android"), feature = "desktop"))]
     {
         serialport::available_ports()
             .unwrap_or_default()
             .into_iter()
-            .map(|p| p.port_name)
+            .map(|p| SerialPortEntry {
+                path: p.port_name.clone(),
+                label: port_label(&p),
+            })
             .collect()
     }
     #[cfg(not(all(not(target_os = "android"), feature = "desktop")))]
