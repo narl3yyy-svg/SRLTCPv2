@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# SRLTCP v0.2.3 — Download and Run (Linux/macOS)
+# SRLTCP — Download and Run (Linux/macOS)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# shellcheck source=scripts/lib/version.sh
+source "$SCRIPT_DIR/scripts/lib/version.sh"
+
 PID_FILE="$SCRIPT_DIR/.srltcp.pid"
 LOG_FILE="$SCRIPT_DIR/.srltcp.log"
 QUIC_PORT="${SRLTCP_PORT:-9473}"
-VERSION="0.2.3"
+VERSION="$(get_workspace_version "$SCRIPT_DIR")"
 REPO="narl3yyy-svg/SRLTCPv2"
 
 RED='\033[0;31m'

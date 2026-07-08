@@ -1,4 +1,4 @@
-# Build Instructions — SRLTCP v0.2.3
+# Build Instructions — SRLTCP v0.2.4
 
 ## Prerequisites
 
@@ -33,7 +33,7 @@ This script:
 2. Cross-compiles `libsrltcp_core.so` for 3 ABIs
 3. Generates UniFFI Kotlin bindings
 4. Runs `./gradlew assembleDebug`
-5. Copies APK to `dist/SRLTCPv2-0.2.3.apk`
+5. Copies APK to `dist/SRLTCPv2-0.2.4.apk`
 6. Cleans Gradle caches automatically
 
 ### APK only (jniLibs already built)
@@ -54,7 +54,7 @@ cd android
 ### Install
 
 ```bash
-adb install dist/SRLTCPv2-0.2.3.apk
+adb install dist/SRLTCPv2-0.2.4.apk
 ```
 
 ## Cleanup
@@ -73,20 +73,28 @@ adb install dist/SRLTCPv2-0.2.3.apk
 Removes: `android/app/build/`, `android/.gradle/`, `android/build/`
 Keeps: `dist/*.apk`, source, `jniLibs/` (unless `--full`)
 
-## GitHub Release
+## GitHub Release (CI — recommended)
+
+Pushing a version tag triggers `.github/workflows/release.yml`, which builds and publishes:
+
+- `srltcp-desktop-linux-x86_64`
+- `srltcp-desktop-macos-aarch64` / `srltcp-desktop-macos-x86_64`
+- `srltcp-desktop-windows-x86_64.exe`
+- `SRLTCPv2-<version>.apk`
 
 ```bash
-./scripts/build-android.sh
-git add -A && git commit -m "Release v0.2.3"
-./scripts/create-github-release.sh    # edit VERSION in script first
+# Bump version in Cargo.toml, commit, then:
+git tag -a v0.2.4 -m "SRLTCP v0.2.4"
+git push origin main
+git push origin v0.2.4
 ```
 
-Or manually:
+Manual fallback (local artifacts in `dist/`):
 
 ```bash
-git tag -a v0.2.3 -m "SRLTCP v0.2.3"
-git push origin main --tags
-gh release create v0.2.3 dist/SRLTCPv2-0.2.3.apk
+./scripts/build-desktop.sh
+./scripts/build-android.sh
+./scripts/create-github-release.sh
 ```
 
 ## Rust Core

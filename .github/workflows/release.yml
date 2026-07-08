@@ -1,0 +1,165 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config \
+            libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build desktop (linux-x86_64)
+        run: |
+          cargo build --release -p srltcp-desktop
+          mkdir -p dist
+          cp target/release/srltcp-desktop dist/srltcp-desktop-linux-x86_64
+          chmod +x dist/srltcp-desktop-linux-x86_64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux-x86_64
+          path: dist/srltcp-desktop-linux-x86_64
+
+  build-macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build desktop (macos-aarch64 + macos-x86_64)
+        run: |
+          rustup target add x86_64-apple-darwin
+          cargo build --release -p srltcp-desktop
+          cargo build --release -p srltcp-desktop --target x86_64-apple-darwin
+          mkdir -p dist
+          cp target/release/srltcp-desktop dist/srltcp-desktop-macos-aarch64
+          cp target/x86_64-apple-darwin/release/srltcp-desktop dist/srltcp-desktop-macos-x86_64
+          chmod +x dist/srltcp-desktop-macos-aarch64 dist/srltcp-desktop-macos-x86_64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-macos
+          path: dist/srltcp-desktop-macos-*
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build desktop (windows-x86_64)
+        shell: pwsh
+        run: |
+          cargo build --release -p srltcp-desktop
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target\release\srltcp-desktop.exe dist\srltcp-desktop-windows-x86_64.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows-x86_64
+          path: dist/srltcp-desktop-windows-x86_64.exe
+
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager "platforms;android-35" "ndk;27.2.12479018" "platform-tools"
+
+      - name: Build APK
+        run: ./scripts/build-android.sh --no-cleanup
+
+      - name: Stage APK
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          cp "dist/SRLTCPv2-${VERSION}.apk" "dist/SRLTCPv2-release.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: dist/SRLTCPv2-release.apk
+
+  publish:
+    needs: [build-linux, build-macos, build-windows, build-android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Rename APK for release
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mv artifacts/SRLTCPv2-release.apk "artifacts/SRLTCPv2-${VERSION}.apk"
+          ls -la artifacts/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body: |
+            ## SRLTCP ${{ github.ref_name }}
+
+            Prebuilt desktop binaries and Android APK — no compiler required.
+
+            ### Desktop (download repo, then run)
+            ```bash
+            git clone https://github.com/narl3yyy-svg/SRLTCPv2.git
+            cd SRLTCPv2
+            ./run.sh          # Linux/macOS
+            run.bat           # Windows
+            ```
+
+            Launchers auto-download the matching prebuilt binary from this release.
+
+            ### Android
+            ```bash
+            adb install SRLTCPv2-<version>.apk
+            ```
+
+            ### Release assets
+            | Platform | Asset |
+            |----------|-------|
+            | Linux x86_64 | `srltcp-desktop-linux-x86_64` |
+            | macOS Apple Silicon | `srltcp-desktop-macos-aarch64` |
+            | macOS Intel | `srltcp-desktop-macos-x86_64` |
+            | Windows x86_64 | `srltcp-desktop-windows-x86_64.exe` |
+            | Android | `SRLTCPv2-${{ github.ref_name }}.apk` |
+
+            See [README.md](https://github.com/narl3yyy-svg/SRLTCPv2/blob/main/README.md) and [docs/BUILD.md](https://github.com/narl3yyy-svg/SRLTCPv2/blob/main/docs/BUILD.md).
+          files: |
+            artifacts/srltcp-desktop-linux-x86_64
+            artifacts/srltcp-desktop-macos-aarch64
+            artifacts/srltcp-desktop-macos-x86_64
+            artifacts/srltcp-desktop-windows-x86_64.exe
+            artifacts/SRLTCPv2-*.apk

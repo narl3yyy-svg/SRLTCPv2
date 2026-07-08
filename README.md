@@ -1,10 +1,12 @@
 # SRLTCPv2
 
-**Secure Reliable LAN/TCP/Serial P2P Messaging — v0.2.3**
+**Secure Reliable LAN/TCP/Serial P2P Messaging — v0.2.4**
 
 Rust core + Tauri desktop + Android foreground service. COBS/CRC serial, QUIC networking, hybrid post-quantum crypto, file transfer, and voice/video calls.
 
-## Quick Start
+## Quick Start (Prebuilt — No Compiler Required)
+
+Clone the repo and run the launcher. It automatically downloads the matching prebuilt binary from [GitHub Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases).
 
 ### Desktop
 
@@ -12,22 +14,48 @@ Rust core + Tauri desktop + Android foreground service. COBS/CRC serial, QUIC ne
 git clone https://github.com/narl3yyy-svg/SRLTCPv2.git
 cd SRLTCPv2
 ./run.sh          # Linux/macOS
+```
+
+```bat
+git clone https://github.com/narl3yyy-svg/SRLTCPv2.git
+cd SRLTCPv2
 run.bat           # Windows
 ```
 
-Press **Ctrl+C** for graceful shutdown.
+That's it — no Rust, no build tools, no compilation. Press **Ctrl+C** for graceful shutdown.
+
+| Platform | Prebuilt asset (auto-downloaded) |
+|----------|----------------------------------|
+| Linux x86_64 | `srltcp-desktop-linux-x86_64` |
+| macOS Apple Silicon | `srltcp-desktop-macos-aarch64` |
+| macOS Intel | `srltcp-desktop-macos-x86_64` |
+| Windows x86_64 | `srltcp-desktop-windows-x86_64.exe` |
+
+**Optional flags:** `--rebuild` forces compile from source; `--no-prebuilt` skips download.
 
 ### Android
 
-```bash
-./scripts/build-android.sh          # Full build (native + APK + cleanup)
-# or, if jniLibs already exist:
-./scripts/assemble-apk.sh           # Gradle only
+Download `SRLTCPv2-0.2.4.apk` from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest) and install:
 
-adb install dist/SRLTCPv2-0.2.3.apk
+```bash
+adb install SRLTCPv2-0.2.4.apk
 ```
 
-**Requirements:** Android NDK, Android SDK API 35, **JDK 17** (JDK 21+ will fail).
+Or build from source (requires NDK, SDK, JDK 17):
+
+```bash
+./scripts/build-android.sh
+```
+
+## Building from Source (Developers)
+
+See [docs/BUILD.md](docs/BUILD.md) for full instructions. Desktop requires Rust 1.85+ and platform libraries (webkit2gtk on Linux).
+
+```bash
+./run.sh --rebuild                    # Desktop (compile + launch)
+./scripts/build-desktop.sh            # Desktop prebuilt only
+./scripts/build-android.sh            # Android APK
+```
 
 ## Features
 
@@ -45,18 +73,33 @@ adb install dist/SRLTCPv2-0.2.3.apk
 
 ```
 SRLTCPv2/
-├── run.sh / run.bat                 # Launch desktop
+├── run.sh / run.bat                 # Launch desktop (prebuilt auto-download)
 ├── cleanup.sh                       # Stop processes, optional --android-build
 ├── scripts/
+│   ├── build-desktop.sh             # Build + stage desktop prebuilt
 │   ├── build-android.sh             # Full Android pipeline
 │   ├── assemble-apk.sh              # Gradle-only (needs jniLibs)
-│   ├── cleanup-android-build.sh     # Remove Gradle caches
-│   ├── create-github-release.sh     # Tag + release + APK
-│   └── lib/android-env.sh           # JDK/SDK/NDK detection
+│   ├── create-github-release.sh     # Manual release fallback
+│   └── lib/
+│       ├── version.sh               # Read version from Cargo.toml
+│       └── android-env.sh           # JDK/SDK/NDK detection
+├── .github/workflows/release.yml    # CI: build all platforms on tag push
 ├── core/                            # Rust library + UniFFI
 ├── desktop/                         # Tauri v2 app
 ├── android/                         # Kotlin + Compose
-└── dist/                            # Built APK output
+└── dist/                            # Built APK + prebuilt binaries
+```
+
+## Releases
+
+Every version tag (`v*`) triggers GitHub Actions to build and publish:
+
+- Desktop prebuilts for Linux, macOS (Intel + Apple Silicon), and Windows
+- Android APK (`SRLTCPv2-<version>.apk`)
+
+```bash
+git tag -a v0.2.4 -m "SRLTCP v0.2.4"
+git push origin v0.2.4
 ```
 
 ## Cleanup
@@ -73,7 +116,7 @@ SRLTCPv2/
 |-------|------------|
 | Gradle fails with `26.0.1` | Use JDK 17: `export JAVA_HOME=/usr/lib/jvm/java-17-openjdk` |
 | No jniLibs after clone | Run `./scripts/build-android.sh` (not just gradlew) |
-| Desktop needs rebuild after pull | `cargo build --release -p srltcp-desktop` |
+| Prebuilt download fails | Check [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases) for your platform; use `--rebuild` as fallback |
 
 ## Documentation
 

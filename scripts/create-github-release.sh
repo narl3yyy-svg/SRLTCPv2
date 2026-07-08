@@ -1,25 +1,56 @@
 #!/usr/bin/env bash
-# Create GitHub Release with debug APK attached
+# Create GitHub Release — desktop prebuilts + Android APK
+# Prefer pushing tag v* to trigger .github/workflows/release.yml (CI builds all platforms).
+# This script is a manual fallback when artifacts are already in dist/.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO="narl3yyy-svg/SRLTCPv2"
 
-VERSION=$(grep '^version' "$ROOT_DIR/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+# shellcheck source=lib/version.sh
+source "$SCRIPT_DIR/lib/version.sh"
+
+VERSION="$(get_workspace_version "$ROOT_DIR")"
 TAG="v${VERSION}"
 APK="$ROOT_DIR/dist/SRLTCPv2-${VERSION}.apk"
 
 cd "$ROOT_DIR"
 
-if [[ ! -f "$APK" ]]; then
-    echo "[release] APK not found at dist/SRLTCPv2-${VERSION}.apk"
-    echo "[release] Run: ./scripts/build-android.sh"
+if ! command -v gh &>/dev/null; then
+    echo "[release] ERROR: GitHub CLI (gh) required."
     exit 1
 fi
 
-if ! command -v gh &>/dev/null; then
-    echo "[release] ERROR: GitHub CLI (gh) required."
+echo "[release] Recommended: push tag to trigger CI release workflow"
+echo "  git push origin main"
+echo "  git tag -a $TAG -m \"SRLTCP $TAG\""
+echo "  git push origin $TAG"
+echo ""
+read -r -p "Continue with manual release upload from dist/? [y/N] " confirm
+if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+    echo "[release] Aborted. Use CI by pushing tag $TAG instead."
+    exit 0
+fi
+
+assets=()
+for name in \
+    "srltcp-desktop-linux-x86_64" \
+    "srltcp-desktop-linux-aarch64" \
+    "srltcp-desktop-macos-x86_64" \
+    "srltcp-desktop-macos-aarch64" \
+    "srltcp-desktop-windows-x86_64.exe"; do
+    if [[ -f "$ROOT_DIR/dist/$name" ]]; then
+        assets+=("$ROOT_DIR/dist/$name")
+    fi
+done
+
+if [[ -f "$APK" ]]; then
+    assets+=("$APK")
+fi
+
+if [[ ${#assets[@]} -eq 0 ]]; then
+    echo "[release] No artifacts in dist/. Run ./scripts/build-desktop.sh and/or ./scripts/build-android.sh"
     exit 1
 fi
 
@@ -34,24 +65,22 @@ gh release create "$TAG" \
     --title "SRLTCP $TAG" \
     --notes "## SRLTCP $TAG
 
-### Changes in v0.2.3
-- **Desktop shutdown fix** — window X button now cleanly exits (no hang)
-- **QR-first connection flow** — visual QR codes, SAS verification modal, IP marked as less secure
-- **Cross-platform run.sh** — Ubuntu/Arch/macOS detection, dependency hints, prebuilt binary support
-- **Android UX** — connect sheet, SAS dialog, verified-peer gating for messaging/calls
-- APK: \`SRLTCPv2-${VERSION}.apk\`
+Prebuilt desktop binaries and Android APK — no compiler required.
 
-### Install
+### Desktop
 \`\`\`bash
-# Desktop
-git clone https://github.com/$REPO.git && cd SRLTCPv2 && ./run.sh
+git clone https://github.com/$REPO.git && cd SRLTCPv2
+./run.sh          # Linux/macOS
+run.bat           # Windows
+\`\`\`
 
-# Android
+### Android
+\`\`\`bash
 adb install SRLTCPv2-${VERSION}.apk
 \`\`\`
 
-See [BUILD.md](docs/BUILD.md) for full build instructions." \
-    "$APK" 2>/dev/null || \
-gh release upload "$TAG" "$APK" --repo "$REPO" --clobber
+See [README.md](https://github.com/$REPO/blob/main/README.md) and [docs/BUILD.md](docs/BUILD.md)." \
+    "${assets[@]}" 2>/dev/null || \
+gh release upload "$TAG" "${assets[@]}" --repo "$REPO" --clobber
 
 echo "[release] Done: https://github.com/$REPO/releases/tag/$TAG"

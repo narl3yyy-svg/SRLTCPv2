@@ -12,7 +12,9 @@ ANDROID_DIR="$ROOT_DIR/android"
 JNI_DIR="$ANDROID_DIR/app/src/main/jniLibs"
 JAVA_OUT="$ANDROID_DIR/app/src/main/java"
 DIST_DIR="$ROOT_DIR/dist"
-VERSION="0.2.3"
+# shellcheck source=lib/version.sh
+source "$SCRIPT_DIR/lib/version.sh"
+VERSION="$(get_workspace_version "$ROOT_DIR")"
 APK_NAME="SRLTCPv2-${VERSION}.apk"
 
 SKIP_NATIVE=false

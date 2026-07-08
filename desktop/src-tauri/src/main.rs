@@ -1,4 +1,4 @@
-//! SRLTCP v0.2.3 Desktop — Tauri v2 backend with graceful shutdown.
+//! SRLTCP v0.2.4 Desktop — Tauri v2 backend with graceful shutdown.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -192,7 +192,7 @@ async fn run_auto_peer_test(engine: Arc<Mutex<P2pEngine>>) -> Result<(), String>
     let remote_qr = std::env::var("SRLTCP_TEST_QR")
         .unwrap_or_else(|_| "AjTqU9MmHMBy3dpi6xmxRTloSwOTD46pCpIN55kWHq3Z".into());
     let message = std::env::var("SRLTCP_TEST_MSG")
-        .unwrap_or_else(|_| "SRLTCPv2-0.2.3 desktop auto-test message".into());
+        .unwrap_or_else(|_| "SRLTCPv2-0.2.4 desktop auto-test message".into());
 
     let client_port: u16 = std::env::var("SRLTCP_CLIENT_PORT")
         .ok()

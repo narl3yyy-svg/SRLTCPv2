@@ -1,4 +1,4 @@
-// SRLTCP v0.2.3 Desktop Frontend
+// SRLTCP v0.2.4 Desktop Frontend
 
 const invoke = window.__TAURI__?.core?.invoke
   ?? (async (cmd, args) => { console.log(`[mock] ${cmd}`, args); return null; });
