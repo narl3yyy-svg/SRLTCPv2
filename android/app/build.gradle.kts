@@ -12,8 +12,8 @@ android {
         applicationId = "com.srltcp.v2"
         minSdk = 26
         targetSdk = 35
-        versionCode = 209
-        versionName = "0.2.11"
+        versionCode = 210
+        versionName = "0.2.12"
     }
 
     buildTypes {

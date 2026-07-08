@@ -17,7 +17,9 @@ import com.srltcp.v2.data.SavedContact
 fun PeersSheet(
     contacts: List<SavedContact>,
     activePeer: String?,
-    onSelect: (String) -> Unit,
+    connectedPeer: String?,
+    onSelect: (SavedContact) -> Unit,
+    onReconnect: (SavedContact) -> Unit,
     onRemove: (String) -> Unit,
     onDisconnect: (String) -> Unit,
     onDismiss: () -> Unit,
@@ -27,22 +29,30 @@ fun PeersSheet(
             Text("Saved Peers", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                "Remove a contact to revoke trust and clear saved data.",
+                "Tap a contact to open chat. Disconnect ends the session but keeps the contact. Remove revokes trust.",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 16.sp,
             )
             Spacer(modifier = Modifier.height(12.dp))
 
             if (contacts.isEmpty()) {
-                Text("No saved peers yet.", fontSize = 13.sp)
+                Text("No saved peers yet. Connect via QR to add one.", fontSize = 13.sp)
             } else {
                 contacts.forEach { contact ->
-                    val label = contact.displayName.ifBlank { contact.peerId.take(20) }
-                    val verified = if (contact.verified) " ✓" else ""
+                    val label = contact.displayName.ifBlank { contact.peerId.removePrefix("peer:").take(12) }
+                    val isActive = contact.peerId == activePeer
+                    val isConnected = contact.peerId == connectedPeer
+                    val status = when {
+                        isConnected && contact.verified -> "● Online"
+                        contact.verified -> "○ Offline — tap Reconnect"
+                        else -> "Unverified"
+                    }
                     Card(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        onClick = { onSelect(contact) },
                         colors = CardDefaults.cardColors(
-                            containerColor = if (contact.peerId == activePeer) {
+                            containerColor = if (isActive) {
                                 MaterialTheme.colorScheme.primaryContainer
                             } else {
                                 MaterialTheme.colorScheme.surfaceVariant
@@ -54,10 +64,15 @@ fun PeersSheet(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("$label$verified", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                                Text(contact.peerId.take(28), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(label, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                Text(status, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            if (contact.peerId == activePeer) {
+                            if (contact.verified && !isConnected && contact.qrPayload.isNotBlank()) {
+                                TextButton(onClick = { onReconnect(contact) }) {
+                                    Text("Reconnect", fontSize = 11.sp)
+                                }
+                            }
+                            if (isConnected) {
                                 TextButton(onClick = { onDisconnect(contact.peerId) }) {
                                     Text("Disconnect", fontSize = 11.sp)
                                 }

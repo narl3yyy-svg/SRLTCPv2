@@ -72,9 +72,22 @@ class AppPreferences(context: Context) {
         saveContacts(loadContacts().filter { it.peerId != peerId })
     }
 
+    fun loadChatHistory(peerId: String): String {
+        return prefs.getString("${KEY_CHAT_PREFIX}$peerId", "[]") ?: "[]"
+    }
+
+    fun saveChatHistory(peerId: String, json: String) {
+        prefs.edit().putString("${KEY_CHAT_PREFIX}$peerId", json).apply()
+    }
+
+    fun removeChatHistory(peerId: String) {
+        prefs.edit().remove("${KEY_CHAT_PREFIX}$peerId").apply()
+    }
+
     companion object {
         private const val KEY_DISPLAY_NAME = "display_name"
         private const val KEY_WAN_ENDPOINT = "wan_endpoint"
         private const val KEY_CONTACTS = "contacts"
+        private const val KEY_CHAT_PREFIX = "chat_"
     }
 }

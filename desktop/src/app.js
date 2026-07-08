@@ -1,6 +1,6 @@
-// SRLTCP v0.2.11 Desktop Frontend
+// SRLTCP v0.2.12 Desktop Frontend
 
-const STORAGE_KEY = 'srltcp_v0.2.11';
+const STORAGE_KEY = 'srltcp_v0.2.12';
 
 function loadState() {
   try {
@@ -33,6 +33,7 @@ const openFileDialog = window.__TAURI__?.dialog?.open ?? (async () => null);
 const convertFileSrc = window.__TAURI__?.core?.convertFileSrc ?? ((p) => p);
 
 let activePeer = null;
+let connectedPeer = null;
 let peers = [];
 const peerVerified = new Map();
 let activeCall = null;
@@ -66,10 +67,15 @@ function pubkeyFromPeerId(id) {
 function migratePeerId(oldId, newId) {
   if (!oldId || !newId || oldId === newId) return;
   peers = peers.map(p => (p === oldId ? newId : p));
+  peers = peers.filter((p, i, a) => a.indexOf(p) === i);
   if (activePeer === oldId) activePeer = newId;
   if (peerVerified.has(oldId)) {
     peerVerified.set(newId, peerVerified.get(oldId));
     peerVerified.delete(oldId);
+  }
+  if (chatHistory[oldId]) {
+    chatHistory[newId] = chatHistory[oldId];
+    delete chatHistory[oldId];
   }
   savedContacts = savedContacts.map(c => (c.id === oldId ? { ...c, id: newId } : c));
   persistContacts();
@@ -89,20 +95,53 @@ async function syncTrustedPubkeys() {
   }
 }
 
-async function reconnectTrustedContacts() {
-  const trusted = savedContacts.filter(c => c.verified && c.qr);
-  for (const c of trusted) {
-    try {
-      const result = await invoke('connect_and_verify', { remoteQr: c.qr });
-      const peerId = pick(result, 'peer_id', 'peerId');
-      const autoTrusted = result?.auto_trusted ?? result?.autoTrusted;
-      if (peerId) {
-        migratePeerId(c.id, peerId);
-        if (autoTrusted) peerVerified.set(peerId, true);
-        addPeer(peerId);
-      }
-    } catch (_) {}
+async function reconnectContact(contact) {
+  if (!contact.qr) {
+    toast('No QR saved — connect via QR again', true);
+    return;
   }
+  try {
+    const result = await invoke('connect_and_verify', { remoteQr: contact.qr });
+    const peerId = pick(result, 'peer_id', 'peerId');
+    const autoTrusted = result?.auto_trusted ?? result?.autoTrusted;
+    if (result.sas?.startsWith?.('error:')) throw new Error(result.sas);
+    if (peerId) {
+      migratePeerId(contact.id, peerId);
+      addPeerUnique(peerId);
+      connectedPeer = peerId;
+      if (autoTrusted) {
+        peerVerified.set(peerId, true);
+        selectPeer(peerId);
+        toast('Reconnected to trusted peer');
+      } else {
+        showSasModal(peerId, pick(result, 'sas', 'Sas'));
+      }
+    }
+  } catch (e) {
+    toast(`Reconnect failed: ${e}`, true);
+  }
+}
+
+function addPeerUnique(id) {
+  reconcilePeers();
+  addPeer(id);
+}
+
+function reconcilePeers() {
+  const canonical = new Set(savedContacts.map(c => c.id));
+  peers = peers.filter(id => !id.startsWith('quic:') || canonical.size === 0);
+  peers = [...new Set(peers)];
+}
+
+function softDisconnect(id) {
+  invoke('disconnect_peer', { peerId: id }).catch(() => {});
+  peers = peers.filter(p => p !== id);
+  if (connectedPeer === id) connectedPeer = null;
+  renderPeers();
+  renderPeerChips();
+  updateChatHeader();
+  updateInputState();
+  toast('Disconnected — contact saved, reconnect from Contacts');
 }
 
 // ── Sidebar navigation ─────────────────────────────────────────────
@@ -157,10 +196,10 @@ async function init() {
     } catch (_) {}
     restoreContacts();
     await syncTrustedPubkeys();
-    reconnectTrustedContacts();
 
     const existingPeers = await invoke('get_peers');
-    existingPeers.forEach(addPeer);
+    existingPeers.forEach(id => { if (id.startsWith('peer:')) addPeerUnique(id); });
+    connectedPeer = existingPeers.find(id => id.startsWith('peer:')) || null;
     setStatus('Online', true);
   } catch (e) {
     console.error('Init failed:', e);
@@ -178,17 +217,24 @@ function handleEvent(p) {
       break;
     case 'peer_connected': {
       const id = pick(p, 'peer_id', 'peerId');
-      addPeer(id);
-      toast(`Peer connected — paste their QR and confirm SAS`);
-      if (!activePeer) selectPeer(id);
-      updateVerifyBanner();
+      if (id?.startsWith('peer:')) {
+        addPeerUnique(id);
+        connectedPeer = id;
+      }
       break;
     }
     case 'peer_disconnected': {
       const id = pick(p, 'peer_id', 'peerId');
-      removePeer(id);
-      peerVerified.delete(id);
-      toast(`Disconnected: ${shortPeer(id)}`);
+      peers = peers.filter(p => p !== id);
+      if (connectedPeer === id) connectedPeer = null;
+      renderPeers();
+      renderPeerChips();
+      if (activePeer === id) {
+        document.getElementById('messages')?.replaceChildren();
+        loadChatForPeer(id).forEach(m => appendMessage(m.content, m.direction, m.sender, m.opts || {}, false));
+        updateChatHeader();
+        updateInputState();
+      }
       break;
     }
     case 'sas_ready': {
@@ -197,6 +243,7 @@ function handleEvent(p) {
       const autoTrusted = p.auto_trusted ?? p.autoTrusted;
       if (id && autoTrusted) {
         peerVerified.set(id, true);
+        connectedPeer = id;
         selectPeer(id);
         updateChatHeader();
         updateInputState();
@@ -207,9 +254,13 @@ function handleEvent(p) {
       }
       break;
     }
-    case 'peer_id_updated':
-      migratePeerId(pick(p, 'old_id', 'oldId'), pick(p, 'new_id', 'newId'));
+    case 'peer_id_updated': {
+      const oldId = pick(p, 'old_id', 'oldId');
+      const newId = pick(p, 'new_id', 'newId');
+      if (connectedPeer === oldId) connectedPeer = newId;
+      migratePeerId(oldId, newId);
       break;
+    }
     case 'transfer_progress':
       updateTransfer(pick(p, 'id', 'Id'), p.filename, p.progress, false);
       break;
@@ -257,10 +308,12 @@ function toast(msg, isError = false) {
 function addPeer(id) {
   if (peers.includes(id)) return;
   peers.push(id);
-  if (!peerVerified.has(id)) peerVerified.set(id, false);
+  if (!peerVerified.has(id)) {
+    const saved = savedContacts.find(c => c.id === id);
+    peerVerified.set(id, saved?.verified ?? false);
+  }
   renderPeers();
   renderPeerChips();
-  if (!activePeer) selectPeer(id);
 }
 
 function removePeer(id) {
@@ -285,7 +338,31 @@ function persistContacts() {
   saveState({
     displayName,
     contacts: savedContacts,
+    chatHistory: chatHistory,
   });
+}
+
+const chatHistory = loadState().chatHistory || {};
+
+function saveChatForPeer(peerId) {
+  if (!peerId) return;
+  chatHistory[peerId] = getMessagesForPeer(peerId);
+  persistContacts();
+}
+
+function loadChatForPeer(peerId) {
+  return chatHistory[peerId] || [];
+}
+
+let messageStore = {}; // peerId -> DOM-independent message list for persistence
+
+function getMessagesForPeer(peerId) {
+  return messageStore[peerId] || chatHistory[peerId] || [];
+}
+
+function setMessagesForPeer(peerId, msgs) {
+  messageStore[peerId] = msgs;
+  chatHistory[peerId] = msgs;
 }
 
 function restoreContacts() {
@@ -301,6 +378,7 @@ function removeTrustedContact(id) {
   invoke('disconnect_peer', { peerId: id }).catch(() => {});
   removePeer(id);
   savedContacts = savedContacts.filter(c => c.id !== id);
+  delete chatHistory[id];
   persistContacts();
   renderContactsList();
   toast(`Removed ${contactLabel(id)}`);
@@ -313,16 +391,41 @@ function renderContactsList() {
     el.innerHTML = '<p class="hint">Verified peers are saved here automatically.</p>';
     return;
   }
-  el.innerHTML = savedContacts.map(c => `
+  el.innerHTML = savedContacts.map(c => {
+    const online = connectedPeer === c.id;
+    const status = online ? '● online' : (c.verified ? '○ offline' : 'unverified');
+    return `
     <div class="contact-row">
       <button class="contact-select" data-peer="${escapeHtml(c.id)}">
         <span class="contact-name">${escapeHtml(c.name || shortPeer(c.id))}</span>
-        <span class="contact-meta">${c.verified ? '✓ trusted' : 'unverified'}</span>
+        <span class="contact-meta">${status}</span>
       </button>
+      ${c.verified && !online && c.qr ? `<button class="btn-sm" data-reconnect="${escapeHtml(c.id)}" title="Reconnect">↻</button>` : ''}
+      ${online ? `<button class="btn-sm" data-disconnect="${escapeHtml(c.id)}" title="Disconnect">⏏</button>` : ''}
       <button class="btn-sm danger-sm" data-remove="${escapeHtml(c.id)}" title="Remove">✕</button>
-    </div>`).join('');
+    </div>`;
+  }).join('');
   el.querySelectorAll('.contact-select').forEach(btn => {
-    btn.onclick = () => selectPeer(btn.dataset.peer);
+    btn.onclick = () => {
+      const id = btn.dataset.peer;
+      const contact = savedContacts.find(c => c.id === id);
+      if (connectedPeer === id) selectPeer(id);
+      else if (contact?.verified && contact.qr) reconnectContact(contact);
+      else selectPeer(id);
+    };
+  });
+  el.querySelectorAll('[data-reconnect]').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const contact = savedContacts.find(c => c.id === btn.dataset.reconnect);
+      if (contact) reconnectContact(contact);
+    };
+  });
+  el.querySelectorAll('[data-disconnect]').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      softDisconnect(btn.dataset.disconnect);
+    };
   });
   el.querySelectorAll('[data-remove]').forEach(btn => {
     btn.onclick = () => removeTrustedContact(btn.dataset.remove);
@@ -337,9 +440,10 @@ function renderPeers() {
   list.innerHTML = peers.map(id => {
     const verified = peerVerified.get(id);
     const badge = verified ? '<span class="verified-badge">✓</span>' : '<span class="unverified-badge">!</span>';
-    return `<li class="${id === activePeer ? 'active' : ''}${verified ? ' verified' : ''}" data-peer="${escapeHtml(id)}">
+    const online = connectedPeer === id;
+    return `<li class="${id === activePeer ? 'active' : ''}${verified ? ' verified' : ''}${online ? ' online' : ''}" data-peer="${escapeHtml(id)}">
       <span class="peer-dot"></span>${badge}${escapeHtml(contactLabel(id))}
-      <button class="peer-remove" data-remove="${escapeHtml(id)}" title="Remove">✕</button>
+      <button class="peer-remove" data-disconnect="${escapeHtml(id)}" title="Disconnect">⏏</button>
     </li>`;
   }).join('');
   list.querySelectorAll('li').forEach(li => {
@@ -351,7 +455,7 @@ function renderPeers() {
   list.querySelectorAll('.peer-remove').forEach(btn => {
     btn.onclick = (e) => {
       e.stopPropagation();
-      removeTrustedContact(btn.dataset.remove);
+      softDisconnect(btn.dataset.disconnect);
     };
   });
 }
@@ -377,6 +481,12 @@ function selectPeer(id) {
   updateInputState();
   updateVerifyBanner();
   document.getElementById('empty-state')?.classList.add('hidden');
+  const container = document.getElementById('messages');
+  if (container) {
+    container.replaceChildren();
+    const stored = loadChatForPeer(id);
+    stored.forEach(m => appendMessage(m.content, m.direction, m.sender, m.opts || {}, false));
+  }
 }
 
 function updateChatHeader() {
@@ -400,9 +510,10 @@ function updateVerifyBanner() {
 
 function updateInputState() {
   const hasPeer = !!activePeer;
+  const online = activePeer && connectedPeer === activePeer;
   const verified = activePeer && peerVerified.get(activePeer);
   const inCall = !!activeCall;
-  const canChat = hasPeer && verified && !inCall;
+  const canChat = hasPeer && online && verified && !inCall;
   ['message-input', 'send-btn', 'send-file-btn'].forEach(id => {
     document.getElementById(id).disabled = !canChat;
   });
@@ -426,7 +537,7 @@ function updateCallUI() {
   updateInputState();
 }
 
-function appendMessage(content, direction, sender, opts = {}) {
+function appendMessage(content, direction, sender, opts = {}, persist = true) {
   document.getElementById('empty-state')?.classList.add('hidden');
   const div = document.createElement('div');
   div.className = `message ${direction}`;
@@ -458,6 +569,13 @@ function appendMessage(content, direction, sender, opts = {}) {
   const container = document.getElementById('messages');
   container.appendChild(div);
   div.scrollIntoView({ behavior: 'smooth' });
+
+  if (persist && activePeer) {
+    const msgs = getMessagesForPeer(activePeer);
+    msgs.push({ content, direction, sender, opts, time: nowTime() });
+    setMessagesForPeer(activePeer, msgs);
+    persistContacts();
+  }
 }
 
 function escapeHtml(t) {
@@ -524,8 +642,12 @@ async function runVerification() {
     const peerId = pick(result, 'peer_id', 'peerId');
     const sas = pick(result, 'sas', 'Sas');
     const autoTrusted = result?.auto_trusted ?? result?.autoTrusted;
-    if (peerId && !peers.includes(peerId)) addPeer(peerId);
-    if (peerId) selectPeer(peerId);
+    if (peerId) {
+      addPeerUnique(peerId);
+      connectedPeer = peerId;
+      selectPeer(peerId);
+    }
+    document.getElementById('remote-qr').value = '';
     window._lastConnectQr = qr;
     if (autoTrusted) {
       peerVerified.set(peerId, true);
@@ -559,6 +681,9 @@ document.getElementById('copy-qr').onclick = async () => {
 };
 
 document.getElementById('verify-secure').onclick = () => runVerification();
+document.getElementById('clear-remote-qr')?.addEventListener('click', () => {
+  document.getElementById('remote-qr').value = '';
+});
 document.getElementById('verify-banner-btn').onclick = () => {
   document.querySelector('[data-panel="connect"]').click();
 };
@@ -582,6 +707,7 @@ document.getElementById('sas-confirm').onclick = async () => {
       return;
     }
     peerVerified.set(pendingSas.peerId, true);
+    connectedPeer = pendingSas.peerId;
     const name = displayName || shortPeer(pendingSas.peerId);
     const existing = savedContacts.findIndex(c => c.id === pendingSas.peerId);
     const qr = window._lastConnectQr || '';
@@ -647,33 +773,15 @@ document.getElementById('refresh-peers').onclick = async () => {
 
 document.getElementById('disconnect-btn').onclick = async () => {
   if (!activePeer) return;
-  try {
-    await invoke('disconnect_peer', { peerId: activePeer });
-    removePeer(activePeer);
-    toast(`Disconnected ${shortPeer(activePeer)}`);
-  } catch (e) { toast(`Disconnect error: ${e}`, true); }
+  softDisconnect(activePeer);
 };
 
 document.getElementById('voice-call-btn').onclick = async () => {
-  if (!activePeer) return;
-  try {
-    const callId = await invoke('start_voice_call', { peerId: activePeer });
-    if (callId.startsWith('error:')) throw new Error(callId);
-    activeCall = { id: callId, peer: activePeer, video: false };
-    updateCallUI();
-    toast('Voice call started');
-  } catch (e) { toast(`Call error: ${e}`, true); }
+  toast('Voice calls require platform WebRTC (coming soon)', true);
 };
 
 document.getElementById('video-call-btn').onclick = async () => {
-  if (!activePeer) return;
-  try {
-    const callId = await invoke('start_video_call', { peerId: activePeer });
-    if (callId.startsWith('error:')) throw new Error(callId);
-    activeCall = { id: callId, peer: activePeer, video: true };
-    updateCallUI();
-    toast('Video call started');
-  } catch (e) { toast(`Call error: ${e}`, true); }
+  toast('Video calls require platform WebRTC (coming soon)', true);
 };
 
 document.getElementById('end-call-btn').onclick = async () => {
@@ -688,6 +796,10 @@ document.getElementById('end-call-btn').onclick = async () => {
 
 document.getElementById('send-file-btn').onclick = async () => {
   if (!activePeer) return;
+  if (connectedPeer !== activePeer) {
+    toast('Peer offline — reconnect from Contacts', true);
+    return;
+  }
   let filePath;
   try { filePath = await openFileDialog({ multiple: false }); } catch (_) {}
   if (!filePath) return;
@@ -712,6 +824,10 @@ async function sendMessage() {
   const input = document.getElementById('message-input');
   const content = input.value.trim();
   if (!content || !activePeer) return;
+  if (connectedPeer !== activePeer) {
+    toast('Peer offline — reconnect from Contacts', true);
+    return;
+  }
   if (!peerVerified.get(activePeer)) {
     toast('Verify peer with SAS before messaging', true);
     return;

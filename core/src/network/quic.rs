@@ -130,6 +130,10 @@ impl QuicTransport {
         }
     }
 
+    pub async fn has_connection(&self, peer_id: &str) -> bool {
+        self.connections.read().await.contains_key(peer_id)
+    }
+
     /// Send a framed message over a bidirectional QUIC stream.
     pub async fn send(&self, peer_id: &str, data: &[u8]) -> Result<(), QuicError> {
         let conn = {

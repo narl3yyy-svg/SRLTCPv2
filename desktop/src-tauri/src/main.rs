@@ -1,4 +1,4 @@
-//! SRLTCP v0.2.11 Desktop — Tauri v2 backend with graceful shutdown.
+//! SRLTCP v0.2.12 Desktop — Tauri v2 backend with graceful shutdown.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 

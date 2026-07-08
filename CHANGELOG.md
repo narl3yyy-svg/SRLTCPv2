@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.2.12 — Peer UX, postcard wire format, reconnect model (2026-07-08)
+
+### Fixes
+
+- **Peer UX**: Disconnect vs Remove — disconnect ends transport only; saved contact, trust, and chat history are kept. Remove revokes trust and deletes history.
+- **Duplicate peers**: `reconcilePeers()` dedupes transient `quic:` entries after canonical `peer:{pubkey}` IDs.
+- **Trusted reconnect**: Saved verified peers reconnect without re-SAS when Ed25519 identity matches stored trust.
+- **Post-verify messaging**: Connection/trust guards on send path; handshake timeout cleans up stale state.
+- **Android QR UX**: Your QR hidden while chatting; connect sheet clears peer QR field; clear button on QR input.
+- **Chat history**: Per-peer persistence on Android and desktop; survives soft disconnect.
+- **File send**: Requires live connection + trusted session; clearer errors when offline or unverified.
+- **Voice/video**: Buttons disabled with honest "WebRTC coming soon" message (no fake call flow).
+
+### Wire format
+
+- **Postcard binary frames** (`SR` magic + postcard) replace JSON for `WireFrame` on the wire. Legacy JSON frames still deserialize for backward compatibility.
+
+### Known limitations (unchanged)
+
+- Simplified Double Ratchet (not full Signal-style ratchet).
+- Handshake replay hardening and QUIC streaming reads still planned.
+- WebRTC media path not integrated.
+
 ## v0.2.11 — Peer routing, file transfer, trusted reconnect (2026-07-08)
 
 ### Fixes

@@ -4,13 +4,13 @@
 
 SRLTCP is privacy-first communication software: no accounts, no central servers, and end-to-end encryption with a human-verifiable SAS step before you trust a peer. A single Rust core powers the desktop (Tauri) and Android (Kotlin/Compose) clients, so crypto and protocol behavior stay consistent everywhere.
 
-**Current release: [v0.2.11](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.11)**
+**Current release: [v0.2.12](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.12)**
 
 ---
 
 ## Security status (read this)
 
-v0.2.11 fixes peer routing (`peer:{pubkey}` IDs), file chunk transfer, and trusted-peer auto-reconnect. v0.2.10 wired the hybrid handshake and Double Ratchet into the live message path. SAS codes are derived from a **canonical transcript** that both peers build identically — fix for the v0.2.9 mismatch bug.
+v0.2.12 improves peer UX (disconnect vs remove, chat history, deduped peer list), switches wire frames to **postcard** binary format, and fixes reconnect/trust flow for saved contacts. v0.2.11 fixed peer routing (`peer:{pubkey}` IDs), file chunk transfer, and trusted-peer auto-reconnect. SAS codes are derived from a **canonical transcript** that both peers build identically.
 
 **What works today**
 

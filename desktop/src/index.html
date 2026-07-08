@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SRLTCP v0.2.11</title>
+  <title>SRLTCP v0.2.12</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -13,7 +13,7 @@
         <div class="brand-icon">S</div>
         <div>
           <h1>SRLTCP</h1>
-          <span class="version">v0.2.11</span>
+          <span class="version">v0.2.12</span>
         </div>
       </header>
 
@@ -50,7 +50,10 @@
             <li><span class="step-num">3</span> Confirm the 6-digit SAS code matches</li>
           </ol>
           <label class="field-label" for="remote-qr">Peer QR code</label>
-          <textarea id="remote-qr" rows="4" placeholder="Paste peer QR payload here…"></textarea>
+          <div class="qr-input-row">
+            <textarea id="remote-qr" rows="4" placeholder="Paste peer QR payload here…"></textarea>
+            <button class="btn-sm" id="clear-remote-qr" type="button" title="Clear">✕</button>
+          </div>
           <button class="btn primary-btn" id="verify-secure">
             <span class="btn-icon">🔒</span> Connect &amp; Verify (QR + SAS)
           </button>

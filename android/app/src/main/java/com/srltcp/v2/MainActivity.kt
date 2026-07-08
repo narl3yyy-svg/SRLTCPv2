@@ -51,6 +51,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import uniffi.srltcp_core.SrltcpEvent
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.util.UUID
 
@@ -132,12 +134,141 @@ fun ChatScreen() {
     val savedContacts = remember { mutableStateListOf<SavedContact>() }
     val prefs = remember { AppPreferences(context) }
     val peerVerified = remember { mutableStateMapOf<String, Boolean>() }
+    var connectedPeer by remember { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
 
     fun showSnackbar(msg: String) { snackbarMessage = msg }
 
+    val reconcilePeers: () -> Unit = {
+        val canonical = savedContacts.map { it.peerId }.toSet()
+        peers.removeAll { id -> id.startsWith("quic:") && canonical.any { c -> c != id } }
+        val seen = mutableSetOf<String>()
+        peers.removeAll { !seen.add(it) }
+    }
+
+    val addPeerUnique: (String) -> Unit = { id ->
+        reconcilePeers()
+        if (!peers.contains(id)) peers.add(id)
+    }
+
+    val migratePeerId: (String, String) -> Unit = { oldId, newId ->
+        if (oldId != newId) {
+            val idx = peers.indexOf(oldId)
+            if (idx >= 0) peers[idx] = newId else addPeerUnique(newId)
+            peers.remove(oldId)
+            peerVerified[newId] = peerVerified.remove(oldId) ?: peerVerified[newId] ?: false
+            if (activePeer == oldId) activePeer = newId
+            if (connectedPeer == oldId) connectedPeer = newId
+            val history = prefs.loadChatHistory(oldId)
+            if (history != "[]") {
+                prefs.saveChatHistory(newId, history)
+                prefs.removeChatHistory(oldId)
+            }
+            val cIdx = savedContacts.indexOfFirst { it.peerId == oldId }
+            if (cIdx >= 0) {
+                val c = savedContacts[cIdx]
+                savedContacts[cIdx] = c.copy(peerId = newId)
+                prefs.upsertContact(savedContacts[cIdx])
+            }
+            reconcilePeers()
+        }
+    }
+
+    fun refreshConnectedPeer() {
+        val engine = SrltcpEngineHolder.getOrCreate()
+        val list = engine.connectedPeers()
+        connectedPeer = list.firstOrNull { it.startsWith("peer:") } ?: list.firstOrNull()
+    }
+
+    fun persistMessages(peerId: String, msgs: List<ChatMessage>) {
+        val arr = JSONArray()
+        msgs.forEach { m ->
+            arr.put(
+                JSONObject()
+                    .put("id", m.id)
+                    .put("content", m.content)
+                    .put("isSent", m.isSent)
+                    .put("sender", m.sender)
+                    .put("kind", m.kind.name)
+                    .put("mediaPath", m.mediaPath ?: ""),
+            )
+        }
+        prefs.saveChatHistory(peerId, arr.toString())
+    }
+
+    fun loadMessagesForPeer(peerId: String): List<ChatMessage> {
+        return try {
+            val arr = JSONArray(prefs.loadChatHistory(peerId))
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    add(
+                        ChatMessage(
+                            id = o.optString("id", UUID.randomUUID().toString()),
+                            content = o.optString("content", ""),
+                            isSent = o.optBoolean("isSent", false),
+                            sender = o.optString("sender", ""),
+                            kind = runCatching { MessageKind.valueOf(o.optString("kind", "TEXT")) }
+                                .getOrDefault(MessageKind.TEXT),
+                            mediaPath = o.optString("mediaPath").ifBlank { null },
+                        ),
+                    )
+                }
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    fun softDisconnect(peerId: String) {
+        scope.launch(Dispatchers.IO) {
+            SrltcpEngineHolder.getOrCreate().disconnectPeer(peerId)
+        }
+        peers.remove(peerId)
+        if (connectedPeer == peerId) connectedPeer = null
+        showSnackbar("Disconnected — contact saved, tap Reconnect to chat again")
+    }
+
+    fun reconnectContact(contact: SavedContact, openChat: Boolean = true) {
+        if (contact.qrPayload.isBlank()) {
+            showSnackbar("No QR saved for this contact — connect via QR again")
+            return
+        }
+        scope.launch(Dispatchers.IO) {
+            val engine = SrltcpEngineHolder.getOrCreate()
+            val result = engine.connectAndVerify(contact.qrPayload)
+            withContext(Dispatchers.Main) {
+                if (result.sas.startsWith("error:")) {
+                    showSnackbar(result.sas.removePrefix("error: ").trim())
+                    return@withContext
+                }
+                migratePeerId(contact.peerId, result.peerId)
+                addPeerUnique(result.peerId)
+                if (result.autoTrusted) {
+                    peerVerified[result.peerId] = true
+                }
+                connectedPeer = result.peerId
+                if (openChat) {
+                    activePeer = result.peerId
+                    messages = loadMessagesForPeer(result.peerId)
+                }
+                if (!result.autoTrusted && result.sas.isNotBlank()) {
+                    sasCode = result.sas
+                    sasPeerId = result.peerId
+                    showSasDialog = true
+                } else {
+                    showSnackbar("Connected to ${contact.displayName.ifBlank { "peer" }}")
+                }
+            }
+        }
+    }
+
     fun sendCurrentMessage() {
         val peer = activePeer ?: return
+        if (connectedPeer != peer) {
+            showSnackbar("Peer offline — tap Reconnect in Saved Peers")
+            return
+        }
         if (peerVerified[peer] != true) {
             showSnackbar("Verify peer with SAS first")
             return
@@ -158,22 +289,13 @@ fun ChatScreen() {
         peerVerified.remove(peerId)
         savedContacts.removeAll { it.peerId == peerId }
         prefs.removeContact(peerId)
-        if (activePeer == peerId) activePeer = peers.firstOrNull()
-        showSnackbar("Contact removed")
-    }
-
-    fun migratePeerId(oldId: String, newId: String) {
-        if (oldId == newId) return
-        val idx = peers.indexOf(oldId)
-        if (idx >= 0) peers[idx] = newId
-        peerVerified[newId] = peerVerified.remove(oldId) ?: false
-        if (activePeer == oldId) activePeer = newId
-        val cIdx = savedContacts.indexOfFirst { it.peerId == oldId }
-        if (cIdx >= 0) {
-            val c = savedContacts[cIdx]
-            savedContacts[cIdx] = c.copy(peerId = newId)
-            prefs.upsertContact(savedContacts[cIdx])
+        prefs.removeChatHistory(peerId)
+        if (activePeer == peerId) {
+            activePeer = null
+            messages = emptyList()
         }
+        if (connectedPeer == peerId) connectedPeer = null
+        showSnackbar("Contact removed")
     }
 
     fun syncTrustedPubkeys(engine: uniffi.srltcp_core.SrltcpEngine) {
@@ -199,19 +321,20 @@ fun ChatScreen() {
             peerVerified[c.peerId] = c.verified
         }
         syncTrustedPubkeys(engine)
-        savedContacts.filter { it.verified && it.qrPayload.isNotBlank() }.forEach { contact ->
-            scope.launch(Dispatchers.IO) {
-                val result = engine.connectAndVerify(contact.qrPayload)
-                withContext(Dispatchers.Main) {
-                    if (!result.sas.startsWith("error:")) {
-                        migratePeerId(contact.peerId, result.peerId)
-                        if (result.autoTrusted) peerVerified[result.peerId] = true
-                        if (!peers.contains(result.peerId)) peers.add(result.peerId)
-                        activePeer = result.peerId
-                    }
-                }
-            }
-        }
+        reconcilePeers()
+        refreshConnectedPeer()
+    }
+
+    LaunchedEffect(activePeer) {
+        activePeer?.let { messages = loadMessagesForPeer(it) }
+    }
+
+    LaunchedEffect(messages, activePeer) {
+        activePeer?.let { if (messages.isNotEmpty()) persistMessages(it, messages) }
+    }
+
+    LaunchedEffect(showConnectSheet) {
+        if (!showConnectSheet) remoteQrInput = ""
     }
 
     fun addMediaMessage(path: String, filename: String, isSent: Boolean, sender: String) {
@@ -230,10 +353,8 @@ fun ChatScreen() {
             "started" -> engineOnline = true
             "stopped" -> engineOnline = false
             "peer_connected" -> event.peerId?.let { id ->
-                if (!peers.contains(id)) peers.add(id)
-                if (!peerVerified.containsKey(id)) peerVerified[id] = false
-                if (activePeer == null) activePeer = id
-                showSnackbar("Peer connected — verify with QR + SAS")
+                if (id.startsWith("peer:")) addPeerUnique(id)
+                refreshConnectedPeer()
             }
             "peer_id_updated" -> {
                 val oldId = event.message
@@ -245,7 +366,7 @@ fun ChatScreen() {
                     val peer = event.peerId ?: return@let
                     if (event.autoTrusted == true) {
                         peerVerified[peer] = true
-                        activePeer = peer
+                        connectedPeer = peer
                         showSnackbar("Reconnected to trusted peer")
                     } else {
                         sasCode = sas
@@ -254,7 +375,10 @@ fun ChatScreen() {
                     }
                 }
             }
-            "peer_disconnected" -> event.peerId?.let { peers.remove(it) }
+            "peer_disconnected" -> event.peerId?.let { id ->
+                peers.remove(id)
+                if (connectedPeer == id) connectedPeer = null
+            }
             "message" -> event.content?.let { content ->
                 messages = messages + ChatMessage(
                     content = content,
@@ -322,6 +446,14 @@ fun ChatScreen() {
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         val peer = activePeer ?: return@rememberLauncherForActivityResult
+        if (connectedPeer != peer) {
+            showSnackbar("Peer offline — tap Reconnect in Saved Peers")
+            return@rememberLauncherForActivityResult
+        }
+        if (peerVerified[peer] != true) {
+            showSnackbar("Verify peer with SAS first")
+            return@rememberLauncherForActivityResult
+        }
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
             val path = copyUriToCache(context, uri)
@@ -362,8 +494,8 @@ fun ChatScreen() {
         engineOnline = engine.isRunning()
         qrPayload = engine.qrPayload()
         qrImageDataUrl = engine.qrImageDataUrl()
-        engine.connectedPeers().forEach { if (!peers.contains(it)) peers.add(it) }
-        if (peers.isNotEmpty() && activePeer == null) activePeer = peers[0]
+        refreshConnectedPeer()
+        reconcilePeers()
         SrltcpEngineHolder.addEventListener(eventListener)
         onDispose { SrltcpEngineHolder.removeEventListener(eventListener) }
     }
@@ -391,7 +523,7 @@ fun ChatScreen() {
                     Column {
                         Text("SRLTCP", fontWeight = FontWeight.Bold)
                         Text(
-                            "v0.2.11 • ${if (engineOnline) "Online" else "Offline"} • bg active",
+                            "v0.2.12 • ${if (engineOnline) "Online" else "Offline"} • bg active",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -399,16 +531,7 @@ fun ChatScreen() {
                 },
                 actions = {
                     if (activePeer != null) {
-                        IconButton(onClick = {
-                            val peer = activePeer ?: return@IconButton
-                            scope.launch(Dispatchers.IO) {
-                                SrltcpEngineHolder.getOrCreate().disconnectPeer(peer)
-                            }
-                            peers.remove(peer)
-                            peerVerified.remove(peer)
-                            if (activePeer == peer) activePeer = peers.firstOrNull()
-                            showSnackbar("Disconnected")
-                        }) {
+                        IconButton(onClick = { softDisconnect(activePeer!!) }) {
                             Icon(Icons.Default.LinkOff, contentDescription = "Disconnect")
                         }
                     }
@@ -423,37 +546,25 @@ fun ChatScreen() {
                     }
                     IconButton(
                         onClick = { filePicker.launch("*/*") },
-                        enabled = activePeer != null && peerVerified[activePeer] == true,
+                        enabled = activePeer != null && connectedPeer == activePeer && peerVerified[activePeer] == true,
                     ) {
                         Icon(Icons.Default.AttachFile, contentDescription = "Send file")
                     }
                     IconButton(
                         onClick = {
-                            val peer = activePeer ?: return@IconButton
-                            scope.launch(Dispatchers.IO) {
-                                val id = SrltcpEngineHolder.getOrCreate().startVoiceCall(peer)
-                                if (id.startsWith("error:")) {
-                                    showSnackbar(id.removePrefix("error: ").trim())
-                                }
-                            }
+                            showSnackbar("Voice calls require platform WebRTC (coming soon)")
                         },
-                        enabled = activePeer != null && peerVerified[activePeer] == true && callState == null,
+                        enabled = false,
                     ) {
-                        Icon(Icons.Default.Call, contentDescription = "Voice call")
+                        Icon(Icons.Default.Call, contentDescription = "Voice call (coming soon)")
                     }
                     IconButton(
                         onClick = {
-                            val peer = activePeer ?: return@IconButton
-                            scope.launch(Dispatchers.IO) {
-                                val id = SrltcpEngineHolder.getOrCreate().startVideoCall(peer)
-                                if (id.startsWith("error:")) {
-                                    showSnackbar(id.removePrefix("error: ").trim())
-                                }
-                            }
+                            showSnackbar("Video calls require platform WebRTC (coming soon)")
                         },
-                        enabled = activePeer != null && peerVerified[activePeer] == true && callState == null,
+                        enabled = false,
                     ) {
-                        Icon(Icons.Default.Videocam, contentDescription = "Video call")
+                        Icon(Icons.Default.Videocam, contentDescription = "Video call (coming soon)")
                     }
                 },
             )
@@ -484,7 +595,7 @@ fun ChatScreen() {
                             modifier = Modifier.weight(1f),
                             placeholder = { Text("Message…") },
                             singleLine = true,
-                            enabled = activePeer != null && peerVerified[activePeer] == true,
+                            enabled = activePeer != null && connectedPeer == activePeer && peerVerified[activePeer] == true,
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                             keyboardActions = KeyboardActions(onSend = {
                                 sendCurrentMessage()
@@ -494,7 +605,7 @@ fun ChatScreen() {
                         Spacer(modifier = Modifier.width(8.dp))
                         FilledIconButton(
                             onClick = { sendCurrentMessage() },
-                            enabled = activePeer != null && peerVerified[activePeer] == true,
+                            enabled = activePeer != null && connectedPeer == activePeer && peerVerified[activePeer] == true,
                         ) {
                             Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
                         }
@@ -504,7 +615,7 @@ fun ChatScreen() {
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            if (qrPayload.isNotEmpty()) {
+            if (activePeer == null && qrPayload.isNotEmpty()) {
                 QrShareCard(
                     qrPayload = qrPayload,
                     qrImageDataUrl = qrImageDataUrl,
@@ -541,11 +652,14 @@ fun ChatScreen() {
                     }
                 }
             }
-            if (peers.isNotEmpty()) {
+            if (savedContacts.size > 1) {
                 PeerChipRow(
-                    peers = peers,
+                    peers = savedContacts.map { it.peerId },
                     activePeer = activePeer,
-                    onSelect = { activePeer = it },
+                    onSelect = { id ->
+                        savedContacts.find { it.peerId == id }?.let { reconnectContact(it) }
+                            ?: run { activePeer = id; messages = loadMessagesForPeer(id) }
+                    },
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                 )
             }
@@ -578,13 +692,9 @@ fun ChatScreen() {
 
     if (showConnectSheet) {
         ConnectPeerSheet(
-            qrPayload = qrPayload,
             remoteQr = remoteQrInput,
             onRemoteQrChange = { remoteQrInput = it },
-            onCopyQr = {
-                copyTextToClipboard(context, "SRLTCP QR", qrPayload)
-                showSnackbar("QR copied to clipboard")
-            },
+            onClearQr = { remoteQrInput = "" },
             onDismiss = { showConnectSheet = false },
             onVerify = {
                 scope.launch(Dispatchers.IO) {
@@ -600,8 +710,11 @@ fun ChatScreen() {
                             showSnackbar(result.sas.removePrefix("error: ").trim())
                         } else {
                             val peer = result.peerId
-                            if (!peers.contains(peer)) peers.add(peer)
+                            addPeerUnique(peer)
                             activePeer = peer
+                            connectedPeer = peer
+                            messages = loadMessagesForPeer(peer)
+                            remoteQrInput = ""
                             if (result.autoTrusted) {
                                 peerVerified[peer] = true
                                 val contact = SavedContact(
@@ -636,11 +749,14 @@ fun ChatScreen() {
                 sasPeerId?.let { peerId ->
                     SrltcpEngineHolder.getOrCreate().confirmPeerTrusted(peerId)
                     peerVerified[peerId] = true
+                    connectedPeer = peerId
+                    val savedQr = savedContacts.find { it.peerId == peerId }?.qrPayload
+                        ?: remoteQrInput.trim()
                     val contact = SavedContact(
                         peerId = peerId,
                         displayName = displayName.ifBlank { peerId.take(20) },
                         verified = true,
-                        qrPayload = remoteQrInput.trim(),
+                        qrPayload = savedQr,
                     )
                     prefs.upsertContact(contact)
                     val idx = savedContacts.indexOfFirst { it.peerId == peerId }
@@ -651,23 +767,16 @@ fun ChatScreen() {
                 showSnackbar("Peer verified — secure channel established")
             },
             onReject = {
-                sasPeerId?.let { peer ->
-                    scope.launch(Dispatchers.IO) {
-                        SrltcpEngineHolder.getOrCreate().disconnectPeer(peer)
-                    }
-                    peers.remove(peer)
-                    peerVerified.remove(peer)
-                    if (activePeer == peer) activePeer = peers.firstOrNull()
-                }
+                sasPeerId?.let { softDisconnect(it) }
                 showSasDialog = false
-                showSnackbar("SAS mismatch — peer disconnected")
+                showSnackbar("SAS mismatch — not trusted")
             },
         )
     }
 
     if (showSettingsSheet) {
         SettingsSheet(
-            version = "0.2.11",
+            version = "0.2.12",
             displayName = displayName,
             wanEndpoint = wanEndpoint,
             onDisplayNameChange = { name ->
@@ -688,17 +797,19 @@ fun ChatScreen() {
         PeersSheet(
             contacts = savedContacts.toList(),
             activePeer = activePeer,
-            onSelect = { activePeer = it },
-            onRemove = { removeContact(it) },
-            onDisconnect = { peerId ->
-                scope.launch(Dispatchers.IO) {
-                    SrltcpEngineHolder.getOrCreate().disconnectPeer(peerId)
+            connectedPeer = connectedPeer,
+            onSelect = { contact ->
+                showPeersSheet = false
+                if (connectedPeer == contact.peerId && engineOnline) {
+                    activePeer = contact.peerId
+                    messages = loadMessagesForPeer(contact.peerId)
+                } else {
+                    reconnectContact(contact)
                 }
-                peers.remove(peerId)
-                peerVerified.remove(peerId)
-                if (activePeer == peerId) activePeer = peers.firstOrNull()
-                showSnackbar("Disconnected")
             },
+            onReconnect = { contact -> reconnectContact(contact) },
+            onRemove = { removeContact(it) },
+            onDisconnect = { softDisconnect(it) },
             onDismiss = { showPeersSheet = false },
         )
     }
@@ -779,45 +890,36 @@ private fun decodeQrDataUrl(dataUrl: String): android.graphics.Bitmap? {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConnectPeerSheet(
-    qrPayload: String,
     remoteQr: String,
     onRemoteQrChange: (String) -> Unit,
-    onCopyQr: () -> Unit,
+    onClearQr: () -> Unit,
     onDismiss: () -> Unit,
     onVerify: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(modifier = Modifier.padding(20.dp).padding(bottom = 32.dp)) {
-            Text("Connect Securely", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text("Connect New Peer", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                "1. Share your QR with the peer\n2. Paste their QR below\n3. Compare the 6-digit SAS code",
+                "Paste the peer's QR code. Your QR is on the home screen when no chat is open.",
                 fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 lineHeight = 18.sp,
             )
             Spacer(modifier = Modifier.height(12.dp))
-            if (qrPayload.isNotEmpty()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("Your QR:", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                    TextButton(onClick = onCopyQr) {
-                        Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Copy", fontSize = 12.sp)
-                    }
-                }
-                Text(qrPayload, fontSize = 9.sp, modifier = Modifier.padding(vertical = 4.dp))
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-            }
             OutlinedTextField(
                 value = remoteQr,
                 onValueChange = onRemoteQrChange,
                 label = { Text("Peer QR code") },
                 modifier = Modifier.fillMaxWidth(),
-                minLines = 2,
+                minLines = 3,
+                trailingIcon = {
+                    if (remoteQr.isNotEmpty()) {
+                        IconButton(onClick = onClearQr) {
+                            Icon(Icons.Default.Clear, contentDescription = "Clear")
+                        }
+                    }
+                },
             )
             Spacer(modifier = Modifier.height(12.dp))
             Button(onClick = onVerify, modifier = Modifier.fillMaxWidth()) {

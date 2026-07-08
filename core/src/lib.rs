@@ -348,6 +348,12 @@ impl SrltcpEngine {
         })
     }
 
+    pub fn is_peer_connected(&self, peer_id: String) -> bool {
+        self.runtime.block_on(async {
+            self.inner.lock().await.is_peer_connected(&peer_id).await
+        })
+    }
+
     pub fn local_endpoint(&self) -> Option<String> {
         self.runtime.block_on(async {
             self.inner.lock().await.local_endpoint()

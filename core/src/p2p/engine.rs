@@ -146,8 +146,9 @@ impl P2pEngine {
             return Ok(peer_id.to_string());
         }
         if let Some(hex_id) = peer_id.strip_prefix("peer:") {
+            let hex_id = hex_id.to_lowercase();
             for (id, session) in peers.iter() {
-                if hex::encode(session.crypto.remote_identity) == hex_id {
+                if hex::encode(session.crypto.remote_identity).to_lowercase() == hex_id {
                     return Ok(id.clone());
                 }
             }
@@ -198,19 +199,35 @@ impl P2pEngine {
         Ok(canonical)
     }
 
+    async fn cleanup_sessions_for_pubkey(&self, pubkey: &[u8; 32]) {
+        let canonical = peer_id_from_pubkey(pubkey);
+        let stale: Vec<String> = {
+            let peers = self.peers.read().await;
+            peers
+                .iter()
+                .filter(|(id, s)| *id == &canonical || s.crypto.remote_identity == *pubkey)
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        for id in stale {
+            let _ = self.disconnect_peer(&id).await;
+        }
+    }
+
     async fn ensure_connected(&self, parsed: &crate::crypto::identity::ParsedQr) -> Result<String, String> {
         let canonical = peer_id_from_pubkey(&parsed.public_key);
         {
             let peers = self.peers.read().await;
-            if peers.contains_key(&canonical) {
-                return Ok(canonical);
-            }
-            for (id, session) in peers.iter() {
-                if session.crypto.remote_identity == parsed.public_key {
-                    return Ok(id.clone());
+            if let Some(session) = peers.get(&canonical) {
+                if session.crypto.is_trusted()
+                    && self.quic.read().await.has_connection(&canonical).await
+                {
+                    return Ok(canonical);
                 }
             }
         }
+
+        self.cleanup_sessions_for_pubkey(&parsed.public_key).await;
 
         if let Some(ref endpoint) = parsed.endpoint {
             if self.connect_quic(endpoint).await.is_ok() {
@@ -228,6 +245,13 @@ impl P2pEngine {
              (or set a WAN endpoint in Settings), and use a QR from a running SRLTCP app."
                 .into(),
         )
+    }
+
+    pub async fn is_peer_connected(&self, peer_id: &str) -> bool {
+        if let Ok(resolved) = self.resolve_peer_id(peer_id).await {
+            return self.quic.read().await.has_connection(&resolved).await;
+        }
+        false
     }
 
     async fn maybe_auto_trust(&self, peer_id: &str, remote_pk: &[u8; 32]) -> bool {
@@ -514,7 +538,22 @@ impl P2pEngine {
         let parsed = parse_qr_payload(remote_qr)
             .map_err(|e| format!("invalid peer QR: {e}"))?;
 
+        let canonical = peer_id_from_pubkey(&parsed.public_key);
+        if self.is_peer_connected(&canonical).await && self.is_peer_trusted(&canonical).await {
+            return Ok((canonical, String::new(), true));
+        }
+
         let conn_peer_id = self.ensure_connected(&parsed).await?;
+
+        // Reset crypto for a fresh handshake on this transport session.
+        {
+            let mut peers = self.peers.write().await;
+            if let Some(session) = peers.get_mut(&conn_peer_id) {
+                session.crypto = PeerCrypto::new_connected();
+                session.pending_kex = None;
+            }
+        }
+
         self.handshake_with_qr_bytes(&conn_peer_id, &parsed.public_key)
             .await
     }
@@ -560,10 +599,24 @@ impl P2pEngine {
         let wire = WireFrame::Handshake(frame1);
         self.send_wire_frame(peer_id, &wire).await?;
 
-        let resp = tokio::time::timeout(Duration::from_secs(30), rx)
-            .await
-            .map_err(|_| "handshake timed out waiting for peer".to_string())?
-            .map_err(|_| "handshake channel closed".to_string())?;
+        let resp = match tokio::time::timeout(Duration::from_secs(30), rx).await {
+            Ok(Ok(hs)) => hs,
+            Ok(Err(_)) => {
+                self.handshake_wait.write().await.remove(peer_id);
+                return Err("handshake channel closed".into());
+            }
+            Err(_) => {
+                self.handshake_wait.write().await.remove(peer_id);
+                {
+                    let mut peers = self.peers.write().await;
+                    if let Some(session) = peers.get_mut(peer_id) {
+                        session.crypto = PeerCrypto::new_connected();
+                        session.pending_kex = None;
+                    }
+                }
+                return Err("handshake timed out waiting for peer".into());
+            }
+        };
 
         if resp.step != 2 {
             return Err(format!("unexpected handshake step {}", resp.step));
@@ -765,12 +818,20 @@ impl P2pEngine {
     }
 
     async fn send_wire_frame(&self, peer_id: &str, frame: &WireFrame) -> Result<(), String> {
-        let wire = frame.serialize().map_err(|e| e.to_string())?;
+        let wire = frame
+            .serialize()
+            .map_err(|e: crate::crypto::wire::WireError| e.to_string())?;
         self.send_raw(peer_id, &wire).await
     }
 
     async fn send_wire_message(&self, peer_id: &str, msg: ChatMessage) -> Result<(), String> {
         let resolved = self.resolve_peer_id(peer_id).await?;
+        if !self.quic.read().await.has_connection(&resolved).await {
+            return Err("peer not connected — reconnect from Saved Peers".into());
+        }
+        if !self.is_peer_trusted(&resolved).await {
+            return Err("peer not trusted — confirm SAS first".into());
+        }
         let plaintext = msg.to_json().map_err(|e| e.to_string())?;
 
         let ciphertext = {
@@ -915,6 +976,7 @@ impl EngineInbound {
             self.handle_wire_frame(peer_id, frame).await;
             return;
         }
+        // Try legacy JSON if postcard parse failed on non-magic data
         // Legacy plaintext JSON fallback (pre-0.2.9 peers)
         if let Ok(msg) = ChatMessage::from_json(data) {
             let _ = self.event_tx.send(EngineEvent::MessageReceived(msg)).await;
@@ -1287,12 +1349,18 @@ impl EngineInbound {
     }
 
     async fn send_app_message(&self, peer_id: &str, msg: ChatMessage) -> Result<(), String> {
+        if !self.quic.read().await.has_connection(peer_id).await {
+            return Err("peer not connected".into());
+        }
         let plaintext = msg.to_json().map_err(|e| e.to_string())?;
         let ciphertext = {
             let mut peers = self.peers.write().await;
             let session = peers
                 .get_mut(peer_id)
                 .ok_or_else(|| format!("peer not found: {peer_id}"))?;
+            if !session.crypto.is_trusted() {
+                return Err("peer not trusted — confirm SAS first".into());
+            }
             session.crypto.encrypt(&plaintext)?
         };
         let payload = EncryptedPayload {
@@ -1304,7 +1372,9 @@ impl EngineInbound {
     }
 
     async fn send_raw_frame(&self, peer_id: &str, frame: &WireFrame) -> Result<(), String> {
-        let wire = frame.serialize().map_err(|e| e.to_string())?;
+        let wire = frame
+            .serialize()
+            .map_err(|e: crate::crypto::wire::WireError| e.to_string())?;
         let transport = self
             .peers
             .read()
