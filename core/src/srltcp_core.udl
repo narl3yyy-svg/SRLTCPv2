@@ -34,8 +34,11 @@ interface SrltcpEngine {
 
     string public_key_hex();
     string qr_payload();
+    string qr_image_data_url();
     string? local_endpoint();
     ConnectResult connect_and_verify(string remote_qr);
+    void confirm_peer_trusted(string peer_id);
+    boolean is_peer_trusted(string peer_id);
     sequence<string> available_serial_ports();
 
     void start(u16 quic_port);

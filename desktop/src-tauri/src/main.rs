@@ -63,6 +63,16 @@ async fn get_local_endpoint(state: State<'_, AppState>) -> Result<Option<String>
 }
 
 #[tauri::command]
+async fn confirm_peer_trusted(state: State<'_, AppState>, peer_id: String) -> Result<(), String> {
+    state
+        .engine
+        .lock()
+        .await
+        .confirm_peer_trusted(&peer_id)
+        .await
+}
+
+#[tauri::command]
 async fn connect_and_verify(
     state: State<'_, AppState>,
     remote_qr: String,
@@ -236,6 +246,7 @@ fn main() {
             list_serial_ports,
             connect_serial,
             connect_and_verify,
+            confirm_peer_trusted,
             disconnect_peer,
             handshake,
             send_message,

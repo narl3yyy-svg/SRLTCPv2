@@ -95,8 +95,12 @@ Saved contacts persist across restarts. Remove a contact on any platform to revo
 
 ### v0.2.9 highlights
 
-- **Prebuilt-first launcher** — `run.sh` never auto-compiles; retries download while CI publishes release assets
-- All v0.2.8 UX fixes: SAS modal, Android keyboard/IME send, disconnect, saved contacts, serial device labels
+- **Real E2EE** — hybrid handshake over the wire, Double Ratchet encryption on all messages
+- **Meaningful SAS** — bound to handshake transcript + Ed25519 identities; explicit trust confirmation required
+- **Visual QR codes** on desktop and Android (scan to connect)
+- **Prebuilt-first launcher** — `run.sh` never auto-compiles; Linux x86_64 binary bundled in repo
+- zstd compression module for folder transfer (backend ready)
+- See [CHANGELOG.md](CHANGELOG.md) and [docs/CRYPTO.md](docs/CRYPTO.md)
 
 ### v0.2.8 highlights
 

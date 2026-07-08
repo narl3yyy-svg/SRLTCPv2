@@ -57,6 +57,9 @@ rcgen = "0.13"
 qrcode = "0.14"
 image = "0.25"
 
+# Folder transfer compression (streaming, fast on low-end hardware)
+zstd = "0.13"
+
 # Serial transport (desktop only)
 serialport = { version = "4.6", optional = true }
 

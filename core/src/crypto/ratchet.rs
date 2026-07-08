@@ -102,11 +102,16 @@ impl DoubleRatchet {
             .map_err(|_| RatchetError::DecryptFailed)?;
 
         // Ratchet every 256 messages
-        if self.send_count == 0 {
+        if self.send_count >= 256 {
             self.advance_send_chain();
         }
 
         Ok(result)
+    }
+
+    /// Root key material (for SAS binding on responder path).
+    pub fn root_key(&self) -> &[u8] {
+        &self.root_key
     }
 
     pub fn decrypt(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>, RatchetError> {

@@ -12,6 +12,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.imePadding
@@ -29,7 +30,10 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import android.graphics.BitmapFactory
+import android.util.Base64
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -110,6 +114,7 @@ fun ChatScreen() {
     var inputText by remember { mutableStateOf("") }
     var activePeer by remember { mutableStateOf<String?>(null) }
     var qrPayload by remember { mutableStateOf("") }
+    var qrImageDataUrl by remember { mutableStateOf("") }
     val peers = remember { mutableStateListOf<String>() }
     var engineOnline by remember { mutableStateOf(false) }
     val transfers = remember { mutableStateMapOf<String, TransferState>() }
@@ -297,6 +302,7 @@ fun ChatScreen() {
         val engine = SrltcpEngineHolder.getOrCreate()
         engineOnline = engine.isRunning()
         qrPayload = engine.qrPayload()
+        qrImageDataUrl = engine.qrImageDataUrl()
         engine.connectedPeers().forEach { if (!peers.contains(it)) peers.add(it) }
         if (peers.isNotEmpty() && activePeer == null) activePeer = peers[0]
         SrltcpEngineHolder.addEventListener(eventListener)
@@ -440,49 +446,14 @@ fun ChatScreen() {
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             if (qrPayload.isNotEmpty()) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    ),
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                "Your QR (share with peers)",
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 12.sp,
-                                modifier = Modifier.weight(1f),
-                            )
-                            IconButton(
-                                onClick = {
-                                    copyTextToClipboard(context, "SRLTCP QR", qrPayload)
-                                    showSnackbar("QR copied to clipboard")
-                                },
-                            ) {
-                                Icon(Icons.Default.ContentCopy, contentDescription = "Copy QR")
-                            }
-                        }
-                        Surface(
-                            color = MaterialTheme.colorScheme.inverseSurface,
-                            shape = MaterialTheme.shapes.small,
-                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                        ) {
-                            Text(
-                                qrPayload,
-                                fontSize = 10.sp,
-                                modifier = Modifier.padding(10.dp),
-                                color = MaterialTheme.colorScheme.inverseOnSurface,
-                                lineHeight = 14.sp,
-                            )
-                        }
-                    }
-                }
+                QrShareCard(
+                    qrPayload = qrPayload,
+                    qrImageDataUrl = qrImageDataUrl,
+                    onCopy = {
+                        copyTextToClipboard(context, "SRLTCP QR", qrPayload)
+                        showSnackbar("QR copied to clipboard")
+                    },
+                )
             }
             activePeer?.let { peer ->
                 if (peerVerified[peer] != true) {
@@ -589,6 +560,7 @@ fun ChatScreen() {
             peerId = sasPeerId ?: "",
             onConfirm = {
                 sasPeerId?.let { peerId ->
+                    SrltcpEngineHolder.getOrCreate().confirmPeerTrusted(peerId)
                     peerVerified[peerId] = true
                     val contact = SavedContact(
                         peerId = peerId,
@@ -646,6 +618,78 @@ fun ChatScreen() {
             },
             onDismiss = { showPeersSheet = false },
         )
+    }
+}
+
+@Composable
+fun QrShareCard(
+    qrPayload: String,
+    qrImageDataUrl: String,
+    onCopy: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Your QR (share with peers)",
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 12.sp,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = onCopy) {
+                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy QR")
+                }
+            }
+            val bitmap = remember(qrImageDataUrl) {
+                decodeQrDataUrl(qrImageDataUrl)
+            }
+            bitmap?.let { bmp ->
+                Image(
+                    bitmap = bmp.asImageBitmap(),
+                    contentDescription = "QR code",
+                    modifier = Modifier
+                        .size(180.dp)
+                        .padding(vertical = 8.dp),
+                )
+            }
+            Surface(
+                color = MaterialTheme.colorScheme.inverseSurface,
+                shape = MaterialTheme.shapes.small,
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+            ) {
+                Text(
+                    qrPayload,
+                    fontSize = 10.sp,
+                    modifier = Modifier.padding(10.dp),
+                    color = MaterialTheme.colorScheme.inverseOnSurface,
+                    lineHeight = 14.sp,
+                )
+            }
+        }
+    }
+}
+
+private fun decodeQrDataUrl(dataUrl: String): android.graphics.Bitmap? {
+    if (!dataUrl.startsWith("data:image/png;base64,")) return null
+    val b64 = dataUrl.removePrefix("data:image/png;base64,")
+    return try {
+        val bytes = Base64.decode(b64, Base64.DEFAULT)
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+    } catch (_: Exception) {
+        null
     }
 }
 

@@ -479,8 +479,14 @@ document.getElementById('connect-serial').onclick = async () => {
   } catch (e) { toast(`Serial error: ${e}`, true); }
 };
 
-document.getElementById('sas-confirm').onclick = () => {
+document.getElementById('sas-confirm').onclick = async () => {
   if (pendingSas) {
+    try {
+      await invoke('confirm_peer_trusted', { peerId: pendingSas.peerId });
+    } catch (e) {
+      toast(`Trust confirmation failed: ${e}`, true);
+      return;
+    }
     peerVerified.set(pendingSas.peerId, true);
     const name = displayName || shortPeer(pendingSas.peerId);
     const existing = savedContacts.findIndex(c => c.id === pendingSas.peerId);

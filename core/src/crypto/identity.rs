@@ -190,6 +190,16 @@ pub fn format_qr_endpoint(host: &str, port: u16) -> String {
 
 /// Short Authentication String for out-of-band verification.
 pub fn compute_sas(shared_secret: &[u8], local_pk: &[u8], remote_pk: &[u8]) -> String {
+    compute_sas_with_transcript(shared_secret, local_pk, remote_pk, &[])
+}
+
+/// SAS bound to handshake transcript + long-term identities (MITM-resistant).
+pub fn compute_sas_with_transcript(
+    shared_secret: &[u8],
+    local_pk: &[u8],
+    remote_pk: &[u8],
+    transcript: &[u8],
+) -> String {
     let mut hasher = Sha256::new();
     // Canonical ordering prevents MITM reflection
     if local_pk < remote_pk {
@@ -200,6 +210,7 @@ pub fn compute_sas(shared_secret: &[u8], local_pk: &[u8], remote_pk: &[u8]) -> S
         hasher.update(local_pk);
     }
     hasher.update(shared_secret);
+    hasher.update(transcript);
     let hash = hasher.finalize();
 
     // 6-digit SAS (like Signal/ZRTP)

@@ -1,113 +1,39 @@
-# Security
+# Security — SRLTCP v0.2.9
 
-SRLTCP v0.2.0 security model, threat analysis, and security properties.
+## Goals
 
-## Security Goals
+1. **E2EE** — Peers encrypt all chat/file signaling with Double Ratchet after trust confirmation.
+2. **Forward secrecy** — Ratchet chains limit key compromise blast radius.
+3. **Post-quantum hybrid KEX** — ML-KEM-768 + X25519 against harvest-now-decrypt-later.
+4. **Authenticated handshake** — Ed25519-signed frames bound to QR identity.
+5. **MITM detection** — SAS includes handshake transcript; user must verify before trust.
 
-1. **End-to-end encryption** — No third party (including relays) can read message content
-2. **Forward secrecy** — Past messages remain secure if current keys are compromised
-3. **Post-compromise security** — Future messages heal after key compromise (Double Ratchet)
-4. **Post-quantum resistance** — Hybrid ML-KEM-768 protects against harvest-now-decrypt-later
-5. **Authentication** — Ed25519 identity + SAS verification prevents impersonation
-6. **Integrity** — AEAD encryption + CRC32 (serial) / QUIC checksums (network) detect tampering
+## Threat model
 
-## Threat Model
+| Threat | Mitigation (v0.2.9) |
+|--------|---------------------|
+| Passive network tap | Encrypted payloads after trust |
+| Active MITM on first contact | SAS + signed handshake tied to QR keys |
+| Impersonation | Ed25519 signature on every handshake step |
+| Replay (app layer) | Ratchet message counters |
+| Quantum harvest | ML-KEM-768 hybrid |
 
-### In Scope
+## Trust establishment
 
-| Threat | Mitigation |
-|--------|------------|
-| Network eavesdropper (LAN/WAN) | QUIC + E2EE (AES-256-GCM) |
-| Serial line tapping | Session AEAD encryption |
-| Active MITM on first contact | SAS out-of-band verification |
-| Relay operator reading traffic | E2EE — relay sees only ciphertext |
-| Message tampering | GCM authentication tags |
-| Replay attacks | Monotonic nonces + sequence numbers |
-| Quantum computer (future) | ML-KEM-768 hybrid KEX |
-| Stolen device (current session) | Forward secrecy limits exposure |
-| Stolen device (past sessions) | Key erasure on shutdown |
+1. Exchange QR codes (Ed25519 identity + optional LAN endpoint).
+2. Run wire handshake (automatic on connect).
+3. Compare 6-digit SAS verbally or in person.
+4. Tap **Codes Match** → `confirm_peer_trusted()` unlocks messaging.
 
-### Out of Scope
+**Without step 4, messages are rejected** with "peer not trusted".
 
-| Threat | Notes |
-|--------|-------|
-| Compromised endpoint (malware) | Cannot protect against device-level compromise |
-| Physical device seizure with storage | Local key storage needs OS-level protection (future: secure enclave) |
-| Social engineering of SAS | Users must actually verify the 6-digit code |
-| RF jamming on serial | Physical layer — detected as connection loss |
-| DDoS on QUIC port | No rate limiting in v0.2.0 |
+## Out of scope
 
-## Trust Establishment
+- Compromised endpoint (malware on device)
+- User skipping SAS verification
+- DDoS on QUIC listener
+- WebRTC media path hardening (experimental)
 
-```
-┌─────────┐                    ┌─────────┐
-│  Alice  │                    │   Bob   │
-└────┬────┘                    └────┬────┘
-     │  1. Display QR (Ed25519 pk)  │
-     │ ─────────────────────────────>│  2. Scan QR
-     │                               │
-     │  3. Hybrid X25519+ML-KEM KEX  │
-     │ <────────────────────────────>│
-     │                               │
-     │  4. SAS: "482910"             │
-     │ <──── verbal confirm ────────>│  4. SAS: "482910"
-     │                               │
-     │  5. Trusted session ✓         │
-     │ <════ Double Ratchet E2EE ═══>│
-```
+## Reporting
 
-**Critical:** SAS verification is the user's responsibility. Without it, a MITM can substitute keys during the initial handshake.
-
-## Key Storage
-
-| Key | Storage | Lifetime |
-|-----|---------|----------|
-| Ed25519 identity | Generated in memory; persisted to app data (future) | Permanent |
-| ML-KEM ephemeral | Memory only | Per handshake |
-| X25519 ephemeral | Memory only | Per handshake / ratchet step |
-| Session keys | Memory only | Per session |
-| Ratchet state | Memory only | Per conversation |
-
-On graceful shutdown, all ephemeral and session keys are dropped. The Ed25519 identity key is the only long-term secret.
-
-## Serial-Specific Security
-
-- **No encryption at byte level** — AEAD operates on complete messages, not per-byte, to minimize overhead
-- **ACK/NACK frames are unencrypted** — They contain only sequence numbers, no payload data
-- **CRC32 is not cryptographic** — It detects accidental corruption only; GCM auth tags detect malicious tampering at the message layer
-- **Resync after errors** — Corrupted frames are dropped; the link recovers without exposing plaintext
-
-## Android Background Security
-
-The Foreground Service:
-
-- Displays a persistent notification (user awareness)
-- Holds P2P sessions in memory with the same E2EE as desktop
-- Does **not** store messages on disk by default
-- Stops only on Force Stop (user intent) or `shutdown()` call
-- Uses `android:stopWithTask="false"` to survive UI dismissal
-
-## Graceful Shutdown Security
-
-On Ctrl+C or app close:
-
-1. FIN frames sent on serial links
-2. QUIC connections closed with `0x00` error code
-3. All session keys zeroed (via Drop)
-4. Serial ports released
-5. Network sockets closed
-6. No key material written to temp files
-
-## Reporting Vulnerabilities
-
-Please report security issues responsibly. Do not open public GitHub issues for vulnerabilities.
-
-## Compliance Notes
-
-- ML-KEM-768: NIST FIPS 203
-- AES-256-GCM: NIST SP 800-38D
-- Ed25519: RFC 8032
-- X25519: RFC 7748
-- HKDF: RFC 5869
-
-Cryptographic implementations use audited crates (aws-lc-rs, ed25519-dalek, ml-kem) but the **composition and protocol logic has not been independently audited**. Use at your own risk for production deployments with sensitive data.
+Open a GitHub issue on [SRLTCPv2](https://github.com/narl3yyy-svg/SRLTCPv2) for security concerns.

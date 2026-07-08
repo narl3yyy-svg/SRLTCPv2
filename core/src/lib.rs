@@ -296,6 +296,26 @@ impl SrltcpEngine {
         })
     }
 
+    pub fn qr_image_data_url(&self) -> String {
+        let payload = self.qr_payload();
+        qr_png_data_url(&payload).unwrap_or_default()
+    }
+
+    pub fn confirm_peer_trusted(&self, peer_id: String) {
+        let inner = self.inner.clone();
+        self.runtime.block_on(async move {
+            if let Err(e) = inner.lock().await.confirm_peer_trusted(&peer_id).await {
+                tracing::error!(error = %e, "confirm_peer_trusted failed");
+            }
+        });
+    }
+
+    pub fn is_peer_trusted(&self, peer_id: String) -> bool {
+        self.runtime.block_on(async {
+            self.inner.lock().await.is_peer_trusted(&peer_id).await
+        })
+    }
+
     pub fn local_endpoint(&self) -> Option<String> {
         self.runtime.block_on(async {
             self.inner.lock().await.local_endpoint()
