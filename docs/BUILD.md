@@ -5,7 +5,7 @@
 | Component | Requirement |
 |-----------|-------------|
 | Rust | 1.85+ (auto-installed by `run.sh`) |
-| Desktop Linux | `webkit2gtk-4.1`, `gtk3`, `base-devel` |
+| Desktop Linux | `webkit2gtk-4.1`, `gtk3`, `libudev-dev`, `base-devel` |
 | Android SDK | API 35 (`sdkmanager "platforms;android-35"`) |
 | Android NDK | r27+ (`sdkmanager "ndk;27.2.12479018"`) |
 | JDK | **17 only** — JDK 21+ breaks Gradle |

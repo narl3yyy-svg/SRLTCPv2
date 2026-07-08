@@ -140,7 +140,7 @@ check_linux_deps() {
         case "$os" in
             ubuntu|debian|pop|linuxmint)
                 warn "Install with:"
-                echo "  sudo apt update && sudo apt install -y build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf"
+                echo "  sudo apt update && sudo apt install -y build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libudev-dev"
                 ;;
             arch|manjaro|endeavouros)
                 warn "Install with:"
