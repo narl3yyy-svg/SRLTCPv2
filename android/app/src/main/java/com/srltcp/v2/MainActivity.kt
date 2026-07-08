@@ -326,7 +326,7 @@ fun ChatScreen() {
                     Column {
                         Text("SRLTCP", fontWeight = FontWeight.Bold)
                         Text(
-                            "v0.2.8 • ${if (engineOnline) "Online" else "Offline"} • bg active",
+                            "v0.2.9 • ${if (engineOnline) "Online" else "Offline"} • bg active",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -619,7 +619,7 @@ fun ChatScreen() {
 
     if (showSettingsSheet) {
         SettingsSheet(
-            version = "0.2.8",
+            version = "0.2.9",
             displayName = displayName,
             onDisplayNameChange = { name ->
                 displayName = name

@@ -133,14 +133,16 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p release
-          shopt -s nullglob
-          for f in artifacts/*; do
-            cp "$f" release/
+          shopt -s nullglob globstar
+          for f in artifacts/**/* artifacts/*; do
+            [[ -f "$f" ]] || continue
+            cp -f "$f" release/
           done
           if [[ -f release/SRLTCPv2-release.apk ]]; then
             mv release/SRLTCPv2-release.apk "release/SRLTCPv2-${VERSION}.apk"
           fi
           ls -la release/
+          test -n "$(ls -A release/ 2>/dev/null)" || { echo "No release assets found"; exit 1; }
 
       - uses: softprops/action-gh-release@v2
         with:

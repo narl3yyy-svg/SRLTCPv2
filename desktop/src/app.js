@@ -1,6 +1,6 @@
-// SRLTCP v0.2.8 Desktop Frontend
+// SRLTCP v0.2.9 Desktop Frontend
 
-const STORAGE_KEY = 'srltcp_v0.2.8';
+const STORAGE_KEY = 'srltcp_v0.2.9';
 
 function loadState() {
   try {

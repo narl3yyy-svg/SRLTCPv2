@@ -60,7 +60,8 @@ mkdir -p "$DIST_DIR" "$DIST_DIR/bin/${platform}"
 cp -f "$src" "$DIST_DIR/$dest_name"
 cp -f "$src" "$DIST_DIR/bin/${platform}/$(basename "$src")"
 chmod +x "$DIST_DIR/$dest_name" "$DIST_DIR/bin/${platform}/$(basename "$src")" 2>/dev/null || true
+echo "$VERSION" > "$DIST_DIR/bin/${platform}/.prebuilt-version"
 
-echo "[desktop] ✓ Prebuilt ready:"
+echo "[desktop] ✓ Prebuilt ready (v${VERSION}):"
 echo "  $DIST_DIR/$dest_name"
 echo "  $DIST_DIR/bin/${platform}/$(basename "$src")"

@@ -4,7 +4,7 @@
 
 SRLTCP is privacy-first communication software: no accounts, no central servers, and end-to-end encryption with a human-verifiable SAS step before you trust a peer. A single Rust core powers the desktop (Tauri) and Android (Kotlin/Compose) clients, so crypto and protocol behavior stay consistent everywhere.
 
-**Current release: [v0.2.8](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.8)**
+**Current release: [v0.2.9](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.9)**
 
 ---
 
@@ -35,7 +35,7 @@ cd SRLTCPv2
 git pull && ./run.sh --pull
 ```
 
-`run.sh` downloads the matching prebuilt binary from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases) when available, or builds from source as a fallback.
+`run.sh` downloads the matching **prebuilt binary** from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases) — no compiler required. If CI is still publishing after a fresh pull, the launcher retries automatically (up to ~3 minutes). Use `--rebuild` only when developing from source.
 
 | Flag | Purpose |
 |------|---------|
@@ -56,7 +56,7 @@ run.bat
 Install the APK from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest):
 
 ```bash
-adb install dist/SRLTCPv2-0.2.8.apk
+adb install dist/SRLTCPv2-0.2.9.apk
 ```
 
 Or build locally (JDK 17, Android SDK/NDK):
@@ -92,6 +92,11 @@ Saved contacts persist across restarts. Remove a contact on any platform to revo
 | Foreground background service | — | ✓ |
 
 \*Voice and video are experimental on some platforms.
+
+### v0.2.9 highlights
+
+- **Prebuilt-first launcher** — `run.sh` never auto-compiles; retries download while CI publishes release assets
+- All v0.2.8 UX fixes: SAS modal, Android keyboard/IME send, disconnect, saved contacts, serial device labels
 
 ### v0.2.8 highlights
 
@@ -149,9 +154,9 @@ SRLTCP uses hybrid post-quantum key exchange, a double ratchet for forward secre
 Pushing a version tag triggers CI to publish desktop prebuilts and the Android APK:
 
 ```bash
-git tag -a v0.2.8 -m "SRLTCP v0.2.8"
+git tag -a v0.2.9 -m "SRLTCP v0.2.9"
 git push origin main
-git push origin v0.2.8
+git push origin v0.2.9
 ```
 
 ---

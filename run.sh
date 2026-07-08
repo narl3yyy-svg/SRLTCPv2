@@ -28,13 +28,17 @@ err()  { echo -e "${RED}[SRLTCP]${NC} $*" >&2; }
 FORCE_REBUILD=false
 USE_PREBUILT=true
 GIT_PULL=false
+PREBUILT_RETRIES="${SRLTCP_PREBUILT_RETRIES:-18}"
+PREBUILT_RETRY_SECS="${SRLTCP_PREBUILT_RETRY_SECS:-10}"
 
 usage() {
     echo "Usage: $0 [--pull] [--rebuild] [--no-prebuilt]"
     echo "  (default)      Launch prebuilt binary (local or downloaded from Releases)"
     echo "  --pull         git pull --ff-only from origin/main before launch"
-    echo "  --rebuild      Compile from source, then launch"
-    echo "  --no-prebuilt  Skip prebuilt download (use local dist/ only)"
+    echo "  --rebuild      Compile from source, then launch (developers only)"
+    echo "  --no-prebuilt  Skip GitHub download (use local dist/ only)"
+    echo ""
+    echo "Prebuilt download retries: ${PREBUILT_RETRIES}x every ${PREBUILT_RETRY_SECS}s while CI publishes."
 }
 
 for arg in "$@"; do
@@ -294,11 +298,31 @@ http_download() {
     return 1
 }
 
-download_prebuilt() {
+download_prebuilt_once() {
+    local tag_version="$1"
     local platform dest dir url
     platform="$(platform_tag)"
     dir="dist/bin/${platform}"
     dest="${dir}/srltcp-desktop"
+
+    mkdir -p "$dir"
+    url="https://github.com/${REPO}/releases/download/v${tag_version}/srltcp-desktop-${platform}"
+
+    if http_download "$url" "$dest" 2>/dev/null && validate_binary_file "$dest"; then
+        chmod +x "$dest"
+        mark_prebuilt_version "$platform" "$dest"
+        ok "Downloaded prebuilt v${tag_version}: $dest"
+        printf '%s' "$dest"
+        return 0
+    fi
+
+    rm -f "$dest"
+    return 1
+}
+
+download_prebuilt() {
+    local platform attempt bin
+    platform="$(platform_tag)"
 
     if [[ "$USE_PREBUILT" != true ]] || [[ "$FORCE_REBUILD" == true ]]; then
         return 1
@@ -309,20 +333,17 @@ download_prebuilt() {
         return 1
     fi
 
-    mkdir -p "$dir"
-    url="https://github.com/${REPO}/releases/download/v${VERSION}/srltcp-desktop-${platform}"
-
     log "Downloading prebuilt for ${platform} (v${VERSION})..."
-    if http_download "$url" "$dest" 2>/dev/null && validate_binary_file "$dest"; then
-        chmod +x "$dest"
-        mark_prebuilt_version "$platform" "$dest"
-        ok "Downloaded prebuilt: $dest"
-        printf '%s' "$dest"
-        return 0
-    fi
+    for ((attempt = 1; attempt <= PREBUILT_RETRIES; attempt++)); do
+        bin="$(download_prebuilt_once "$VERSION")" && return 0
+        if [[ "$attempt" -lt "$PREBUILT_RETRIES" ]]; then
+            warn "Prebuilt v${VERSION} not published yet (${attempt}/${PREBUILT_RETRIES}) — CI may still be running..."
+            warn "Check: https://github.com/${REPO}/actions — retrying in ${PREBUILT_RETRY_SECS}s"
+            sleep "$PREBUILT_RETRY_SECS"
+        fi
+    done
 
-    rm -f "$dest"
-    warn "Prebuilt not available for ${platform} at v${VERSION}."
+    warn "Prebuilt not available for ${platform} at v${VERSION} after ${PREBUILT_RETRIES} attempts."
     return 1
 }
 
@@ -360,23 +381,15 @@ resolve_binary() {
         return 0
     fi
 
-    if command -v cargo &>/dev/null || [[ -f "$HOME/.cargo/env" ]]; then
-        warn "Prebuilt v${VERSION} unavailable — building from source..."
-        ensure_rust
-        build_from_source
-        if validate_binary_file "target/release/srltcp-desktop"; then
-            mkdir -p "dist/bin/${platform}"
-            cp -f "target/release/srltcp-desktop" "dist/bin/${platform}/srltcp-desktop"
-            chmod +x "dist/bin/${platform}/srltcp-desktop"
-            mark_prebuilt_version "$platform" "dist/bin/${platform}/srltcp-desktop"
-            printf '%s' "dist/bin/${platform}/srltcp-desktop"
-            return 0
-        fi
-    fi
-
-    err "No prebuilt binary found for ${platform}."
-    err "Download v${VERSION} from: https://github.com/${REPO}/releases/tag/v${VERSION}"
-    err "Or compile from source: $0 --rebuild"
+    err "No prebuilt binary available for ${platform} at v${VERSION}."
+    err "Release assets publish after CI finishes (~15–25 min after tag push)."
+    err "  Releases: https://github.com/${REPO}/releases/tag/v${VERSION}"
+    err "  CI status: https://github.com/${REPO}/actions"
+    err ""
+    err "Options:"
+    err "  1) Wait and run again:  ./run.sh"
+    err "  2) Build locally (needs Rust + webkit2gtk):  ./run.sh --rebuild"
+    err "  3) Stage a local prebuilt:  ./scripts/build-desktop.sh && ./run.sh --no-prebuilt"
     exit 1
 }
 
