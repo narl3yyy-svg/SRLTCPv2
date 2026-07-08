@@ -171,20 +171,27 @@ async fn shutdown_engine(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 fn install_shutdown_handler(engine: Arc<Mutex<P2pEngine>>, shutting_down: Arc<AtomicBool>) {
-    std::thread::spawn(move || {
-        use signal_hook::consts::signal::{SIGINT, SIGTERM};
-        use signal_hook::iterator::Signals;
+    #[cfg(unix)]
+    {
+        std::thread::spawn(move || {
+            use signal_hook::consts::signal::{SIGINT, SIGTERM};
+            use signal_hook::iterator::Signals;
 
-        let mut signals = Signals::new([SIGTERM, SIGINT]).expect("signal handler");
-        for _ in signals.forever() {
-            if shutting_down.swap(true, Ordering::SeqCst) {
+            let mut signals = Signals::new([SIGTERM, SIGINT]).expect("signal handler");
+            for _ in signals.forever() {
+                if shutting_down.swap(true, Ordering::SeqCst) {
+                    std::process::exit(0);
+                }
+                tracing::info!("shutdown signal received — releasing resources");
+                tauri::async_runtime::block_on(graceful_shutdown(engine.clone()));
                 std::process::exit(0);
             }
-            tracing::info!("shutdown signal received — releasing resources");
-            tauri::async_runtime::block_on(graceful_shutdown(engine.clone()));
-            std::process::exit(0);
-        }
-    });
+        });
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (engine, shutting_down);
+    }
 }
 
 async fn run_auto_peer_test(engine: Arc<Mutex<P2pEngine>>) -> Result<(), String> {

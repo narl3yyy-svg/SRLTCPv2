@@ -19,7 +19,7 @@ serde_json = "1"
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-signal-hook = "0.3"
+signal-hook = { version = "0.3", features = ["iterator"] }
 
 [features]
 default = ["custom-protocol"]
