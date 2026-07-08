@@ -1,5 +1,7 @@
 package com.srltcp.v2
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
 import android.os.Bundle
@@ -274,7 +276,7 @@ fun ChatScreen() {
                     Column {
                         Text("SRLTCP", fontWeight = FontWeight.Bold)
                         Text(
-                            "v0.2.6 • ${if (engineOnline) "Online" else "Offline"} • bg active",
+                            "v0.2.7 • ${if (engineOnline) "Online" else "Offline"} • bg active",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -387,7 +389,25 @@ fun ChatScreen() {
                     ),
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
-                        Text("Your QR (share with peers)", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "Your QR (share with peers)",
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 12.sp,
+                                modifier = Modifier.weight(1f),
+                            )
+                            IconButton(
+                                onClick = {
+                                    copyTextToClipboard(context, "SRLTCP QR", qrPayload)
+                                    showSnackbar("QR copied to clipboard")
+                                },
+                            ) {
+                                Icon(Icons.Default.ContentCopy, contentDescription = "Copy QR")
+                            }
+                        }
                         Text(
                             qrPayload,
                             fontSize = 9.sp,
@@ -462,6 +482,10 @@ fun ChatScreen() {
             qrPayload = qrPayload,
             remoteQr = remoteQrInput,
             onRemoteQrChange = { remoteQrInput = it },
+            onCopyQr = {
+                copyTextToClipboard(context, "SRLTCP QR", qrPayload)
+                showSnackbar("QR copied to clipboard")
+            },
             onDismiss = { showConnectSheet = false },
             onVerify = {
                 scope.launch(Dispatchers.IO) {
@@ -521,6 +545,7 @@ fun ConnectPeerSheet(
     qrPayload: String,
     remoteQr: String,
     onRemoteQrChange: (String) -> Unit,
+    onCopyQr: () -> Unit,
     onDismiss: () -> Unit,
     onVerify: () -> Unit,
 ) {
@@ -536,7 +561,17 @@ fun ConnectPeerSheet(
             )
             Spacer(modifier = Modifier.height(12.dp))
             if (qrPayload.isNotEmpty()) {
-                Text("Your QR:", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Your QR:", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    TextButton(onClick = onCopyQr) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Copy", fontSize = 12.sp)
+                    }
+                }
                 Text(qrPayload, fontSize = 9.sp, modifier = Modifier.padding(vertical = 4.dp))
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
             }
@@ -555,7 +590,7 @@ fun ConnectPeerSheet(
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                "v0.2.6 QR codes include the peer address — connection starts automatically.",
+                "Paste the peer's QR — connection starts automatically, then confirm SAS.",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -744,6 +779,11 @@ fun VideoPreview(path: String) {
             }
         }
     }
+}
+
+private fun copyTextToClipboard(context: Context, label: String, text: String) {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
 }
 
 private fun mediaKindForPath(path: String, filename: String): MessageKind {

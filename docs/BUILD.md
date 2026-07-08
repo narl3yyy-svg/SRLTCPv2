@@ -1,4 +1,4 @@
-# Build Instructions — SRLTCP v0.2.6
+# Build Instructions — SRLTCP v0.2.7
 
 ## Prerequisites
 
@@ -41,7 +41,7 @@ This script:
 2. Cross-compiles `libsrltcp_core.so` for 3 ABIs (android feature, no serialport)
 3. Generates UniFFI Kotlin bindings
 4. Runs `./gradlew assembleDebug`
-5. Copies APK to `dist/SRLTCPv2-0.2.6.apk`
+5. Copies APK to `dist/SRLTCPv2-0.2.7.apk`
 6. Cleans Gradle caches automatically
 
 ### APK only (jniLibs already built)
@@ -62,7 +62,7 @@ cd android
 ### Install
 
 ```bash
-adb install dist/SRLTCPv2-0.2.6.apk
+adb install dist/SRLTCPv2-0.2.7.apk
 ```
 
 ## Cleanup
@@ -92,9 +92,9 @@ Pushing a version tag triggers `.github/workflows/release.yml`, which builds and
 
 ```bash
 # Bump version in Cargo.toml, commit, then:
-git tag -a v0.2.6 -m "SRLTCP v0.2.6"
+git tag -a v0.2.7 -m "SRLTCP v0.2.7"
 git push origin main
-git push origin v0.2.6
+git push origin v0.2.7
 ```
 
 Manual fallback (local artifacts in `dist/`):

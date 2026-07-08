@@ -20,9 +20,9 @@ BLUE='\033[0;34m'
 YELLOW='\033[0;33m'
 NC='\033[0m'
 
-log()  { echo -e "${BLUE}[SRLTCP]${NC} $*"; }
-ok()   { echo -e "${GREEN}[SRLTCP]${NC} $*"; }
-warn() { echo -e "${YELLOW}[SRLTCP]${NC} $*"; }
+log()  { echo -e "${BLUE}[SRLTCP]${NC} $*" >&2; }
+ok()   { echo -e "${GREEN}[SRLTCP]${NC} $*" >&2; }
+warn() { echo -e "${YELLOW}[SRLTCP]${NC} $*" >&2; }
 err()  { echo -e "${RED}[SRLTCP]${NC} $*" >&2; }
 
 FORCE_REBUILD=false
@@ -185,16 +185,43 @@ check_macos_deps() {
     return 0
 }
 
-validate_binary() {
+prebuilt_version_file() {
+    local platform="$1"
+    echo "dist/bin/${platform}/.prebuilt-version"
+}
+
+cached_prebuilt_version() {
+    local vf
+    vf="$(prebuilt_version_file "$(platform_tag)")"
+    [[ -f "$vf" ]] && cat "$vf" || echo ""
+}
+
+mark_prebuilt_version() {
+    local platform="$1" bin="$2"
+    mkdir -p "dist/bin/${platform}"
+    echo "$VERSION" > "$(prebuilt_version_file "$platform")"
+    log "Cached prebuilt v${VERSION} at $bin"
+}
+
+validate_binary_file() {
     local bin="$1"
     [[ -f "$bin" ]] || return 1
     [[ -s "$bin" ]] || return 1
     [[ -x "$bin" ]] || chmod +x "$bin" 2>/dev/null || true
-    # Reject obviously corrupt downloads (< 1 MB)
     local size
     size=$(stat -c%s "$bin" 2>/dev/null || stat -f%z "$bin" 2>/dev/null || echo 0)
     [[ "$size" -gt 1048576 ]] || return 1
     return 0
+}
+
+is_prebuilt_current() {
+    local cached
+    cached="$(cached_prebuilt_version)"
+    [[ "$cached" == "$VERSION" ]]
+}
+
+validate_binary() {
+    validate_binary_file "$1" && is_prebuilt_current
 }
 
 find_binary() {
@@ -221,9 +248,12 @@ find_binary() {
 
     local candidate
     for candidate in "${candidates[@]}"; do
-        if validate_binary "$candidate"; then
-            echo "$candidate"
-            return 0
+        if validate_binary_file "$candidate"; then
+            if is_prebuilt_current; then
+                printf '%s' "$candidate"
+                return 0
+            fi
+            warn "Stale prebuilt at $candidate (have v$(cached_prebuilt_version), need v${VERSION})"
         fi
     done
 
@@ -263,10 +293,11 @@ download_prebuilt() {
     url="https://github.com/${REPO}/releases/download/v${VERSION}/srltcp-desktop-${platform}"
 
     log "Downloading prebuilt for ${platform} (v${VERSION})..."
-    if http_download "$url" "$dest" 2>/dev/null && validate_binary "$dest"; then
+    if http_download "$url" "$dest" 2>/dev/null && validate_binary_file "$dest"; then
         chmod +x "$dest"
+        mark_prebuilt_version "$platform" "$dest"
         ok "Downloaded prebuilt: $dest"
-        echo "$dest"
+        printf '%s' "$dest"
         return 0
     fi
 
@@ -304,9 +335,23 @@ resolve_binary() {
     fi
 
     bin="$(download_prebuilt)" || true
-    if [[ -n "$bin" ]]; then
-        echo "$bin"
+    if [[ -n "$bin" ]] && validate_binary_file "$bin"; then
+        printf '%s' "$bin"
         return 0
+    fi
+
+    if command -v cargo &>/dev/null || [[ -f "$HOME/.cargo/env" ]]; then
+        warn "Prebuilt v${VERSION} unavailable — building from source..."
+        ensure_rust
+        build_from_source
+        if validate_binary_file "target/release/srltcp-desktop"; then
+            mkdir -p "dist/bin/${platform}"
+            cp -f "target/release/srltcp-desktop" "dist/bin/${platform}/srltcp-desktop"
+            chmod +x "dist/bin/${platform}/srltcp-desktop"
+            mark_prebuilt_version "$platform" "dist/bin/${platform}/srltcp-desktop"
+            printf '%s' "dist/bin/${platform}/srltcp-desktop"
+            return 0
+        fi
     fi
 
     err "No prebuilt binary found for ${platform}."
@@ -345,7 +390,7 @@ main() {
     local binary
     binary="$(resolve_binary)"
 
-    if ! validate_binary "$binary"; then
+    if ! validate_binary_file "$binary"; then
         err "Binary missing or invalid at $binary"
         err "Try: $0 --rebuild"
         exit 1

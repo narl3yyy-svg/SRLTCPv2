@@ -162,11 +162,30 @@ pub fn parse_qr_payload(payload: &str) -> Result<ParsedQr, IdentityError> {
             ]);
             Ok(ParsedQr {
                 public_key: key,
-                endpoint: Some(format!("{host}:{port}")),
+                endpoint: Some(format_qr_endpoint(host, port)),
             })
         }
         _ => Err(IdentityError::InvalidKey("unsupported QR version".into())),
     }
+}
+
+/// Build a connectable `host:port` from QR v3 fields.
+/// Handles legacy v0.2.6 payloads that stored `ip:port` in the host field (double-port bug).
+pub fn format_qr_endpoint(host: &str, port: u16) -> String {
+    if !host.contains(':') {
+        return format!("{host}:{port}");
+    }
+
+    let endpoint = host.to_string();
+    let parts: Vec<&str> = endpoint.split(':').collect();
+    if parts.len() >= 3 {
+        let last = parts[parts.len() - 1];
+        let prev = parts[parts.len() - 2];
+        if last == prev && last.parse::<u16>().is_ok() {
+            return parts[..parts.len() - 1].join(":");
+        }
+    }
+    endpoint
 }
 
 /// Short Authentication String for out-of-band verification.
@@ -216,6 +235,22 @@ mod tests {
         let parsed = parse_qr_payload(&qr).unwrap();
         assert_eq!(parsed.public_key, id.public_key_bytes());
         assert_eq!(parsed.endpoint.as_deref(), Some("192.168.1.42:9473"));
+    }
+
+    #[test]
+    fn qr_v3_legacy_host_port_in_host_field() {
+        let id = Identity::generate();
+        // v0.2.6 bug: local_endpoint() passed "ip:port" as host
+        let qr = id.qr_payload_with_endpoint(Some("10.0.30.101:9473"), 9473);
+        let parsed = parse_qr_payload(&qr).unwrap();
+        assert_eq!(parsed.endpoint.as_deref(), Some("10.0.30.101:9473"));
+    }
+
+    #[test]
+    fn qr_v3_user_reported_payload() {
+        let qr = "A04h7pf673PM-S2B0PQSefFdtTOJuPTteIfn800Lvm2GEDEwLjAuMzAuMTAxOjk0NzMlAQ";
+        let parsed = parse_qr_payload(qr).unwrap();
+        assert_eq!(parsed.endpoint.as_deref(), Some("10.0.30.101:9473"));
     }
 
     #[test]

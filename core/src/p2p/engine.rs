@@ -12,7 +12,7 @@ use tracing::{info, warn};
 
 use crate::crypto::handshake::HybridKeyExchange;
 use crate::crypto::identity::{parse_qr_payload, Identity};
-use crate::network::local::local_endpoint;
+use crate::network::local::{detect_lan_ip, local_endpoint};
 use crate::network::TransportKind;
 use crate::network::QuicTransport;
 use crate::protocol::{ChatMessage, Envelope, MessageType};
@@ -93,9 +93,11 @@ impl P2pEngine {
     }
 
     pub fn qr_payload(&self) -> String {
-        let endpoint = local_endpoint(9473);
+        let host = detect_lan_ip()
+            .map(|ip| ip.to_string())
+            .unwrap_or_else(|| "127.0.0.1".to_string());
         self.identity
-            .qr_payload_with_endpoint(endpoint.as_deref(), 9473)
+            .qr_payload_with_endpoint(Some(&host), 9473)
     }
 
     pub fn local_endpoint(&self) -> Option<String> {
