@@ -13,10 +13,13 @@ import androidx.compose.ui.unit.sp
 fun SettingsSheet(
     version: String,
     displayName: String,
+    wanEndpoint: String,
     onDisplayNameChange: (String) -> Unit,
+    onWanEndpointChange: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var nameInput by remember(displayName) { mutableStateOf(displayName) }
+    var wanInput by remember(wanEndpoint) { mutableStateOf(wanEndpoint) }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(modifier = Modifier.padding(20.dp).padding(bottom = 32.dp)) {
@@ -40,6 +43,33 @@ fun SettingsSheet(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Save display name")
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+
+            Text("WAN endpoint (optional)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            OutlinedTextField(
+                value = wanInput,
+                onValueChange = { wanInput = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("public.host:9473") },
+                singleLine = true,
+            )
+            Text(
+                "Used when LAN connect from QR fails. Forward port 9473 on your router.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 14.sp,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(
+                onClick = {
+                    onWanEndpointChange(wanInput.trim())
+                    onDismiss()
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Save WAN endpoint")
             }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))

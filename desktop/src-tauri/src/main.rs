@@ -1,4 +1,4 @@
-//! SRLTCP v0.2.9 Desktop — Tauri v2 backend with graceful shutdown.
+//! SRLTCP v0.2.10 Desktop — Tauri v2 backend with graceful shutdown.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -85,6 +85,20 @@ async fn connect_and_verify(
 #[tauri::command]
 async fn disconnect_peer(state: State<'_, AppState>, peer_id: String) -> Result<(), String> {
     state.engine.lock().await.disconnect_peer(&peer_id).await
+}
+
+#[tauri::command]
+async fn set_wan_endpoint(
+    state: State<'_, AppState>,
+    endpoint: Option<String>,
+) -> Result<(), String> {
+    state.engine.lock().await.set_wan_endpoint(endpoint).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_wan_endpoint(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    Ok(state.engine.lock().await.wan_endpoint().await)
 }
 
 #[tauri::command]
@@ -247,6 +261,8 @@ fn main() {
             connect_serial,
             connect_and_verify,
             confirm_peer_trusted,
+            set_wan_endpoint,
+            get_wan_endpoint,
             disconnect_peer,
             handshake,
             send_message,

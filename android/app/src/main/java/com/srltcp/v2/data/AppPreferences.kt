@@ -18,6 +18,10 @@ class AppPreferences(context: Context) {
         get() = prefs.getString(KEY_DISPLAY_NAME, "") ?: ""
         set(value) = prefs.edit().putString(KEY_DISPLAY_NAME, value).apply()
 
+    var wanEndpoint: String
+        get() = prefs.getString(KEY_WAN_ENDPOINT, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_WAN_ENDPOINT, value.trim()).apply()
+
     fun loadContacts(): List<SavedContact> {
         val raw = prefs.getString(KEY_CONTACTS, "[]") ?: "[]"
         return try {
@@ -67,6 +71,7 @@ class AppPreferences(context: Context) {
 
     companion object {
         private const val KEY_DISPLAY_NAME = "display_name"
+        private const val KEY_WAN_ENDPOINT = "wan_endpoint"
         private const val KEY_CONTACTS = "contacts"
     }
 }

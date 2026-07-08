@@ -44,6 +44,8 @@ interface SrltcpEngine {
     void start(u16 quic_port);
     void connect_serial(string port_name, u32 baud_rate);
     void connect_quic(string addr);
+    void set_wan_endpoint(string? endpoint);
+    string? wan_endpoint();
     void disconnect_peer(string peer_id);
 
     string handshake_with(string peer_id, string remote_qr);

@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.2.10 — SAS fix + WAN connect (2026-07-08)
+
+### Security
+
+- **SAS mismatch fixed**: Canonical handshake transcript (step bodies 1→2→3, length-prefixed) now recorded symmetrically on initiator and responder — both peers derive the same 6-digit SAS.
+- **Engine handshake wiring**: Initiator records step 1 before sending; uses `initiator_process_step2` + `initiator_finalize_step3`; responder uses `responder_process_step1` + `responder_process_step3`.
+- Unit test `sas_matches_both_sides_with_canonical_transcript` validates matching SAS.
+
+### Features
+
+- **WAN endpoint**: Optional `host:port` in Settings (desktop + Android). Connect & Verify tries LAN from QR first, then falls back to configured WAN.
+- `set_wan_endpoint()` / `wan_endpoint()` exposed via UniFFI and Tauri.
+
+### Cleanup
+
+- Removed unused `core/examples/` dev binaries, unused `SessionCipher`, and `snow` dependency.
+
+### Known limitations
+
+- QUIC transport uses ephemeral TLS certs; identity binding is at application handshake layer.
+- Folder transfer UI, WebRTC E2EE signaling, and voice notes UI still in progress.
+
 ## v0.2.9 — Security-first crypto overhaul (2026-07-08)
 
 ### Security (critical fixes)
@@ -26,13 +48,6 @@
 
 - Per-peer `PeerCrypto` state machine: `Connected → Handshaking → SasPending → Trusted`.
 - `WireFrame` protocol: signed handshake steps + encrypted payloads.
-
-### Known limitations (future work)
-
-- Folder transfer UI wiring (zstd backend ready, end-to-end flow in progress).
-- WebRTC voice/video E2EE signaling not yet ratchet-wrapped.
-- Voice notes UI not yet exposed (Audio message type exists).
-- QUIC transport still uses ephemeral TLS certs; identity binding is at application handshake layer.
 
 ## v0.2.8
 

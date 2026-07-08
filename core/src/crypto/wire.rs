@@ -7,11 +7,11 @@ use serde::{Deserialize, Serialize};
 pub enum WireFrame {
     /// Hybrid KEX handshake (signed with Ed25519 long-term identity).
     Handshake(SignedHandshake),
-    /// Double-ratchet ciphertext inside an envelope shell.
+    /// Double-ratchet ciphertext.
     Encrypted(EncryptedPayload),
 }
 
-/// Signed hybrid handshake step (1 = initiator, 2 = responder, 3 = initiator finish).
+/// Signed hybrid handshake step (1 = initiator, 2 = responder, 3 = ratchet DH).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignedHandshake {
     pub step: u8,
@@ -36,17 +36,40 @@ impl WireFrame {
     }
 }
 
-/// Accumulates handshake bytes for SAS binding.
-#[derive(Debug, Default, Clone)]
+/// Canonical handshake transcript: step bodies 1→2→3 in order (both peers identical).
+#[derive(Debug, Clone)]
 pub struct HandshakeTranscript {
     bytes: Vec<u8>,
+    next_step: u8,
+}
+
+impl Default for HandshakeTranscript {
+    fn default() -> Self {
+        Self {
+            bytes: Vec::new(),
+            next_step: 1,
+        }
+    }
 }
 
 impl HandshakeTranscript {
-    pub fn append(&mut self, frame: &SignedHandshake) {
-        self.bytes.push(frame.step);
-        self.bytes.extend_from_slice(&frame.identity);
-        self.bytes.extend_from_slice(&frame.body);
+    /// Append a handshake step body; steps must arrive in order 1, 2, 3.
+    pub fn append_body(&mut self, step: u8, body: &[u8]) -> Result<(), String> {
+        if step != self.next_step {
+            return Err(format!(
+                "transcript out of order: expected step {}, got {step}",
+                self.next_step
+            ));
+        }
+        self.next_step += 1;
+        let len = (body.len() as u32).to_be_bytes();
+        self.bytes.extend_from_slice(&len);
+        self.bytes.extend_from_slice(body);
+        Ok(())
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.next_step > 3
     }
 
     pub fn as_bytes(&self) -> &[u8] {

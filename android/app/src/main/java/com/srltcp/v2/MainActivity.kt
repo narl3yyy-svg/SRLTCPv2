@@ -128,6 +128,7 @@ fun ChatScreen() {
     var showSettingsSheet by remember { mutableStateOf(false) }
     var showPeersSheet by remember { mutableStateOf(false) }
     var displayName by remember { mutableStateOf("") }
+    var wanEndpoint by remember { mutableStateOf("") }
     val savedContacts = remember { mutableStateListOf<SavedContact>() }
     val prefs = remember { AppPreferences(context) }
     val peerVerified = remember { mutableStateMapOf<String, Boolean>() }
@@ -163,6 +164,11 @@ fun ChatScreen() {
 
     LaunchedEffect(Unit) {
         displayName = prefs.displayName
+        wanEndpoint = prefs.wanEndpoint
+        val engine = SrltcpEngineHolder.getOrCreate()
+        if (wanEndpoint.isNotBlank()) {
+            engine.setWanEndpoint(wanEndpoint)
+        }
         savedContacts.clear()
         savedContacts.addAll(prefs.loadContacts())
         prefs.loadContacts().forEach { c ->
@@ -332,7 +338,7 @@ fun ChatScreen() {
                     Column {
                         Text("SRLTCP", fontWeight = FontWeight.Bold)
                         Text(
-                            "v0.2.9 • ${if (engineOnline) "Online" else "Offline"} • bg active",
+                            "v0.2.10 • ${if (engineOnline) "Online" else "Offline"} • bg active",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -591,11 +597,18 @@ fun ChatScreen() {
 
     if (showSettingsSheet) {
         SettingsSheet(
-            version = "0.2.9",
+            version = "0.2.10",
             displayName = displayName,
+            wanEndpoint = wanEndpoint,
             onDisplayNameChange = { name ->
                 displayName = name
                 prefs.displayName = name
+            },
+            onWanEndpointChange = { endpoint ->
+                wanEndpoint = endpoint
+                prefs.wanEndpoint = endpoint
+                val eng = SrltcpEngineHolder.getOrCreate()
+                eng.setWanEndpoint(if (endpoint.isBlank()) null else endpoint)
             },
             onDismiss = { showSettingsSheet = false },
         )

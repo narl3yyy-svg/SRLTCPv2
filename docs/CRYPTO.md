@@ -1,8 +1,8 @@
-# Cryptography — SRLTCP v0.2.9
+# Cryptography — SRLTCP v0.2.10
 
 ## Overview
 
-SRLTCP v0.2.9 implements **real** end-to-end encryption on the wire. The hybrid handshake runs interactively between peers; application data is encrypted with a Double Ratchet before leaving the device.
+SRLTCP v0.2.10 implements end-to-end encryption on the wire. The hybrid handshake runs interactively between peers; application data is encrypted with a Double Ratchet before leaving the device. SAS codes use a canonical handshake transcript (step bodies 1→2→3) so both peers derive identical values.
 
 ## Primitives
 
@@ -14,7 +14,7 @@ SRLTCP v0.2.9 implements **real** end-to-end encryption on the wire. The hybrid 
 | SAS | SHA-256 | 6-digit code over identities + secret + transcript |
 | Compression | zstd level 3 | Folder/bulk transfer (streaming) |
 
-## Wire Handshake (v0.2.9)
+## Wire Handshake (v0.2.10)
 
 All steps are sent as `WireFrame::Handshake` JSON over QUIC or serial:
 

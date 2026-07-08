@@ -1,4 +1,4 @@
-# Security — SRLTCP v0.2.9
+# Security — SRLTCP v0.2.10
 
 ## Goals
 
@@ -10,7 +10,7 @@
 
 ## Threat model
 
-| Threat | Mitigation (v0.2.9) |
+| Threat | Mitigation (v0.2.10) |
 |--------|---------------------|
 | Passive network tap | Encrypted payloads after trust |
 | Active MITM on first contact | SAS + signed handshake tied to QR keys |

@@ -1,10 +1,31 @@
 # SRLTCP
 
-**Secure, reliable peer-to-peer messaging over LAN, QUIC, and serial.**
+**Secure, reliable peer-to-peer messaging over LAN, WAN, QUIC, and serial.**
 
 SRLTCP is privacy-first communication software: no accounts, no central servers, and end-to-end encryption with a human-verifiable SAS step before you trust a peer. A single Rust core powers the desktop (Tauri) and Android (Kotlin/Compose) clients, so crypto and protocol behavior stay consistent everywhere.
 
-**Current release: [v0.2.9](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.9)**
+**Current release: [v0.2.10](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.10)**
+
+---
+
+## Security status (read this)
+
+v0.2.10 wires the hybrid handshake and Double Ratchet into the live message path. SAS codes are derived from a **canonical transcript** that both peers build identically — fix for the v0.2.9 mismatch bug.
+
+**What works today**
+
+- Wire handshake (X25519 + ML-KEM-768) with Ed25519-signed frames over QUIC/serial
+- E2EE messaging after you confirm the matching SAS code
+- Explicit trust gate — no plaintext chat until SAS is verified
+
+**Caveats**
+
+- QUIC uses ephemeral TLS certificates; long-term identity is bound at the application handshake layer, not in TLS
+- Double Ratchet is a simplified implementation — not a full Signal-protocol clone
+- WAN requires port forwarding (UDP/TCP 9473) on your router
+- WebRTC calls and folder-transfer UI are not yet fully E2EE-wrapped
+
+Do not treat this as production-grade secure messaging until you have reviewed [docs/SECURITY.md](docs/SECURITY.md) and [docs/CRYPTO.md](docs/CRYPTO.md) yourself.
 
 ---
 
@@ -56,7 +77,7 @@ run.bat
 Install the APK from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest):
 
 ```bash
-adb install dist/SRLTCPv2-0.2.9.apk
+adb install dist/SRLTCPv2-0.2.10.apk
 ```
 
 Or build locally (JDK 17, Android SDK/NDK):
@@ -72,7 +93,9 @@ Or build locally (JDK 17, Android SDK/NDK):
 1. **Share** your QR code (desktop sidebar or Android connect sheet).
 2. **Paste** the peer's QR payload and tap **Connect & Verify**.
 3. **Compare** the 6-digit SAS code out-of-band (voice, in person, etc.).
-4. **Trust** only when both sides show the same code — then messaging is E2EE.
+4. **Trust** only when both sides show the **same** code — then messaging is E2EE.
+
+**WAN**: If you are not on the same LAN, set a WAN endpoint (`public.host:9473`) in Settings on both sides. Connect & Verify tries the LAN address from the QR first, then falls back to your WAN endpoint. Forward port 9473 on your router.
 
 Saved contacts persist across restarts. Remove a contact on any platform to revoke trust and disconnect.
 
@@ -84,6 +107,7 @@ Saved contacts persist across restarts. Remove a contact on any platform to revo
 |---------|:-------:|:-------:|
 | E2EE messaging | ✓ | ✓ |
 | QUIC P2P (QR discovery) | ✓ | ✓ |
+| WAN fallback connect | ✓ | ✓ |
 | USB / serial transport | ✓ | — |
 | File transfer + progress | ✓ | ✓ |
 | Saved contacts & settings | ✓ | ✓ |
@@ -93,24 +117,19 @@ Saved contacts persist across restarts. Remove a contact on any platform to revo
 
 \*Voice and video are experimental on some platforms.
 
+### v0.2.10 highlights
+
+- **SAS codes match** — canonical handshake transcript fix
+- **WAN endpoint** in Settings (desktop + Android)
+- Honest security documentation
+
 ### v0.2.9 highlights
 
-- **Real E2EE** — hybrid handshake over the wire, Double Ratchet encryption on all messages
-- **Meaningful SAS** — bound to handshake transcript + Ed25519 identities; explicit trust confirmation required
-- **Visual QR codes** on desktop and Android (scan to connect)
-- **Prebuilt-first launcher** — `run.sh` never auto-compiles; Linux x86_64 binary bundled in repo
-- zstd compression module for folder transfer (backend ready)
-- See [CHANGELOG.md](CHANGELOG.md) and [docs/CRYPTO.md](docs/CRYPTO.md)
+- Wire handshake + Double Ratchet E2EE on the message path
+- Visual QR codes on desktop and Android
+- Prebuilt-first `run.sh`
 
-### v0.2.8 highlights
-
-- Desktop SAS verification modal shows codes reliably (high-contrast UI)
-- Android chat input rises with the keyboard; keyboard **Send** submits messages
-- Disconnect button and saved peers sheet on Android
-- Remove trusted contacts on desktop and Android
-- USB serial ports show manufacturer/product names, not only `/dev/tty*`
-- Modern QR and serial-picker styling
-- `git pull && ./run.sh --pull` update workflow
+See [CHANGELOG.md](CHANGELOG.md) and [docs/CRYPTO.md](docs/CRYPTO.md).
 
 ---
 
@@ -158,9 +177,9 @@ SRLTCP uses hybrid post-quantum key exchange, a double ratchet for forward secre
 Pushing a version tag triggers CI to publish desktop prebuilts and the Android APK:
 
 ```bash
-git tag -a v0.2.9 -m "SRLTCP v0.2.9"
+git tag -a v0.2.10 -m "SRLTCP v0.2.10"
 git push origin main
-git push origin v0.2.9
+git push origin v0.2.10
 ```
 
 ---

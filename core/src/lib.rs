@@ -374,6 +374,19 @@ impl SrltcpEngine {
         });
     }
 
+    pub fn set_wan_endpoint(&self, endpoint: Option<String>) {
+        let inner = self.inner.clone();
+        self.runtime.block_on(async move {
+            inner.lock().await.set_wan_endpoint(endpoint).await;
+        });
+    }
+
+    pub fn wan_endpoint(&self) -> Option<String> {
+        self.runtime.block_on(async {
+            self.inner.lock().await.wan_endpoint().await
+        })
+    }
+
     pub fn disconnect_peer(&self, peer_id: String) {
         let inner = self.inner.clone();
         self.runtime.spawn(async move {

@@ -12,7 +12,7 @@ pub mod peer_crypto;
 pub mod ratchet;
 pub mod wire;
 
-pub use handshake::{HandshakeError, HybridKeyExchange, SessionCipher};
+pub use handshake::{HandshakeError, HybridKeyExchange};
 pub use identity::{
     compute_sas, compute_sas_with_transcript, parse_qr_payload, Identity, IdentityError, ParsedQr,
 };

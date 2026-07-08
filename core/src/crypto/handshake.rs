@@ -1,7 +1,5 @@
 //! Hybrid post-quantum handshake: X25519 + ML-KEM-768.
 
-use aes_gcm::aead::{Aead, KeyInit};
-use aes_gcm::{Aes256Gcm, Nonce};
 use hkdf::Hkdf;
 use std::convert::TryFrom;
 
@@ -117,7 +115,7 @@ impl HybridKeyExchange {
 
         let x25519_remote = PublicKey::from(<[u8; 32]>::try_from(&responder_msg[..32]).unwrap());
         let mlkem_ct = &responder_msg[32..32 + ct_size];
-        let mlkem_remote_ek = &responder_msg[32 + ct_size..];
+        // Responder's ML-KEM encapsulation key is sent for ratchet setup, not a second KEX leg.
 
         let x25519_secret = self
             .x25519_secret
@@ -131,18 +129,10 @@ impl HybridKeyExchange {
             .ok_or_else(|| HandshakeError::Crypto("no ML-KEM secret".into()))?;
         let ct = Ciphertext::try_from(mlkem_ct)
             .map_err(|_| HandshakeError::InvalidMessage("invalid ML-KEM ciphertext length".into()))?;
-        let mlkem_shared1 = dk.decapsulate(&ct);
+        let mlkem_shared = dk.decapsulate(&ct);
 
-        let ek_key = Array::try_from(mlkem_remote_ek)
-            .map_err(|_| HandshakeError::InvalidMessage("invalid ML-KEM key length".into()))?;
-        let ek = EncapsulationKey768::new(&ek_key)
-            .map_err(|e| HandshakeError::Crypto(format!("invalid ML-KEM key: {e}")))?;
-        let (_, mlkem_shared2) = ek.encapsulate();
-
-        let mut mlkem_combined = Vec::with_capacity(64);
-        mlkem_combined.extend_from_slice(mlkem_shared1.as_slice());
-        mlkem_combined.extend_from_slice(mlkem_shared2.as_slice());
-        let combined = Self::combine_secrets(x25519_shared.as_bytes(), &mlkem_combined);
+        // Same inputs as responder_accept — both peers must derive identical secrets.
+        let combined = Self::combine_secrets(x25519_shared.as_bytes(), mlkem_shared.as_slice());
         self.shared_secret = Some(combined);
         Ok(())
     }
@@ -166,47 +156,5 @@ impl HybridKeyExchange {
         self.shared_secret
             .as_ref()
             .map(|s| compute_sas(s, local_pk, remote_pk))
-    }
-}
-
-/// Session cipher derived from handshake — AES-256-GCM.
-pub struct SessionCipher {
-    cipher: Aes256Gcm,
-    send_nonce: u64,
-    recv_nonce: u64,
-}
-
-impl SessionCipher {
-    pub fn from_shared_secret(secret: &[u8], salt: &[u8]) -> Self {
-        let hk = Hkdf::<Sha256>::new(Some(salt), secret);
-        let mut key = [0u8; 32];
-        hk.expand(b"srltcp-v2-session", &mut key).expect("HKDF");
-        Self {
-            cipher: Aes256Gcm::new_from_slice(&key).expect("key init"),
-            send_nonce: 0,
-            recv_nonce: 0,
-        }
-    }
-
-    pub fn encrypt(&mut self, plaintext: &[u8]) -> Result<Vec<u8>, HandshakeError> {
-        let mut nonce_bytes = [0u8; 12];
-        nonce_bytes[4..].copy_from_slice(&self.send_nonce.to_be_bytes());
-        self.send_nonce += 1;
-
-        let nonce = Nonce::from_slice(&nonce_bytes);
-        self.cipher
-            .encrypt(nonce, plaintext)
-            .map_err(|e| HandshakeError::Crypto(e.to_string()))
-    }
-
-    pub fn decrypt(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>, HandshakeError> {
-        let mut nonce_bytes = [0u8; 12];
-        nonce_bytes[4..].copy_from_slice(&self.recv_nonce.to_be_bytes());
-        self.recv_nonce += 1;
-
-        let nonce = Nonce::from_slice(&nonce_bytes);
-        self.cipher
-            .decrypt(nonce, ciphertext)
-            .map_err(|e| HandshakeError::Crypto(e.to_string()))
     }
 }

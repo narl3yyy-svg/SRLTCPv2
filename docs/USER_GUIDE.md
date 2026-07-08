@@ -1,6 +1,6 @@
 # User Guide
 
-Using SRLTCP v0.2.9 for secure peer-to-peer messaging.
+Using SRLTCP v0.2.10 for secure peer-to-peer messaging.
 
 ## Getting Started
 
@@ -15,7 +15,7 @@ The launcher downloads a prebuilt binary from GitHub Releases. Use `./run.sh --r
 
 ### Android
 
-1. Download `SRLTCPv2-0.2.9.apk` from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest) or build locally (see [BUILD.md](BUILD.md))
+1. Download `SRLTCPv2-0.2.10.apk` from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest) or build locally (see [BUILD.md](BUILD.md))
 2. Open SRLTCP — the background service starts automatically
 3. A notification appears: "Listening for peers..."
 4. You can safely swipe the app away or press Home
@@ -24,7 +24,7 @@ The launcher downloads a prebuilt binary from GitHub Releases. Use `./run.sh --r
 
 ### QR Code + SAS (Required)
 
-SRLTCP v0.2.9 uses QR-based discovery only — there is no manual IP connect option. QR codes (v3) embed the peer's LAN address so connection starts automatically.
+SRLTCP v0.2.10 uses QR-based discovery. QR codes (v3) embed the peer's LAN address. If LAN connect fails, set a **WAN endpoint** (`host:9473`) in Settings — Connect & Verify tries LAN first, then WAN. Forward port 9473 on your router for WAN.
 
 1. **Share identity:** Copy or display your QR code. Send the payload to your peer.
 2. **Paste peer QR:** Open **Add Peer**, paste their QR payload, and click **Connect & Verify (QR + SAS)**.

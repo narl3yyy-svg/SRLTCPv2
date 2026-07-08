@@ -7,7 +7,6 @@ use super::identity::{compute_sas_with_transcript, Identity, IdentityError};
 use super::ratchet::DoubleRatchet;
 use super::wire::{HandshakeTranscript, SignedHandshake};
 
-/// Trust lifecycle for a peer connection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrustState {
     Connected,
@@ -16,12 +15,12 @@ pub enum TrustState {
     Trusted,
 }
 
-/// Cryptographic material for an established peer.
 pub struct PeerCrypto {
     pub remote_identity: [u8; 32],
     pub trust: TrustState,
     pub ratchet: Option<DoubleRatchet>,
     transcript: HandshakeTranscript,
+    shared_secret: Option<Vec<u8>>,
 }
 
 impl PeerCrypto {
@@ -31,6 +30,7 @@ impl PeerCrypto {
             trust: TrustState::Connected,
             ratchet: None,
             transcript: HandshakeTranscript::default(),
+            shared_secret: None,
         }
     }
 
@@ -84,98 +84,118 @@ impl PeerCrypto {
         Identity::verify(&frame.identity, &sign_input, &sig)
     }
 
-    pub fn begin_initiator(&mut self) -> (SignedHandshake, HybridKeyExchange) {
+    /// Initiator: step 1 body (unsigned placeholder — caller signs).
+    pub fn begin_initiator(&mut self) -> (Vec<u8>, HybridKeyExchange) {
         self.trust = TrustState::Handshaking;
         let kex = HybridKeyExchange::initiator();
         let body = kex.initiator_message();
-        (Self::sign_handshake_placeholder(1, body), kex)
+        (body, kex)
     }
 
-    fn sign_handshake_placeholder(step: u8, body: Vec<u8>) -> SignedHandshake {
-        SignedHandshake {
-            step,
-            identity: [0u8; 32],
-            body,
-            signature: Vec::new(),
-        }
+    /// Initiator records step 1 after signing.
+    pub fn record_initiator_step1(&mut self, body: &[u8]) -> Result<(), String> {
+        self.transcript.append_body(1, body)
     }
 
-    pub fn initiator_finish(
+    /// Initiator processes step 2; returns step-3 DH body bytes (unsigned).
+    pub fn initiator_process_step2(
         &mut self,
-        identity: &Identity,
         kex: &mut HybridKeyExchange,
         remote_frame: &SignedHandshake,
         expected_remote: &[u8; 32],
-    ) -> Result<(SignedHandshake, String), String> {
+    ) -> Result<Vec<u8>, String> {
         Self::verify_handshake_frame(remote_frame).map_err(|e| e.to_string())?;
+        if remote_frame.step != 2 {
+            return Err(format!("expected handshake step 2, got {}", remote_frame.step));
+        }
         if remote_frame.identity != *expected_remote {
             return Err("handshake identity does not match QR public key".into());
         }
         self.remote_identity = remote_frame.identity;
-        self.transcript.append(remote_frame);
+        self.transcript.append_body(2, &remote_frame.body)?;
 
         kex.initiator_finish(&remote_frame.body)
             .map_err(|e| e.to_string())?;
 
         let secret = kex
             .shared_secret()
-            .ok_or_else(|| "handshake incomplete".to_string())?;
+            .ok_or_else(|| "handshake incomplete".to_string())?
+            .to_vec();
+        self.shared_secret = Some(secret);
 
         let remote_dh = extract_dh_public(&remote_frame.body)?;
-        let ratchet = DoubleRatchet::init_sender(secret, &remote_dh);
-        let dh_pub = ratchet
-            .dh_public_key()
-            .ok_or_else(|| "missing ratchet DH key".to_string())?;
-
-        let finish = Self::sign_handshake(identity, 3, dh_pub.as_bytes().to_vec());
-        self.transcript.append(&finish);
-
-        let sas = compute_sas_with_transcript(
-            secret,
-            &identity.public_key_bytes(),
-            &self.remote_identity,
-            self.transcript.as_bytes(),
+        let ratchet = DoubleRatchet::init_sender(
+            self.shared_secret.as_ref().unwrap(),
+            &remote_dh,
         );
+        let step3_body = ratchet
+            .dh_public_key()
+            .ok_or_else(|| "missing ratchet DH key".to_string())?
+            .as_bytes()
+            .to_vec();
         self.ratchet = Some(ratchet);
-        self.trust = TrustState::SasPending { sas: sas.clone() };
-        Ok((finish, sas))
+        Ok(step3_body)
     }
 
-    pub fn responder_accept(
+    /// Initiator records step 3 and computes SAS (same moment as responder).
+    pub fn initiator_finalize_step3(
+        &mut self,
+        identity: &Identity,
+        step3_body: &[u8],
+    ) -> Result<String, String> {
+        self.transcript.append_body(3, step3_body)?;
+        self.finalize_sas(identity)
+    }
+
+    /// Responder processes step 1; returns signed step 2 frame.
+    pub fn responder_process_step1(
         &mut self,
         identity: &Identity,
         init_frame: &SignedHandshake,
     ) -> Result<(SignedHandshake, HybridKeyExchange), String> {
         Self::verify_handshake_frame(init_frame).map_err(|e| e.to_string())?;
+        if init_frame.step != 1 {
+            return Err(format!("expected handshake step 1, got {}", init_frame.step));
+        }
         self.trust = TrustState::Handshaking;
         self.remote_identity = init_frame.identity;
-        self.transcript.append(init_frame);
+        self.transcript.append_body(1, &init_frame.body)?;
 
         let mut kex = HybridKeyExchange::responder();
         let resp_body = kex
             .responder_accept(&init_frame.body)
             .map_err(|e| e.to_string())?;
 
+        self.transcript.append_body(2, &resp_body)?;
+        let secret = kex
+            .shared_secret()
+            .ok_or_else(|| "responder handshake incomplete".to_string())?
+            .to_vec();
+        self.shared_secret = Some(secret);
+
         let resp = Self::sign_handshake(identity, 2, resp_body);
-        self.transcript.append(&resp);
         Ok((resp, kex))
     }
 
-    pub fn responder_finish(
+    /// Responder processes step 3 and computes SAS.
+    pub fn responder_process_step3(
         &mut self,
         identity: &Identity,
-        kex: &HybridKeyExchange,
         finish_frame: &SignedHandshake,
     ) -> Result<String, String> {
         Self::verify_handshake_frame(finish_frame).map_err(|e| e.to_string())?;
+        if finish_frame.step != 3 {
+            return Err(format!("expected handshake step 3, got {}", finish_frame.step));
+        }
         if finish_frame.identity != self.remote_identity {
             return Err("finish identity mismatch".into());
         }
-        self.transcript.append(finish_frame);
+        self.transcript.append_body(3, &finish_frame.body)?;
 
-        let secret = kex
-            .shared_secret()
-            .ok_or_else(|| "responder handshake incomplete".to_string())?;
+        let secret = self
+            .shared_secret
+            .as_ref()
+            .ok_or_else(|| "no shared secret".to_string())?;
 
         let dh_remote = PublicKey::from(
             <[u8; 32]>::try_from(finish_frame.body.as_slice())
@@ -186,6 +206,17 @@ impl PeerCrypto {
         ratchet.dh_ratchet_step(&dh_remote);
         self.ratchet = Some(ratchet);
 
+        self.finalize_sas(identity)
+    }
+
+    fn finalize_sas(&mut self, identity: &Identity) -> Result<String, String> {
+        if !self.transcript.is_complete() {
+            return Err("handshake transcript incomplete".into());
+        }
+        let secret = self
+            .shared_secret
+            .as_ref()
+            .ok_or_else(|| "no shared secret".to_string())?;
         let sas = compute_sas_with_transcript(
             secret,
             &identity.public_key_bytes(),
@@ -208,6 +239,9 @@ impl PeerCrypto {
     }
 
     pub fn decrypt(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>, String> {
+        if !matches!(self.trust, TrustState::SasPending { .. } | TrustState::Trusted) {
+            return Err("cannot decrypt — handshake incomplete".into());
+        }
         let ratchet = self
             .ratchet
             .as_mut()
@@ -223,4 +257,39 @@ fn extract_dh_public(resp_body: &[u8]) -> Result<PublicKey, String> {
     Ok(PublicKey::from(
         <[u8; 32]>::try_from(&resp_body[..32]).map_err(|_| "invalid x25519 key".to_string())?,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sas_matches_both_sides_with_canonical_transcript() {
+        let alice = Identity::generate();
+        let bob = Identity::generate();
+
+        // Simulate wire handshake bodies
+        let mut alice_kex = HybridKeyExchange::initiator();
+        let msg1 = alice_kex.initiator_message();
+        let frame1 = PeerCrypto::sign_handshake(&alice, 1, msg1.clone());
+
+        let mut bob_crypto = PeerCrypto::new_connected();
+        let (frame2, _bob_kex) = bob_crypto
+            .responder_process_step1(&bob, &frame1)
+            .unwrap();
+
+        let mut alice_crypto = PeerCrypto::new_connected();
+        alice_crypto.record_initiator_step1(&msg1).unwrap();
+        let step3_body = alice_crypto
+            .initiator_process_step2(&mut alice_kex, &frame2, &bob.public_key_bytes())
+            .unwrap();
+        let frame3 = PeerCrypto::sign_handshake(&alice, 3, step3_body.clone());
+        let sas_alice = alice_crypto
+            .initiator_finalize_step3(&alice, &step3_body)
+            .unwrap();
+
+        let sas_bob = bob_crypto.responder_process_step3(&bob, &frame3).unwrap();
+        assert_eq!(sas_alice, sas_bob);
+        assert_eq!(sas_alice.len(), 6);
+    }
 }

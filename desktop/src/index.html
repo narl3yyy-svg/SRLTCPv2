@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SRLTCP v0.2.9</title>
+  <title>SRLTCP v0.2.10</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -13,7 +13,7 @@
         <div class="brand-icon">S</div>
         <div>
           <h1>SRLTCP</h1>
-          <span class="version">v0.2.9</span>
+          <span class="version">v0.2.10</span>
         </div>
       </header>
 
@@ -83,6 +83,10 @@
           <label class="field-label" for="display-name">Display name</label>
           <input type="text" id="display-name" placeholder="Shown to peers after verification" />
           <button class="btn secondary" id="save-display-name">Save display name</button>
+          <label class="field-label" for="wan-endpoint">WAN endpoint (optional)</label>
+          <input type="text" id="wan-endpoint" placeholder="public.host:9473 — used when LAN connect fails" />
+          <button class="btn secondary" id="save-wan-endpoint">Save WAN endpoint</button>
+          <p class="hint">Forward UDP/TCP port 9473 on your router for WAN. Connect &amp; Verify tries LAN from QR first, then WAN.</p>
           <div class="settings-card">
             <h3>Update app</h3>
             <p class="hint">Stay on <code>main</code> and run:</p>

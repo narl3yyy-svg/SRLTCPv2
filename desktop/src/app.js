@@ -1,6 +1,6 @@
-// SRLTCP v0.2.9 Desktop Frontend
+// SRLTCP v0.2.10 Desktop Frontend
 
-const STORAGE_KEY = 'srltcp_v0.2.9';
+const STORAGE_KEY = 'srltcp_v0.2.10';
 
 function loadState() {
   try {
@@ -16,6 +16,7 @@ function saveState(patch) {
 }
 
 let displayName = loadState().displayName || '';
+let wanEndpoint = loadState().wanEndpoint || '';
 let savedContacts = loadState().contacts || [];
 
 function pick(result, ...keys) {
@@ -97,6 +98,16 @@ async function init() {
         }).join('');
 
     document.getElementById('display-name').value = displayName;
+    document.getElementById('wan-endpoint').value = wanEndpoint;
+    try {
+      const storedWan = await invoke('get_wan_endpoint');
+      if (storedWan) {
+        wanEndpoint = storedWan;
+        document.getElementById('wan-endpoint').value = wanEndpoint;
+      } else if (wanEndpoint) {
+        await invoke('set_wan_endpoint', { endpoint: wanEndpoint });
+      }
+    } catch (_) {}
     restoreContacts();
 
     const existingPeers = await invoke('get_peers');
@@ -510,6 +521,17 @@ document.getElementById('save-display-name')?.addEventListener('click', () => {
   displayName = document.getElementById('display-name').value.trim();
   persistContacts();
   toast('Display name saved');
+});
+
+document.getElementById('save-wan-endpoint')?.addEventListener('click', async () => {
+  wanEndpoint = document.getElementById('wan-endpoint').value.trim();
+  saveState({ wanEndpoint });
+  try {
+    await invoke('set_wan_endpoint', { endpoint: wanEndpoint || null });
+    toast(wanEndpoint ? 'WAN endpoint saved' : 'WAN endpoint cleared');
+  } catch (e) {
+    toast(`WAN save failed: ${e}`, true);
+  }
 });
 
 document.getElementById('check-updates')?.addEventListener('click', () => {
