@@ -80,27 +80,92 @@ impl Identity {
             .map_err(|_| IdentityError::BadSignature)
     }
 
-    /// QR payload: base64-encoded public key with version prefix.
+    /// QR payload v2 (identity only) — legacy.
     pub fn qr_payload(&self) -> String {
+        self.qr_payload_with_endpoint(None, crate::DEFAULT_QUIC_PORT)
+    }
+
+    /// QR payload v3 embeds LAN endpoint so peers can connect without manual IP entry.
+    pub fn qr_payload_with_endpoint(&self, endpoint_host: Option<&str>, port: u16) -> String {
+        if let Some(host) = endpoint_host.filter(|h| !h.is_empty()) {
+            let host_bytes = host.as_bytes();
+            let host_len = host_bytes.len().min(253) as u8;
+            let mut payload = Vec::with_capacity(36 + host_bytes.len());
+            payload.push(0x03);
+            payload.extend_from_slice(&self.public_key_bytes());
+            payload.push(host_len);
+            payload.extend_from_slice(&host_bytes[..host_len as usize]);
+            payload.extend_from_slice(&port.to_be_bytes());
+            return base64::Engine::encode(
+                &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+                &payload,
+            );
+        }
         let mut payload = Vec::with_capacity(33);
-        payload.push(0x02); // version
+        payload.push(0x02);
         payload.extend_from_slice(&self.public_key_bytes());
         base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, &payload)
     }
 
     /// Parse QR payload into public key bytes.
     pub fn from_qr_payload(payload: &str) -> Result<[u8; 32], IdentityError> {
-        let decoded = base64::Engine::decode(
-            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-            payload,
-        )
-        .map_err(|e| IdentityError::InvalidKey(e.to_string()))?;
-        if decoded.len() != 33 || decoded[0] != 0x02 {
-            return Err(IdentityError::InvalidKey("invalid QR format".into()));
+        Ok(parse_qr_payload(payload)?.public_key)
+    }
+}
+
+/// Parsed peer QR: identity + optional connection endpoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedQr {
+    pub public_key: [u8; 32],
+    pub endpoint: Option<String>,
+}
+
+/// Parse v2 (identity-only) or v3 (identity + endpoint) QR payloads.
+pub fn parse_qr_payload(payload: &str) -> Result<ParsedQr, IdentityError> {
+    let decoded = base64::Engine::decode(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+        payload.trim(),
+    )
+    .map_err(|e| IdentityError::InvalidKey(e.to_string()))?;
+
+    if decoded.is_empty() {
+        return Err(IdentityError::InvalidKey("empty QR payload".into()));
+    }
+
+    match decoded[0] {
+        0x02 => {
+            if decoded.len() != 33 {
+                return Err(IdentityError::InvalidKey("invalid v2 QR length".into()));
+            }
+            let mut key = [0u8; 32];
+            key.copy_from_slice(&decoded[1..]);
+            Ok(ParsedQr {
+                public_key: key,
+                endpoint: None,
+            })
         }
-        let mut key = [0u8; 32];
-        key.copy_from_slice(&decoded[1..]);
-        Ok(key)
+        0x03 => {
+            if decoded.len() < 36 {
+                return Err(IdentityError::InvalidKey("invalid v3 QR length".into()));
+            }
+            let mut key = [0u8; 32];
+            key.copy_from_slice(&decoded[1..33]);
+            let host_len = decoded[33] as usize;
+            if decoded.len() < 34 + host_len + 2 {
+                return Err(IdentityError::InvalidKey("invalid v3 host field".into()));
+            }
+            let host = std::str::from_utf8(&decoded[34..34 + host_len])
+                .map_err(|e| IdentityError::InvalidKey(e.to_string()))?;
+            let port = u16::from_be_bytes([
+                decoded[34 + host_len],
+                decoded[34 + host_len + 1],
+            ]);
+            Ok(ParsedQr {
+                public_key: key,
+                endpoint: Some(format!("{host}:{port}")),
+            })
+        }
+        _ => Err(IdentityError::InvalidKey("unsupported QR version".into())),
     }
 }
 
@@ -139,8 +204,18 @@ mod tests {
     fn qr_roundtrip() {
         let id = Identity::generate();
         let qr = id.qr_payload();
-        let pk = Identity::from_qr_payload(&qr).unwrap();
-        assert_eq!(pk, id.public_key_bytes());
+        let parsed = parse_qr_payload(&qr).unwrap();
+        assert_eq!(parsed.public_key, id.public_key_bytes());
+        assert!(parsed.endpoint.is_none());
+    }
+
+    #[test]
+    fn qr_v3_roundtrip() {
+        let id = Identity::generate();
+        let qr = id.qr_payload_with_endpoint(Some("192.168.1.42"), 9473);
+        let parsed = parse_qr_payload(&qr).unwrap();
+        assert_eq!(parsed.public_key, id.public_key_bytes());
+        assert_eq!(parsed.endpoint.as_deref(), Some("192.168.1.42:9473"));
     }
 
     #[test]

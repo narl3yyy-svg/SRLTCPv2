@@ -11,5 +11,5 @@ pub mod identity;
 pub mod ratchet;
 
 pub use handshake::{HandshakeError, HybridKeyExchange, SessionCipher};
-pub use identity::{compute_sas, Identity, IdentityError};
+pub use identity::{compute_sas, parse_qr_payload, Identity, IdentityError, ParsedQr};
 pub use ratchet::{DoubleRatchet, RatchetError};

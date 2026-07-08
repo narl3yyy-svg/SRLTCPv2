@@ -274,7 +274,7 @@ fun ChatScreen() {
                     Column {
                         Text("SRLTCP", fontWeight = FontWeight.Bold)
                         Text(
-                            "v0.2.5 • ${if (engineOnline) "Online" else "Offline"} • bg active",
+                            "v0.2.6 • ${if (engineOnline) "Online" else "Offline"} • bg active",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -471,21 +471,15 @@ fun ChatScreen() {
                         showSnackbar("Paste peer QR code first")
                         return@launch
                     }
-                    var peer = activePeer
-                    if (peer == null) {
-                        val connected = engine.connectedPeers()
-                        peer = connected.firstOrNull()
-                    }
-                    if (peer == null) {
-                        showSnackbar("No peer connected — share your QR first")
-                        return@launch
-                    }
-                    val sas = engine.handshakeWith(peer, qr)
+                    val result = engine.connectAndVerify(qr)
                     withContext(Dispatchers.Main) {
-                        if (sas.startsWith("error:")) {
-                            showSnackbar(sas.removePrefix("error: ").trim())
+                        if (result.sas.startsWith("error:")) {
+                            showSnackbar(result.sas.removePrefix("error: ").trim())
                         } else {
-                            sasCode = sas
+                            val peer = result.peerId
+                            if (!peers.contains(peer)) peers.add(peer)
+                            activePeer = peer
+                            sasCode = result.sas
                             sasPeerId = peer
                             showSasDialog = true
                             showConnectSheet = false
@@ -535,9 +529,10 @@ fun ConnectPeerSheet(
             Text("Connect Securely", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                "Paste the peer's QR code to verify identity via SAS.",
+                "1. Share your QR with the peer\n2. Paste their QR below\n3. Compare the 6-digit SAS code",
                 fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 18.sp,
             )
             Spacer(modifier = Modifier.height(12.dp))
             if (qrPayload.isNotEmpty()) {
@@ -560,9 +555,9 @@ fun ConnectPeerSheet(
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                "Peers connect via QR exchange — no manual IP entry needed.",
+                "v0.2.6 QR codes include the peer address — connection starts automatically.",
                 fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = MaterialTheme.colorScheme.primary,
             )
         }
     }

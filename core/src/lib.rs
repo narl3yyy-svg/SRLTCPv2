@@ -9,7 +9,9 @@ pub mod serial;
 pub mod transfer;
 pub mod webrtc;
 
-pub use crypto::{compute_sas, DoubleRatchet, HybridKeyExchange, Identity};
+pub use crypto::{
+    compute_sas, parse_qr_payload, DoubleRatchet, HybridKeyExchange, Identity, ParsedQr,
+};
 pub use qr_image::qr_png_data_url;
 pub use network::{QuicTransport, TransportKind};
 pub use p2p::{EngineEvent, P2pEngine};
@@ -69,6 +71,13 @@ pub struct TransferInfo {
     pub filename: String,
     pub total_size: u64,
     pub progress: f64,
+}
+
+/// Result of QR connect + SAS handshake.
+#[derive(Debug, Clone)]
+pub struct ConnectResult {
+    pub peer_id: String,
+    pub sas: String,
 }
 
 fn engine_event_to_uniffi(event: EngineEvent) -> SrltcpEvent {
@@ -284,6 +293,30 @@ impl SrltcpEngine {
     pub fn qr_payload(&self) -> String {
         self.runtime.block_on(async {
             self.inner.lock().await.qr_payload()
+        })
+    }
+
+    pub fn local_endpoint(&self) -> Option<String> {
+        self.runtime.block_on(async {
+            self.inner.lock().await.local_endpoint()
+        })
+    }
+
+    pub fn connect_and_verify(&self, remote_qr: String) -> ConnectResult {
+        self.runtime.block_on(async {
+            match self
+                .inner
+                .lock()
+                .await
+                .connect_and_verify(&remote_qr)
+                .await
+            {
+                Ok((peer_id, sas)) => ConnectResult { peer_id, sas },
+                Err(e) => ConnectResult {
+                    peer_id: String::new(),
+                    sas: format!("error: {e}"),
+                },
+            }
         })
     }
 

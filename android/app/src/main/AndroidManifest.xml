@@ -11,6 +11,7 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
+        android:name=".SrltcpApplication"
         android:allowBackup="false"
         android:icon="@drawable/ic_launcher"
         android:label="SRLTCP"

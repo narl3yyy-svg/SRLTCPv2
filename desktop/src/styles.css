@@ -1,17 +1,17 @@
 :root {
-  --bg-primary: #0d0f14;
-  --bg-secondary: #151820;
-  --bg-tertiary: #1e2230;
-  --bg-elevated: #262b3d;
-  --accent: #6c5ce7;
-  --accent-hover: #7f70f0;
-  --accent-dim: rgba(108, 92, 231, 0.15);
-  --text-primary: #eef0f4;
-  --text-secondary: #8b92a5;
-  --border: #2a2f42;
-  --success: #00b894;
-  --danger: #ff6b6b;
-  --warning: #fdcb6e;
+  --bg-primary: #0b0d12;
+  --bg-secondary: #12151c;
+  --bg-tertiary: #1a1f2b;
+  --bg-elevated: #232938;
+  --accent: #7c6cf0;
+  --accent-hover: #9185f5;
+  --accent-dim: rgba(124, 108, 240, 0.18);
+  --text-primary: #f2f4f8;
+  --text-secondary: #9aa3b8;
+  --border: #2e3548;
+  --success: #2dd4a0;
+  --danger: #f87171;
+  --warning: #fbbf24;
   --radius: 12px;
   --radius-sm: 8px;
   --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -128,21 +128,89 @@ body {
 }
 
 .qr-box {
-  background: #f4f6fb;
-  border: 1px solid #c8d0e0;
+  background: #ffffff;
+  border: 1px solid #b8c4d8;
   border-radius: var(--radius-sm);
-  padding: 12px;
+  padding: 12px 14px;
   word-break: break-all;
-  font-size: 0.78rem;
-  line-height: 1.45;
-  max-height: 96px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  max-height: 100px;
   overflow-y: auto;
   margin-bottom: 8px;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 
 .qr-box code {
-  color: #1a1f2e;
+  color: #0f172a;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.endpoint-card {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.endpoint-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.endpoint-card code {
+  font-size: 0.82rem;
+  color: var(--success);
   font-family: 'SF Mono', 'Fira Code', monospace;
+  word-break: break-all;
+}
+
+.connect-steps {
+  list-style: none;
+  margin-bottom: 14px;
+  padding: 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.connect-steps li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  padding: 5px 0;
+  line-height: 1.35;
+}
+
+.step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: var(--accent);
+  color: white;
+  border-radius: 50%;
+  font-size: 0.7rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.connect-note {
+  color: var(--text-secondary);
+  font-style: normal;
+  font-size: 0.74rem;
 }
 
 .listen-badge {
@@ -279,24 +347,63 @@ textarea:focus { border-color: var(--accent); }
   to { opacity: 1; transform: scale(1); }
 }
 
-.modal-card h2 { font-size: 1.2rem; margin-bottom: 8px; }
-.modal-desc { font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 20px; line-height: 1.5; }
-
-.sas-code {
-  font-size: 2.8rem;
-  font-weight: 800;
-  letter-spacing: 0.35em;
-  color: var(--success);
-  padding: 20px;
-  background: var(--bg-tertiary);
-  border: 2px solid var(--success);
-  border-radius: var(--radius);
-  margin-bottom: 12px;
-  font-family: 'SF Mono', 'Fira Code', monospace;
+.sas-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 8px;
 }
 
-.modal-peer { font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 20px; }
+.sas-shield { font-size: 1.4rem; }
+
+.modal-card h2 { font-size: 1.15rem; margin-bottom: 0; }
+.modal-desc { font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 20px; line-height: 1.55; text-align: left; }
+
+.sas-code-wrap {
+  margin-bottom: 12px;
+}
+
+.sas-label {
+  display: block;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+.sas-code {
+  font-size: 2.6rem;
+  font-weight: 800;
+  letter-spacing: 0.3em;
+  color: #0f172a;
+  padding: 18px 20px;
+  background: #ffffff;
+  border: 2px solid var(--success);
+  border-radius: var(--radius);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  text-align: center;
+  box-shadow: 0 4px 20px rgba(45, 212, 160, 0.15);
+}
+
+.modal-peer { font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 16px; }
 .modal-actions { display: flex; flex-direction: column; gap: 8px; }
+
+.sas-confirm-btn {
+  background: linear-gradient(135deg, var(--success), #1aab7a);
+  font-weight: 600;
+}
+
+.sas-confirm-btn:hover { background: linear-gradient(135deg, #3de8b0, var(--success)); }
+
+.sas-warning {
+  margin-top: 14px;
+  font-size: 0.72rem;
+  color: var(--warning);
+  line-height: 1.4;
+}
 
 .btn {
   background: var(--accent);

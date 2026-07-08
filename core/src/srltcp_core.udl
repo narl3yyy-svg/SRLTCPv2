@@ -24,11 +24,18 @@ dictionary TransferInfo {
     double progress;
 };
 
+dictionary ConnectResult {
+    string peer_id;
+    string sas;
+};
+
 interface SrltcpEngine {
     constructor();
 
     string public_key_hex();
     string qr_payload();
+    string? local_endpoint();
+    ConnectResult connect_and_verify(string remote_qr);
     sequence<string> available_serial_ports();
 
     void start(u16 quic_port);

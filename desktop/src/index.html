@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SRLTCP v0.2.5</title>
+  <title>SRLTCP v0.2.6</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -13,7 +13,7 @@
         <div class="brand-icon">S</div>
         <div>
           <h1>SRLTCP</h1>
-          <span class="version">v0.2.5</span>
+          <span class="version">v0.2.6</span>
         </div>
       </header>
 
@@ -26,12 +26,16 @@
       <div class="sidebar-panels">
         <section id="panel-identity" class="panel active">
           <h2>Share Your Identity</h2>
-          <p class="hint">Let peers scan or copy this QR to connect securely.</p>
+          <p class="hint">Your QR includes your LAN address — peers can connect automatically.</p>
           <div class="qr-visual">
             <img id="qr-image" alt="Your QR code" />
           </div>
           <div class="qr-box"><code id="qr-payload">Loading…</code></div>
           <button class="btn secondary" id="copy-qr">Copy QR Payload</button>
+          <div class="endpoint-card">
+            <span class="endpoint-label">Your address</span>
+            <code id="local-endpoint">Detecting…</code>
+          </div>
           <div class="listen-badge">
             <span class="pulse-dot"></span> Listening on port 9473
           </div>
@@ -39,13 +43,17 @@
 
         <section id="panel-connect" class="panel">
           <h2>Connect Securely</h2>
-          <p class="hint secure-hint">Scan or paste the peer's QR code, then verify with SAS.</p>
+          <ol class="connect-steps">
+            <li><span class="step-num">1</span> Share your QR with the peer</li>
+            <li><span class="step-num">2</span> Paste their QR below</li>
+            <li><span class="step-num">3</span> Confirm the 6-digit SAS code matches</li>
+          </ol>
           <label class="field-label" for="remote-qr">Peer QR code</label>
           <textarea id="remote-qr" rows="4" placeholder="Paste peer QR payload here…"></textarea>
           <button class="btn primary-btn" id="verify-secure">
-            <span class="btn-icon">🔒</span> Verify Peer (QR + SAS)
+            <span class="btn-icon">🔒</span> Connect &amp; Verify (QR + SAS)
           </button>
-          <p class="hint" id="connect-hint">Share your QR first — when a peer connects, paste their QR and verify.</p>
+          <p class="hint connect-note" id="connect-hint">v0.2.6 QR codes include the peer address — connection starts automatically.</p>
 
           <details class="serial-section">
             <summary>Serial cable (optional)</summary>
@@ -64,7 +72,7 @@
             <button class="btn-sm" id="refresh-peers" title="Refresh">↻</button>
           </div>
           <ul id="peer-list" class="peer-list"></ul>
-          <p id="no-peers" class="hint">Share your QR — peers appear here when they connect.</p>
+          <p id="no-peers" class="hint">Verified peers appear here after SAS confirmation.</p>
         </section>
       </div>
     </aside>
@@ -75,7 +83,7 @@
           <h2 id="chat-title">Select a peer</h2>
           <p id="chat-subtitle" class="subtitle">Share your QR to get started</p>
           <div id="verify-banner" class="verify-banner hidden">
-            <span>⚠️ Peer not verified</span>
+            <span>⚠️ Peer not verified — confirm SAS code</span>
             <button class="btn-sm" id="verify-banner-btn">Verify now</button>
           </div>
           <div id="call-status" class="call-banner hidden"></div>
@@ -111,7 +119,7 @@
         <div class="empty-state" id="empty-state">
           <div class="empty-icon">🔒</div>
           <p>Secure P2P Messaging</p>
-          <span>Share your QR code — when a peer connects, verify them with SAS</span>
+          <span>Share your QR, paste the peer's QR, then confirm the SAS code to chat</span>
         </div>
       </div>
 
@@ -128,14 +136,21 @@
   <div id="sas-modal" class="modal hidden">
     <div class="modal-backdrop"></div>
     <div class="modal-card">
-      <h2>Verify Security Code</h2>
-      <p class="modal-desc">Compare this 6-digit code with your peer. Both sides must show the <strong>same number</strong>.</p>
-      <div id="sas-code" class="sas-code">------</div>
+      <div class="sas-header">
+        <span class="sas-shield">🛡️</span>
+        <h2>Verify Security Code</h2>
+      </div>
+      <p class="modal-desc">Ask your peer to read their 6-digit code aloud. Both sides must show the <strong>exact same number</strong> before you trust the connection.</p>
+      <div class="sas-code-wrap">
+        <span class="sas-label">Your code</span>
+        <div id="sas-code" class="sas-code">------</div>
+      </div>
       <p class="modal-peer" id="sas-peer-label"></p>
       <div class="modal-actions">
-        <button class="btn" id="sas-confirm">✓ Codes Match — Trust Peer</button>
+        <button class="btn sas-confirm-btn" id="sas-confirm">✓ Codes Match — Trust Peer</button>
         <button class="btn danger-btn" id="sas-reject">✗ Codes Don't Match</button>
       </div>
+      <p class="sas-warning">If codes differ, disconnect immediately — possible man-in-the-middle attack.</p>
     </div>
   </div>
 

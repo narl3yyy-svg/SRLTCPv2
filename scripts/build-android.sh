@@ -87,6 +87,13 @@ if [[ "$SKIP_NATIVE" == false ]]; then
         --language kotlin \
         --out-dir "$JAVA_OUT" \
         "$CORE_DIR/src/srltcp_core.udl"
+
+    echo "[android] Linking UniFFI-compatible native library names..."
+    for abi_dir in "$JNI_DIR"/*/; do
+        if [[ -f "${abi_dir}libsrltcp_core.so" ]]; then
+            ln -sf libsrltcp_core.so "${abi_dir}libuniffi_srltcp_core.so"
+        fi
+    done
 else
     echo "[android] --apk-only: skipping native build"
     if ! verify_jni_libs "$JNI_DIR"; then

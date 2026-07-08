@@ -1,4 +1,4 @@
-//! SRLTCP v0.2.5 Desktop — Tauri v2 backend with graceful shutdown.
+//! SRLTCP v0.2.6 Desktop — Tauri v2 backend with graceful shutdown.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -58,18 +58,17 @@ async fn connect_serial(
 }
 
 #[tauri::command]
+async fn get_local_endpoint(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    Ok(state.engine.lock().await.local_endpoint())
+}
+
+#[tauri::command]
 async fn connect_and_verify(
     state: State<'_, AppState>,
     remote_qr: String,
 ) -> Result<serde_json::Value, String> {
     let engine = state.engine.lock().await;
-    let peers = engine.connected_peers().await;
-    let peer_id = peers.first().cloned().ok_or_else(|| {
-        "No peer connected yet. Share your QR code and wait for a peer to connect, then paste their QR to verify."
-            .to_string()
-    })?;
-
-    let sas = engine.handshake_with(&peer_id, &remote_qr).await?;
+    let (peer_id, sas) = engine.connect_and_verify(&remote_qr).await?;
     Ok(serde_json::json!({ "peer_id": peer_id, "sas": sas }))
 }
 
@@ -180,7 +179,7 @@ async fn run_auto_peer_test(engine: Arc<Mutex<P2pEngine>>) -> Result<(), String>
     let remote_qr = std::env::var("SRLTCP_TEST_QR")
         .unwrap_or_else(|_| "AjTqU9MmHMBy3dpi6xmxRTloSwOTD46pCpIN55kWHq3Z".into());
     let message = std::env::var("SRLTCP_TEST_MSG")
-        .unwrap_or_else(|_| "SRLTCPv2-0.2.5 desktop auto-test message".into());
+        .unwrap_or_else(|_| "SRLTCPv2-0.2.6 desktop auto-test message".into());
 
     let client_port: u16 = std::env::var("SRLTCP_CLIENT_PORT")
         .ok()
@@ -233,6 +232,7 @@ fn main() {
             get_public_key,
             get_qr_payload,
             get_qr_image,
+            get_local_endpoint,
             list_serial_ports,
             connect_serial,
             connect_and_verify,

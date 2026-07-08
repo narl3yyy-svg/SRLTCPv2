@@ -1,4 +1,4 @@
-// SRLTCP v0.2.5 Desktop Frontend
+// SRLTCP v0.2.6 Desktop Frontend
 
 const invoke = window.__TAURI__?.core?.invoke
   ?? (async (cmd, args) => { console.log(`[mock] ${cmd}`, args); return null; });
@@ -53,6 +53,14 @@ async function init() {
       document.getElementById('qr-image').alt = 'QR unavailable';
     }
 
+    try {
+      const endpoint = await invoke('get_local_endpoint');
+      document.getElementById('local-endpoint').textContent =
+        endpoint || 'localhost:9473 (LAN IP unavailable)';
+    } catch (_) {
+      document.getElementById('local-endpoint').textContent = 'localhost:9473';
+    }
+
     const ports = await invoke('list_serial_ports');
     const select = document.getElementById('serial-port');
     select.innerHTML = ports.length === 0
@@ -78,7 +86,7 @@ function handleEvent(p) {
       break;
     case 'peer_connected':
       addPeer(p.peer_id);
-      toast(`Peer connected — verify with QR + SAS`);
+      toast(`Peer connected — paste their QR and confirm SAS`);
       if (!activePeer) selectPeer(p.peer_id);
       updateVerifyBanner();
       break;
@@ -320,14 +328,22 @@ async function runVerification() {
     return;
   }
 
+  const btn = document.getElementById('verify-secure');
+  btn.disabled = true;
+  btn.textContent = 'Connecting…';
+
   try {
-    toast('Running secure handshake…');
+    toast('Connecting and running secure handshake…');
     const result = await invoke('connect_and_verify', { remoteQr: qr });
     if (result.peer_id && !peers.includes(result.peer_id)) addPeer(result.peer_id);
     selectPeer(result.peer_id);
     showSasModal(result.peer_id, result.sas);
+    toast('Connected — confirm the SAS code with your peer');
   } catch (e) {
     toast(`Verification failed: ${e}`, true);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<span class="btn-icon">🔒</span> Connect &amp; Verify (QR + SAS)';
   }
 }
 

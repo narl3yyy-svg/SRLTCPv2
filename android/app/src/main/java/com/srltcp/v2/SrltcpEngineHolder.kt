@@ -29,8 +29,13 @@ object SrltcpEngineHolder {
     @Volatile
     private var polling = false
 
+    private fun ensureNativeLibrary() {
+        System.setProperty("uniffi.component.srltcp_core.libraryOverride", "srltcp_core")
+    }
+
     @Synchronized
     fun getOrCreate(): SrltcpEngine {
+        ensureNativeLibrary()
         engine?.let { return it }
         val job = scope.coroutineContext[Job]
         if (job == null || !job.isActive) {

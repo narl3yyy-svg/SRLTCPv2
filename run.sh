@@ -185,30 +185,62 @@ check_macos_deps() {
     return 0
 }
 
+validate_binary() {
+    local bin="$1"
+    [[ -f "$bin" ]] || return 1
+    [[ -s "$bin" ]] || return 1
+    [[ -x "$bin" ]] || chmod +x "$bin" 2>/dev/null || true
+    # Reject obviously corrupt downloads (< 1 MB)
+    local size
+    size=$(stat -c%s "$bin" 2>/dev/null || stat -f%z "$bin" 2>/dev/null || echo 0)
+    [[ "$size" -gt 1048576 ]] || return 1
+    return 0
+}
+
 find_binary() {
-    local platform prebuilt cached
+    local platform candidates=()
 
     platform="$(platform_tag)"
-    prebuilt="dist/bin/${platform}/srltcp-desktop"
-    cached="dist/bin/srltcp-desktop"
 
     if [[ "$FORCE_REBUILD" == true ]]; then
         echo ""
         return 1
     fi
 
-    if [[ "$USE_PREBUILT" == true ]]; then
-        if [[ -f "$prebuilt" && -x "$prebuilt" ]]; then
-            echo "$prebuilt"
-            return 0
-        fi
-        if [[ -f "$cached" && -x "$cached" ]]; then
-            echo "$cached"
-            return 0
-        fi
+    if [[ "$USE_PREBUILT" != true ]]; then
+        echo ""
+        return 1
     fi
 
+    candidates=(
+        "dist/bin/${platform}/srltcp-desktop"
+        "dist/srltcp-desktop-${platform}"
+        "dist/bin/srltcp-desktop"
+        "target/release/srltcp-desktop"
+    )
+
+    local candidate
+    for candidate in "${candidates[@]}"; do
+        if validate_binary "$candidate"; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+
     echo ""
+    return 1
+}
+
+http_download() {
+    local url="$1" dest="$2"
+    if command -v curl &>/dev/null; then
+        curl -fsSL --retry 3 --connect-timeout 15 -o "$dest" "$url"
+        return $?
+    fi
+    if command -v wget &>/dev/null; then
+        wget -q --tries=3 --timeout=15 -O "$dest" "$url"
+        return $?
+    fi
     return 1
 }
 
@@ -222,15 +254,16 @@ download_prebuilt() {
         return 1
     fi
 
-    if ! command -v curl &>/dev/null; then
+    if ! command -v curl &>/dev/null && ! command -v wget &>/dev/null; then
+        warn "curl or wget required to download prebuilt binaries."
         return 1
     fi
 
     mkdir -p "$dir"
     url="https://github.com/${REPO}/releases/download/v${VERSION}/srltcp-desktop-${platform}"
 
-    log "Trying prebuilt binary for ${platform}..."
-    if curl -fsSL --retry 2 -o "$dest" "$url" 2>/dev/null; then
+    log "Downloading prebuilt for ${platform} (v${VERSION})..."
+    if http_download "$url" "$dest" 2>/dev/null && validate_binary "$dest"; then
         chmod +x "$dest"
         ok "Downloaded prebuilt: $dest"
         echo "$dest"
@@ -238,6 +271,7 @@ download_prebuilt() {
     fi
 
     rm -f "$dest"
+    warn "Prebuilt not available for ${platform} at v${VERSION}."
     return 1
 }
 
@@ -311,8 +345,9 @@ main() {
     local binary
     binary="$(resolve_binary)"
 
-    if [[ ! -f "$binary" ]]; then
-        err "Binary not found at $binary"
+    if ! validate_binary "$binary"; then
+        err "Binary missing or invalid at $binary"
+        err "Try: $0 --rebuild"
         exit 1
     fi
 
