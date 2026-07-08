@@ -4684,7 +4684,7 @@ dependencies = [
 
 [[package]]
 name = "srltcp-core"
-version = "0.2.10"
+version = "0.2.11"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -4724,7 +4724,7 @@ dependencies = [
 
 [[package]]
 name = "srltcp-desktop"
-version = "0.2.10"
+version = "0.2.11"
 dependencies = [
  "serde",
  "serde_json",

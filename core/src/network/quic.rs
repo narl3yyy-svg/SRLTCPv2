@@ -122,6 +122,14 @@ impl QuicTransport {
         }
     }
 
+    /// Re-key a registered connection (e.g. conn id → canonical peer id).
+    pub async fn rekey(&self, old_id: &str, new_id: &str) {
+        let mut map = self.connections.write().await;
+        if let Some(conn) = map.remove(old_id) {
+            map.insert(new_id.to_string(), conn);
+        }
+    }
+
     /// Send a framed message over a bidirectional QUIC stream.
     pub async fn send(&self, peer_id: &str, data: &[u8]) -> Result<(), QuicError> {
         let conn = {

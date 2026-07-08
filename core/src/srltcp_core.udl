@@ -15,6 +15,7 @@ dictionary SrltcpEvent {
     string? transport;
     string? call_id;
     string? error;
+    boolean? auto_trusted;
 };
 
 dictionary TransferInfo {
@@ -27,6 +28,7 @@ dictionary TransferInfo {
 dictionary ConnectResult {
     string peer_id;
     string sas;
+    boolean auto_trusted;
 };
 
 interface SrltcpEngine {
@@ -46,6 +48,8 @@ interface SrltcpEngine {
     void connect_quic(string addr);
     void set_wan_endpoint(string? endpoint);
     string? wan_endpoint();
+    void load_trusted_pubkeys(sequence<string> pubkeys);
+    void set_receive_dir(string path);
     void disconnect_peer(string peer_id);
 
     string handshake_with(string peer_id, string remote_qr);

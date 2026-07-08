@@ -1,8 +1,8 @@
 //! Central P2P engine coordinating transports, crypto sessions, and messaging.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,8 +19,12 @@ use crate::network::TransportKind;
 use crate::network::QuicTransport;
 use crate::protocol::{ChatMessage, MessageType};
 use crate::serial::{list_ports, SerialConfig, SerialTransport};
-use crate::transfer::ChunkedSender;
+use crate::transfer::{ChunkedReceiver, ChunkedSender, TransferManifest};
 use crate::webrtc::CallSession;
+
+fn peer_id_from_pubkey(pk: &[u8; 32]) -> String {
+    format!("peer:{}", hex::encode(pk))
+}
 
 /// Engine lifecycle events for UI/bindings.
 #[derive(Debug, Clone)]
@@ -30,7 +34,12 @@ pub enum EngineEvent {
     PeerConnected { peer_id: String, transport: TransportKind },
     PeerDisconnected { peer_id: String, reason: String },
     MessageReceived(ChatMessage),
-    SasReady { peer_id: String, sas: String },
+    SasReady {
+        peer_id: String,
+        sas: String,
+        auto_trusted: bool,
+    },
+    PeerIdUpdated { old_id: String, new_id: String },
     TransferProgress { id: String, filename: String, progress: f64 },
     TransferComplete { id: String, filename: String },
     CallStarted { call_id: String, peer_id: String, is_video: bool },
@@ -46,9 +55,7 @@ struct PeerSession {
 }
 
 struct ActiveTransfer {
-    #[allow(dead_code)]
     sender: ChunkedSender,
-    #[allow(dead_code)]
     peer_id: String,
 }
 
@@ -70,6 +77,10 @@ pub struct P2pEngine {
     handshake_wait: Arc<RwLock<HashMap<String, oneshot::Sender<SignedHandshake>>>>,
     /// Optional WAN endpoint (host:port) for connect fallback when LAN QR endpoint fails.
     wan_endpoint: Arc<RwLock<Option<String>>>,
+    /// Previously verified peer Ed25519 public keys (hex).
+    trusted_pubkeys: Arc<RwLock<HashSet<String>>>,
+    incoming_transfers: Arc<RwLock<HashMap<String, ChunkedReceiver>>>,
+    receive_dir: Arc<RwLock<PathBuf>>,
 }
 
 impl P2pEngine {
@@ -88,9 +99,29 @@ impl P2pEngine {
             event_tx,
             handshake_wait: Arc::new(RwLock::new(HashMap::new())),
             wan_endpoint: Arc::new(RwLock::new(None)),
+            trusted_pubkeys: Arc::new(RwLock::new(HashSet::new())),
+            incoming_transfers: Arc::new(RwLock::new(HashMap::new())),
+            receive_dir: Arc::new(RwLock::new(
+                std::env::temp_dir().join("srltcp_received"),
+            )),
         };
 
         (engine, event_rx)
+    }
+
+    pub async fn set_receive_dir(&self, path: PathBuf) {
+        *self.receive_dir.write().await = path;
+    }
+
+    pub async fn load_trusted_pubkeys(&self, pubkeys: Vec<String>) {
+        let mut set = self.trusted_pubkeys.write().await;
+        set.clear();
+        for pk in pubkeys {
+            let trimmed = pk.trim().to_lowercase();
+            if !trimmed.is_empty() {
+                set.insert(trimmed);
+            }
+        }
     }
 
     pub async fn set_wan_endpoint(&self, endpoint: Option<String>) {
@@ -107,6 +138,107 @@ impl P2pEngine {
 
     pub async fn wan_endpoint(&self) -> Option<String> {
         self.wan_endpoint.read().await.clone()
+    }
+
+    async fn resolve_peer_id(&self, peer_id: &str) -> Result<String, String> {
+        let peers = self.peers.read().await;
+        if peers.contains_key(peer_id) {
+            return Ok(peer_id.to_string());
+        }
+        if let Some(hex_id) = peer_id.strip_prefix("peer:") {
+            for (id, session) in peers.iter() {
+                if hex::encode(session.crypto.remote_identity) == hex_id {
+                    return Ok(id.clone());
+                }
+            }
+        }
+        Err(format!("peer not connected: {peer_id}"))
+    }
+
+    async fn canonicalize_peer(&self, conn_peer_id: &str) -> Result<String, String> {
+        let canonical = {
+            let peers = self.peers.read().await;
+            let session = peers
+                .get(conn_peer_id)
+                .ok_or_else(|| format!("peer not found: {conn_peer_id}"))?;
+            if session.crypto.remote_identity == [0u8; 32] {
+                return Ok(conn_peer_id.to_string());
+            }
+            peer_id_from_pubkey(&session.crypto.remote_identity)
+        };
+
+        if canonical == conn_peer_id {
+            return Ok(canonical);
+        }
+
+        let session = {
+            let mut peers = self.peers.write().await;
+            peers
+                .remove(conn_peer_id)
+                .ok_or_else(|| format!("peer not found: {conn_peer_id}"))?
+        };
+        self.peers.write().await.insert(canonical.clone(), session);
+        self.quic.read().await.rekey(conn_peer_id, &canonical).await;
+
+        if let Some(tx) = self.handshake_wait.write().await.remove(conn_peer_id) {
+            self.handshake_wait
+                .write()
+                .await
+                .insert(canonical.clone(), tx);
+        }
+
+        let _ = self
+            .event_tx
+            .send(EngineEvent::PeerIdUpdated {
+                old_id: conn_peer_id.to_string(),
+                new_id: canonical.clone(),
+            })
+            .await;
+
+        Ok(canonical)
+    }
+
+    async fn ensure_connected(&self, parsed: &crate::crypto::identity::ParsedQr) -> Result<String, String> {
+        let canonical = peer_id_from_pubkey(&parsed.public_key);
+        {
+            let peers = self.peers.read().await;
+            if peers.contains_key(&canonical) {
+                return Ok(canonical);
+            }
+            for (id, session) in peers.iter() {
+                if session.crypto.remote_identity == parsed.public_key {
+                    return Ok(id.clone());
+                }
+            }
+        }
+
+        if let Some(ref endpoint) = parsed.endpoint {
+            if self.connect_quic(endpoint).await.is_ok() {
+                return Ok(format!("quic:{endpoint}"));
+            }
+        }
+
+        if let Some(wan) = self.wan_endpoint.read().await.clone() {
+            self.connect_wan(&wan).await?;
+            return Ok(format!("quic:{wan}"));
+        }
+
+        Err(
+            "Could not reach peer. Ensure both apps are running, you are on the same LAN \
+             (or set a WAN endpoint in Settings), and use a QR from a running SRLTCP app."
+                .into(),
+        )
+    }
+
+    async fn maybe_auto_trust(&self, peer_id: &str, remote_pk: &[u8; 32]) -> bool {
+        let pk_hex = hex::encode(remote_pk).to_lowercase();
+        if !self.trusted_pubkeys.read().await.contains(&pk_hex) {
+            return false;
+        }
+        if self.confirm_peer_trusted(peer_id).await.is_ok() {
+            return true;
+        }
+        false
     }
 
     pub fn identity(&self) -> &Identity {
@@ -212,6 +344,10 @@ impl P2pEngine {
             peers: self.peers.clone(),
             event_tx: self.event_tx.clone(),
             handshake_wait: self.handshake_wait.clone(),
+            trusted_pubkeys: self.trusted_pubkeys.clone(),
+            incoming_transfers: self.incoming_transfers.clone(),
+            receive_dir: self.receive_dir.clone(),
+            transfers: self.transfers.clone(),
         }
     }
 
@@ -335,11 +471,12 @@ impl P2pEngine {
     }
 
     pub async fn disconnect_peer(&self, peer_id: &str) -> Result<(), String> {
+        let resolved = self.resolve_peer_id(peer_id).await.unwrap_or_else(|_| peer_id.to_string());
         let transport = self
             .peers
             .read()
             .await
-            .get(peer_id)
+            .get(&resolved)
             .map(|s| s.transport);
 
         if let Some(kind) = transport {
@@ -351,67 +488,51 @@ impl P2pEngine {
                     *self.serial.write().await = None;
                 }
                 TransportKind::Lan | TransportKind::Wan => {
-                    self.quic.read().await.unregister(peer_id).await;
+                    self.quic.read().await.unregister(&resolved).await;
                 }
                 TransportKind::Relay => {}
             }
         }
 
-        self.peers.write().await.remove(peer_id);
-        self.handshake_wait.write().await.remove(peer_id);
+        self.peers.write().await.remove(&resolved);
+        self.handshake_wait.write().await.remove(&resolved);
         let _ = self
             .event_tx
             .send(EngineEvent::PeerDisconnected {
-                peer_id: peer_id.to_string(),
+                peer_id: resolved,
                 reason: "user disconnected".to_string(),
             })
             .await;
         Ok(())
     }
 
-    pub async fn connect_and_verify(&self, remote_qr: &str) -> Result<(String, String), String> {
+    /// Connect, run handshake, canonicalize peer id. Returns (peer_id, sas, auto_trusted).
+    pub async fn connect_and_verify(
+        &self,
+        remote_qr: &str,
+    ) -> Result<(String, String, bool), String> {
         let parsed = parse_qr_payload(remote_qr)
             .map_err(|e| format!("invalid peer QR: {e}"))?;
 
-        let mut peer_id = self.connected_peers().await.into_iter().next();
-
-        if peer_id.is_none() {
-            if let Some(ref endpoint) = parsed.endpoint {
-                if self.connect_quic(endpoint).await.is_ok() {
-                    peer_id = Some(format!("quic:{endpoint}"));
-                }
-            }
-        }
-
-        if peer_id.is_none() {
-            if let Some(wan) = self.wan_endpoint.read().await.clone() {
-                self.connect_wan(&wan).await?;
-                peer_id = Some(format!("quic:{wan}"));
-            }
-        }
-
-        let peer_id = peer_id.ok_or_else(|| {
-            "Could not reach peer. Ensure both apps are running, you are on the same LAN \
-             (or set a WAN endpoint in Settings), and use a QR from a running SRLTCP app."
-                .to_string()
-        })?;
-
-        let sas = self.handshake_with(&peer_id, remote_qr).await?;
-        Ok((peer_id, sas))
+        let conn_peer_id = self.ensure_connected(&parsed).await?;
+        self.handshake_with_qr_bytes(&conn_peer_id, &parsed.public_key)
+            .await
     }
 
     /// Run hybrid KEX over the wire; remote QR identity must match signed handshake.
     pub async fn handshake_with(&self, peer_id: &str, remote_qr: &str) -> Result<String, String> {
         let parsed = parse_qr_payload(remote_qr).map_err(|e| e.to_string())?;
-        self.handshake_with_qr_bytes(peer_id, &parsed.public_key)
-            .await
+        let (_, sas, _) = self
+            .handshake_with_qr_bytes(peer_id, &parsed.public_key)
+            .await?;
+        Ok(sas)
     }
 
     async fn handshake_with_qr_bytes(
         &self,
         peer_id: &str,
         expected_remote_pk: &[u8; 32],
-    ) -> Result<String, String> {
+    ) -> Result<(String, String, bool), String> {
         if !self.peers.read().await.contains_key(peer_id) {
             return Err(format!("peer not connected: {peer_id}"));
         }
@@ -472,33 +593,52 @@ impl P2pEngine {
         let wire = WireFrame::Handshake(finish_frame);
         self.send_wire_frame(peer_id, &wire).await?;
 
+        let canonical = self.canonicalize_peer(peer_id).await?;
+        let auto_trusted = self.maybe_auto_trust(&canonical, expected_remote_pk).await;
+
         let _ = self
             .event_tx
             .send(EngineEvent::SasReady {
-                peer_id: peer_id.to_string(),
+                peer_id: canonical.clone(),
                 sas: sas.clone(),
+                auto_trusted,
             })
             .await;
 
-        Ok(sas)
+        Ok((canonical, sas, auto_trusted))
     }
 
     /// User explicitly confirms SAS — required before messaging.
     pub async fn confirm_peer_trusted(&self, peer_id: &str) -> Result<(), String> {
-        let mut peers = self.peers.write().await;
-        let session = peers
-            .get_mut(peer_id)
-            .ok_or_else(|| format!("peer not found: {peer_id}"))?;
-        session.crypto.confirm_trusted()
+        let resolved = self.resolve_peer_id(peer_id).await?;
+        let remote_pk = {
+            let mut peers = self.peers.write().await;
+            let session = peers
+                .get_mut(&resolved)
+                .ok_or_else(|| format!("peer not found: {resolved}"))?;
+            session.crypto.confirm_trusted()?;
+            session.crypto.remote_identity
+        };
+        if remote_pk != [0u8; 32] {
+            self.trusted_pubkeys
+                .write()
+                .await
+                .insert(hex::encode(remote_pk).to_lowercase());
+        }
+        Ok(())
     }
 
     pub async fn is_peer_trusted(&self, peer_id: &str) -> bool {
-        self.peers
-            .read()
-            .await
-            .get(peer_id)
-            .map(|s| s.crypto.is_trusted())
-            .unwrap_or(false)
+        if let Ok(resolved) = self.resolve_peer_id(peer_id).await {
+            return self
+                .peers
+                .read()
+                .await
+                .get(&resolved)
+                .map(|s| s.crypto.is_trusted())
+                .unwrap_or(false);
+        }
+        false
     }
 
     pub async fn send_message(&self, peer_id: &str, content: &str) -> Result<(), String> {
@@ -514,6 +654,7 @@ impl P2pEngine {
         peer_id: &str,
         file_path: &str,
     ) -> Result<(String, String, f64), String> {
+        let resolved = self.resolve_peer_id(peer_id).await?;
         let path = Path::new(file_path);
         if !path.exists() {
             return Err(format!("file not found: {file_path}"));
@@ -524,28 +665,33 @@ impl P2pEngine {
         let transfer_id = sender.manifest.id.to_string();
         let filename = sender.manifest.filename.clone();
         let progress = sender.progress();
+        let manifest = sender.manifest.clone();
 
         self.transfers.write().await.insert(
             transfer_id.clone(),
             ActiveTransfer {
                 sender,
-                peer_id: peer_id.to_string(),
+                peer_id: resolved.clone(),
             },
         );
 
         let notice = ChatMessage {
             id: uuid::Uuid::new_v4(),
             sender_id: self.public_key_hex(),
-            recipient_id: peer_id.to_string(),
+            recipient_id: resolved.clone(),
             msg_type: MessageType::File,
             content: filename.clone(),
             timestamp: chrono::Utc::now(),
             metadata: Some(serde_json::json!({
                 "transfer_id": transfer_id,
                 "action": "offer",
+                "filename": filename,
+                "total_chunks": manifest.total_chunks,
+                "total_size": manifest.total_size,
+                "sha256": manifest.sha256,
             })),
         };
-        self.send_wire_message(peer_id, notice).await?;
+        self.send_wire_message(&resolved, notice).await?;
 
         let _ = self
             .event_tx
@@ -556,18 +702,28 @@ impl P2pEngine {
             })
             .await;
 
+        self.spawn_transfer_send(resolved, transfer_id.clone());
+
         Ok((transfer_id, filename, progress))
     }
 
+    fn spawn_transfer_send(&self, peer_id: String, transfer_id: String) {
+        let inbound = self.clone_for_inbound();
+        tokio::spawn(async move {
+            inbound.run_transfer_send(peer_id, transfer_id).await;
+        });
+    }
+
     pub async fn start_call(&self, peer_id: &str, is_video: bool) -> Result<String, String> {
-        let mut session = CallSession::new(peer_id, is_video);
+        let resolved = self.resolve_peer_id(peer_id).await?;
+        let mut session = CallSession::new(&resolved, is_video);
         let sdp = session.create_offer().map_err(|e| e.to_string())?;
         let call_id = session.id.clone();
 
         let msg = ChatMessage {
             id: uuid::Uuid::new_v4(),
             sender_id: self.public_key_hex(),
-            recipient_id: peer_id.to_string(),
+            recipient_id: resolved.clone(),
             msg_type: MessageType::CallOffer,
             content: sdp,
             timestamp: chrono::Utc::now(),
@@ -576,7 +732,7 @@ impl P2pEngine {
                 "is_video": is_video,
             })),
         };
-        self.send_wire_message(peer_id, msg).await?;
+        self.send_wire_message(&resolved, msg).await?;
 
         self.calls.write().await.insert(
             call_id.clone(),
@@ -587,7 +743,7 @@ impl P2pEngine {
             .event_tx
             .send(EngineEvent::CallStarted {
                 call_id: call_id.clone(),
-                peer_id: peer_id.to_string(),
+                peer_id: resolved,
                 is_video,
             })
             .await;
@@ -614,13 +770,14 @@ impl P2pEngine {
     }
 
     async fn send_wire_message(&self, peer_id: &str, msg: ChatMessage) -> Result<(), String> {
+        let resolved = self.resolve_peer_id(peer_id).await?;
         let plaintext = msg.to_json().map_err(|e| e.to_string())?;
 
         let ciphertext = {
             let mut peers = self.peers.write().await;
             let session = peers
-                .get_mut(peer_id)
-                .ok_or_else(|| format!("peer not found: {peer_id}"))?;
+                .get_mut(&resolved)
+                .ok_or_else(|| format!("peer not found: {resolved}"))?;
             session.crypto.encrypt(&plaintext)?
         };
 
@@ -629,17 +786,18 @@ impl P2pEngine {
             ciphertext,
         };
         let wire = WireFrame::Encrypted(payload);
-        self.send_wire_frame(peer_id, &wire).await
+        self.send_wire_frame(&resolved, &wire).await
     }
 
     async fn send_raw(&self, peer_id: &str, wire: &[u8]) -> Result<(), String> {
+        let resolved = self.resolve_peer_id(peer_id).await?;
         let transport = self
             .peers
             .read()
             .await
-            .get(peer_id)
+            .get(&resolved)
             .map(|s| s.transport)
-            .ok_or_else(|| format!("peer not found: {peer_id}"))?;
+            .ok_or_else(|| format!("peer not found: {resolved}"))?;
 
         match transport {
             TransportKind::Serial => {
@@ -656,10 +814,10 @@ impl P2pEngine {
                 self.quic
                     .read()
                     .await
-                    .send(peer_id, wire)
+                    .send(&resolved, wire)
                     .await
                     .map_err(|e| e.to_string())?;
-                info!(peer = peer_id, len = wire.len(), "sent wire frame");
+                info!(peer = %resolved, len = wire.len(), "sent wire frame");
             }
             TransportKind::Relay => {
                 info!(peer = peer_id, "relay send not implemented");
@@ -719,6 +877,10 @@ struct EngineInbound {
     peers: Arc<RwLock<HashMap<String, PeerSession>>>,
     event_tx: mpsc::Sender<EngineEvent>,
     handshake_wait: Arc<RwLock<HashMap<String, oneshot::Sender<SignedHandshake>>>>,
+    trusted_pubkeys: Arc<RwLock<HashSet<String>>>,
+    incoming_transfers: Arc<RwLock<HashMap<String, ChunkedReceiver>>>,
+    receive_dir: Arc<RwLock<PathBuf>>,
+    transfers: Arc<RwLock<HashMap<String, ActiveTransfer>>>,
 }
 
 impl EngineInbound {
@@ -825,11 +987,37 @@ impl EngineInbound {
 
         match sas_result {
             Ok(sas) => {
+                let canonical = match self.canonicalize_peer_inbound(peer_id).await {
+                    Ok(id) => id,
+                    Err(_) => peer_id.to_string(),
+                };
+                let remote_pk = {
+                    self.peers
+                        .read()
+                        .await
+                        .get(&canonical)
+                        .map(|s| s.crypto.remote_identity)
+                        .unwrap_or([0u8; 32])
+                };
+                let auto_trusted = if remote_pk != [0u8; 32] {
+                    let pk_hex = hex::encode(remote_pk).to_lowercase();
+                    if self.trusted_pubkeys.read().await.contains(&pk_hex) {
+                        self.peers.write().await.get_mut(&canonical).and_then(|s| {
+                            s.crypto.confirm_trusted().ok();
+                            Some(true)
+                        }).unwrap_or(false)
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
                 let _ = self
                     .event_tx
                     .send(EngineEvent::SasReady {
-                        peer_id: peer_id.to_string(),
+                        peer_id: canonical,
                         sas: sas.clone(),
+                        auto_trusted,
                     })
                     .await;
             }
@@ -857,8 +1045,262 @@ impl EngineInbound {
         };
 
         if let Ok(msg) = ChatMessage::from_json(&plaintext) {
-            let _ = self.event_tx.send(EngineEvent::MessageReceived(msg)).await;
+            self.handle_app_message(peer_id, msg).await;
         }
+    }
+
+    async fn handle_app_message(&self, peer_id: &str, msg: ChatMessage) {
+        if msg.msg_type == MessageType::File {
+            if let Some(meta) = &msg.metadata {
+                match meta.get("action").and_then(|v| v.as_str()) {
+                    Some("offer") => {
+                        let transfer_id = meta
+                            .get("transfer_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let filename = meta
+                            .get("filename")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(&msg.content)
+                            .to_string();
+                        let total_chunks = meta
+                            .get("total_chunks")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as u32;
+                        let total_size = meta
+                            .get("total_size")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let sha256 = meta
+                            .get("sha256")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if let Ok(id) = uuid::Uuid::parse_str(&transfer_id) {
+                            let manifest = TransferManifest {
+                                id,
+                                filename: filename.clone(),
+                                total_size,
+                                chunk_size: crate::transfer::DEFAULT_CHUNK_SIZE,
+                                total_chunks,
+                                sha256,
+                            };
+                            self.incoming_transfers
+                                .write()
+                                .await
+                                .insert(transfer_id.clone(), ChunkedReceiver::new(manifest));
+                            let _ = self
+                                .event_tx
+                                .send(EngineEvent::TransferProgress {
+                                    id: transfer_id,
+                                    filename,
+                                    progress: 0.0,
+                                })
+                                .await;
+                        }
+                        return;
+                    }
+                    Some("chunk") => {
+                        let transfer_id = meta
+                            .get("transfer_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let chunk_id = meta
+                            .get("chunk_id")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as u32;
+                        let data_b64 = meta
+                            .get("data_b64")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        if let Ok(data) = base64::Engine::decode(
+                            &base64::engine::general_purpose::STANDARD,
+                            data_b64,
+                        ) {
+                            let mut incoming = self.incoming_transfers.write().await;
+                            if let Some(receiver) = incoming.get_mut(transfer_id) {
+                                let filename = receiver.manifest.filename.clone();
+                                let id = receiver.manifest.id.to_string();
+                                let _ = receiver.receive_chunk(chunk_id, bytes::Bytes::from(data));
+                                let progress = receiver.progress();
+                                let _ = self
+                                    .event_tx
+                                    .send(EngineEvent::TransferProgress {
+                                        id: id.clone(),
+                                        filename: filename.clone(),
+                                        progress,
+                                    })
+                                    .await;
+                                if receiver.is_complete() {
+                                    if let Ok(data) = receiver.assemble() {
+                                        let dir = self.receive_dir.read().await.clone();
+                                        let _ = std::fs::create_dir_all(&dir);
+                                        let path = dir.join(&filename);
+                                        if std::fs::write(&path, &data).is_ok() {
+                                            let _ = self.event_tx.send(EngineEvent::TransferComplete {
+                                                id,
+                                                filename,
+                                            }).await;
+                                        }
+                                    }
+                                    incoming.remove(transfer_id);
+                                }
+                            }
+                        }
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if msg.msg_type == MessageType::CallOffer {
+            if let Some(meta) = &msg.metadata {
+                let call_id = meta
+                    .get("call_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let is_video = meta
+                    .get("is_video")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if !call_id.is_empty() {
+                    let _ = self
+                        .event_tx
+                        .send(EngineEvent::CallStarted {
+                            call_id,
+                            peer_id: peer_id.to_string(),
+                            is_video,
+                        })
+                        .await;
+                    return;
+                }
+            }
+        }
+
+        let _ = self.event_tx.send(EngineEvent::MessageReceived(msg)).await;
+    }
+
+    async fn canonicalize_peer_inbound(&self, conn_peer_id: &str) -> Result<String, String> {
+        let canonical = {
+            let peers = self.peers.read().await;
+            let session = peers
+                .get(conn_peer_id)
+                .ok_or_else(|| format!("peer not found: {conn_peer_id}"))?;
+            if session.crypto.remote_identity == [0u8; 32] {
+                return Ok(conn_peer_id.to_string());
+            }
+            peer_id_from_pubkey(&session.crypto.remote_identity)
+        };
+
+        if canonical == conn_peer_id {
+            return Ok(canonical);
+        }
+
+        let session = {
+            let mut peers = self.peers.write().await;
+            peers
+                .remove(conn_peer_id)
+                .ok_or_else(|| format!("peer not found: {conn_peer_id}"))?
+        };
+        self.peers.write().await.insert(canonical.clone(), session);
+        self.quic.read().await.rekey(conn_peer_id, &canonical).await;
+
+        if let Some(tx) = self.handshake_wait.write().await.remove(conn_peer_id) {
+            self.handshake_wait
+                .write()
+                .await
+                .insert(canonical.clone(), tx);
+        }
+
+        let _ = self
+            .event_tx
+            .send(EngineEvent::PeerIdUpdated {
+                old_id: conn_peer_id.to_string(),
+                new_id: canonical.clone(),
+            })
+            .await;
+
+        Ok(canonical)
+    }
+
+    async fn run_transfer_send(&self, peer_id: String, transfer_id: String) {
+        loop {
+            let batch = {
+                let mut transfers = self.transfers.write().await;
+                let Some(active) = transfers.get_mut(&transfer_id) else {
+                    break;
+                };
+                if active.sender.is_complete() {
+                    let filename = active.sender.manifest.filename.clone();
+                    transfers.remove(&transfer_id);
+                    let _ = self
+                        .event_tx
+                        .send(EngineEvent::TransferComplete {
+                            id: transfer_id.clone(),
+                            filename,
+                        })
+                        .await;
+                    return;
+                }
+                let chunks = active.sender.next_chunks(4);
+                let filename = active.sender.manifest.filename.clone();
+                let progress = active.sender.progress();
+                let _ = self
+                    .event_tx
+                    .send(EngineEvent::TransferProgress {
+                        id: transfer_id.clone(),
+                        filename: filename.clone(),
+                        progress,
+                    })
+                    .await;
+                chunks
+            };
+
+            for (chunk_id, data) in batch {
+                let msg = ChatMessage {
+                    id: uuid::Uuid::new_v4(),
+                    sender_id: self.identity.public_key_hex(),
+                    recipient_id: peer_id.clone(),
+                    msg_type: MessageType::File,
+                    content: String::new(),
+                    timestamp: chrono::Utc::now(),
+                    metadata: Some(serde_json::json!({
+                        "transfer_id": transfer_id,
+                        "action": "chunk",
+                        "chunk_id": chunk_id,
+                        "data_b64": base64::Engine::encode(
+                            &base64::engine::general_purpose::STANDARD,
+                            &data,
+                        ),
+                    })),
+                };
+                if self.send_app_message(&peer_id, msg).await.is_err() {
+                    warn!(transfer_id = %transfer_id, "chunk send failed");
+                    return;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    async fn send_app_message(&self, peer_id: &str, msg: ChatMessage) -> Result<(), String> {
+        let plaintext = msg.to_json().map_err(|e| e.to_string())?;
+        let ciphertext = {
+            let mut peers = self.peers.write().await;
+            let session = peers
+                .get_mut(peer_id)
+                .ok_or_else(|| format!("peer not found: {peer_id}"))?;
+            session.crypto.encrypt(&plaintext)?
+        };
+        let payload = EncryptedPayload {
+            version: 2,
+            ciphertext,
+        };
+        self.send_raw_frame(peer_id, &WireFrame::Encrypted(payload))
+            .await
     }
 
     async fn send_raw_frame(&self, peer_id: &str, frame: &WireFrame) -> Result<(), String> {

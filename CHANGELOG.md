@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.2.11 — Peer routing, file transfer, trusted reconnect (2026-07-08)
+
+### Fixes
+
+- **Canonical peer IDs** (`peer:{pubkey}`) — fixes file send, calls, and video failing due to `quic:` socket mismatch between inbound/outbound connections.
+- **File chunk transfer** — encrypted chunk messages now sent/received over the wire (was offer-only before).
+- **Trusted peer reconnect** — saved verified contacts auto-reconnect and skip SAS dialog when Ed25519 identity matches (new handshake still runs for fresh session keys).
+- **Incoming call offers** — receiver now gets `CallStarted` event.
+- **Android upload** — clearer error when file copy from URI fails; receive dir set to `files/received`.
+
+### API
+
+- `ConnectResult.auto_trusted`, `load_trusted_pubkeys()`, `set_receive_dir()`, `PeerIdUpdated` event.
+
 ## v0.2.10 — SAS fix + WAN connect (2026-07-08)
 
 ### Security

@@ -21,6 +21,7 @@ pub use transfer::{ChunkedReceiver, ChunkedSender, TransferManifest};
 pub use webrtc::{CallSession, CallState, WebRtcError};
 
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
 
 use tokio::runtime::Runtime;
@@ -62,6 +63,7 @@ pub struct SrltcpEvent {
     pub transport: Option<String>,
     pub call_id: Option<String>,
     pub error: Option<String>,
+    pub auto_trusted: Option<bool>,
 }
 
 /// Transfer metadata returned to Kotlin/Swift.
@@ -78,6 +80,7 @@ pub struct TransferInfo {
 pub struct ConnectResult {
     pub peer_id: String,
     pub sas: String,
+    pub auto_trusted: bool,
 }
 
 fn engine_event_to_uniffi(event: EngineEvent) -> SrltcpEvent {
@@ -94,6 +97,7 @@ fn engine_event_to_uniffi(event: EngineEvent) -> SrltcpEvent {
             transport: None,
             call_id: None,
             error: None,
+            auto_trusted: None,
         },
         EngineEvent::Stopped => SrltcpEvent {
             event_type: "stopped".into(),
@@ -107,6 +111,7 @@ fn engine_event_to_uniffi(event: EngineEvent) -> SrltcpEvent {
             transport: None,
             call_id: None,
             error: None,
+            auto_trusted: None,
         },
         EngineEvent::PeerConnected { peer_id, transport } => SrltcpEvent {
             event_type: "peer_connected".into(),
@@ -120,6 +125,7 @@ fn engine_event_to_uniffi(event: EngineEvent) -> SrltcpEvent {
             transport: Some(format!("{transport:?}")),
             call_id: None,
             error: None,
+            auto_trusted: None,
         },
         EngineEvent::PeerDisconnected { peer_id, reason } => SrltcpEvent {
             event_type: "peer_disconnected".into(),
@@ -133,6 +139,7 @@ fn engine_event_to_uniffi(event: EngineEvent) -> SrltcpEvent {
             transport: None,
             call_id: None,
             error: None,
+            auto_trusted: None,
         },
         EngineEvent::MessageReceived(msg) => SrltcpEvent {
             event_type: "message".into(),
@@ -146,8 +153,13 @@ fn engine_event_to_uniffi(event: EngineEvent) -> SrltcpEvent {
             transport: None,
             call_id: None,
             error: None,
+            auto_trusted: None,
         },
-        EngineEvent::SasReady { peer_id, sas } => SrltcpEvent {
+        EngineEvent::SasReady {
+            peer_id,
+            sas,
+            auto_trusted,
+        } => SrltcpEvent {
             event_type: "sas_ready".into(),
             peer_id: Some(peer_id),
             message: None,
@@ -159,6 +171,21 @@ fn engine_event_to_uniffi(event: EngineEvent) -> SrltcpEvent {
             transport: None,
             call_id: None,
             error: None,
+            auto_trusted: Some(auto_trusted),
+        },
+        EngineEvent::PeerIdUpdated { old_id, new_id } => SrltcpEvent {
+            event_type: "peer_id_updated".into(),
+            peer_id: Some(new_id),
+            message: Some(old_id),
+            content: None,
+            sas: None,
+            transfer_id: None,
+            filename: None,
+            progress: None,
+            transport: None,
+            call_id: None,
+            error: None,
+            auto_trusted: None,
         },
         EngineEvent::TransferProgress { id, filename, progress } => SrltcpEvent {
             event_type: "transfer_progress".into(),
@@ -172,6 +199,7 @@ fn engine_event_to_uniffi(event: EngineEvent) -> SrltcpEvent {
             transport: None,
             call_id: None,
             error: None,
+            auto_trusted: None,
         },
         EngineEvent::TransferComplete { id, filename } => SrltcpEvent {
             event_type: "transfer_complete".into(),
@@ -185,6 +213,7 @@ fn engine_event_to_uniffi(event: EngineEvent) -> SrltcpEvent {
             transport: None,
             call_id: None,
             error: None,
+            auto_trusted: None,
         },
         EngineEvent::CallStarted { call_id, peer_id, is_video } => SrltcpEvent {
             event_type: if is_video {
@@ -202,6 +231,7 @@ fn engine_event_to_uniffi(event: EngineEvent) -> SrltcpEvent {
             transport: None,
             call_id: Some(call_id),
             error: None,
+            auto_trusted: None,
         },
         EngineEvent::CallEnded { call_id } => SrltcpEvent {
             event_type: "call_ended".into(),
@@ -215,6 +245,7 @@ fn engine_event_to_uniffi(event: EngineEvent) -> SrltcpEvent {
             transport: None,
             call_id: Some(call_id),
             error: None,
+            auto_trusted: None,
         },
         EngineEvent::Error(e) => SrltcpEvent {
             event_type: "error".into(),
@@ -228,6 +259,7 @@ fn engine_event_to_uniffi(event: EngineEvent) -> SrltcpEvent {
             transport: None,
             call_id: None,
             error: Some(e),
+            auto_trusted: None,
         },
     }
 }
@@ -331,10 +363,15 @@ impl SrltcpEngine {
                 .connect_and_verify(&remote_qr)
                 .await
             {
-                Ok((peer_id, sas)) => ConnectResult { peer_id, sas },
+                Ok((peer_id, sas, auto_trusted)) => ConnectResult {
+                    peer_id,
+                    sas,
+                    auto_trusted,
+                },
                 Err(e) => ConnectResult {
                     peer_id: String::new(),
                     sas: format!("error: {e}"),
+                    auto_trusted: false,
                 },
             }
         })
@@ -385,6 +422,24 @@ impl SrltcpEngine {
         self.runtime.block_on(async {
             self.inner.lock().await.wan_endpoint().await
         })
+    }
+
+    pub fn load_trusted_pubkeys(&self, pubkeys: Vec<String>) {
+        let inner = self.inner.clone();
+        self.runtime.block_on(async move {
+            inner.lock().await.load_trusted_pubkeys(pubkeys).await;
+        });
+    }
+
+    pub fn set_receive_dir(&self, path: String) {
+        let inner = self.inner.clone();
+        self.runtime.block_on(async move {
+            inner
+                .lock()
+                .await
+                .set_receive_dir(PathBuf::from(path))
+                .await;
+        });
     }
 
     pub fn disconnect_peer(&self, peer_id: String) {

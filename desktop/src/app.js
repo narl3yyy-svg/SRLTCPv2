@@ -1,6 +1,6 @@
-// SRLTCP v0.2.10 Desktop Frontend
+// SRLTCP v0.2.11 Desktop Frontend
 
-const STORAGE_KEY = 'srltcp_v0.2.10';
+const STORAGE_KEY = 'srltcp_v0.2.11';
 
 function loadState() {
   try {
@@ -55,7 +55,54 @@ function nowTime() {
 
 function shortPeer(id) {
   if (!id) return '';
-  return id.replace('quic:', '').slice(0, 20);
+  return id.replace(/^peer:/, '').replace('quic:', '').slice(0, 12);
+}
+
+function pubkeyFromPeerId(id) {
+  if (!id) return '';
+  return id.startsWith('peer:') ? id.slice(5).toLowerCase() : '';
+}
+
+function migratePeerId(oldId, newId) {
+  if (!oldId || !newId || oldId === newId) return;
+  peers = peers.map(p => (p === oldId ? newId : p));
+  if (activePeer === oldId) activePeer = newId;
+  if (peerVerified.has(oldId)) {
+    peerVerified.set(newId, peerVerified.get(oldId));
+    peerVerified.delete(oldId);
+  }
+  savedContacts = savedContacts.map(c => (c.id === oldId ? { ...c, id: newId } : c));
+  persistContacts();
+  renderPeers();
+  renderPeerChips();
+  renderContactsList();
+  updateChatHeader();
+}
+
+async function syncTrustedPubkeys() {
+  const pubkeys = savedContacts
+    .filter(c => c.verified)
+    .map(c => pubkeyFromPeerId(c.id))
+    .filter(Boolean);
+  if (pubkeys.length) {
+    try { await invoke('load_trusted_pubkeys', { pubkeys }); } catch (_) {}
+  }
+}
+
+async function reconnectTrustedContacts() {
+  const trusted = savedContacts.filter(c => c.verified && c.qr);
+  for (const c of trusted) {
+    try {
+      const result = await invoke('connect_and_verify', { remoteQr: c.qr });
+      const peerId = pick(result, 'peer_id', 'peerId');
+      const autoTrusted = result?.auto_trusted ?? result?.autoTrusted;
+      if (peerId) {
+        migratePeerId(c.id, peerId);
+        if (autoTrusted) peerVerified.set(peerId, true);
+        addPeer(peerId);
+      }
+    } catch (_) {}
+  }
 }
 
 // ── Sidebar navigation ─────────────────────────────────────────────
@@ -109,6 +156,8 @@ async function init() {
       }
     } catch (_) {}
     restoreContacts();
+    await syncTrustedPubkeys();
+    reconnectTrustedContacts();
 
     const existingPeers = await invoke('get_peers');
     existingPeers.forEach(addPeer);
@@ -142,8 +191,24 @@ function handleEvent(p) {
       toast(`Disconnected: ${shortPeer(id)}`);
       break;
     }
-    case 'sas_ready':
-      showSasModal(pick(p, 'peer_id', 'peerId'), pick(p, 'sas', 'Sas'));
+    case 'sas_ready': {
+      const id = pick(p, 'peer_id', 'peerId');
+      const sas = pick(p, 'sas', 'Sas');
+      const autoTrusted = p.auto_trusted ?? p.autoTrusted;
+      if (id && autoTrusted) {
+        peerVerified.set(id, true);
+        selectPeer(id);
+        updateChatHeader();
+        updateInputState();
+        updateVerifyBanner();
+        toast('Reconnected to trusted peer');
+      } else {
+        showSasModal(id, sas);
+      }
+      break;
+    }
+    case 'peer_id_updated':
+      migratePeerId(pick(p, 'old_id', 'oldId'), pick(p, 'new_id', 'newId'));
       break;
     case 'transfer_progress':
       updateTransfer(pick(p, 'id', 'Id'), p.filename, p.progress, false);
@@ -458,10 +523,27 @@ async function runVerification() {
     const result = await invoke('connect_and_verify', { remoteQr: qr });
     const peerId = pick(result, 'peer_id', 'peerId');
     const sas = pick(result, 'sas', 'Sas');
+    const autoTrusted = result?.auto_trusted ?? result?.autoTrusted;
     if (peerId && !peers.includes(peerId)) addPeer(peerId);
     if (peerId) selectPeer(peerId);
-    showSasModal(peerId, sas);
-    toast('Connected — confirm the SAS code with your peer');
+    window._lastConnectQr = qr;
+    if (autoTrusted) {
+      peerVerified.set(peerId, true);
+      const name = displayName || shortPeer(peerId);
+      const existing = savedContacts.findIndex(c => c.id === peerId);
+      const entry = { id: peerId, name, verified: true, qr };
+      if (existing >= 0) savedContacts[existing] = entry;
+      else savedContacts.push(entry);
+      persistContacts();
+      await syncTrustedPubkeys();
+      updateChatHeader();
+      updateInputState();
+      updateVerifyBanner();
+      toast('Reconnected to trusted peer — secure channel ready');
+    } else {
+      showSasModal(peerId, sas);
+      toast('Connected — confirm the SAS code with your peer');
+    }
   } catch (e) {
     toast(`Verification failed: ${e}`, true);
   } finally {
@@ -491,6 +573,7 @@ document.getElementById('connect-serial').onclick = async () => {
 };
 
 document.getElementById('sas-confirm').onclick = async () => {
+  // async handler
   if (pendingSas) {
     try {
       await invoke('confirm_peer_trusted', { peerId: pendingSas.peerId });
@@ -501,10 +584,12 @@ document.getElementById('sas-confirm').onclick = async () => {
     peerVerified.set(pendingSas.peerId, true);
     const name = displayName || shortPeer(pendingSas.peerId);
     const existing = savedContacts.findIndex(c => c.id === pendingSas.peerId);
-    const entry = { id: pendingSas.peerId, name, verified: true };
+    const qr = window._lastConnectQr || '';
+    const entry = { id: pendingSas.peerId, name, verified: true, qr };
     if (existing >= 0) savedContacts[existing] = entry;
     else savedContacts.push(entry);
     persistContacts();
+    await syncTrustedPubkeys();
     selectPeer(pendingSas.peerId);
     toast('Peer verified — secure channel established');
     hideSasModal();

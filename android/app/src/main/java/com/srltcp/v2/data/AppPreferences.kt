@@ -8,6 +8,7 @@ data class SavedContact(
     val peerId: String,
     val displayName: String,
     val verified: Boolean,
+    val qrPayload: String = "",
     val lastSeen: Long = System.currentTimeMillis(),
 )
 
@@ -34,6 +35,7 @@ class AppPreferences(context: Context) {
                             peerId = o.getString("peerId"),
                             displayName = o.optString("displayName", ""),
                             verified = o.optBoolean("verified", false),
+                            qrPayload = o.optString("qrPayload", ""),
                             lastSeen = o.optLong("lastSeen", 0L),
                         ),
                     )
@@ -52,6 +54,7 @@ class AppPreferences(context: Context) {
                     .put("peerId", c.peerId)
                     .put("displayName", c.displayName)
                     .put("verified", c.verified)
+                    .put("qrPayload", c.qrPayload)
                     .put("lastSeen", c.lastSeen),
             )
         }

@@ -1,4 +1,4 @@
-//! SRLTCP v0.2.10 Desktop — Tauri v2 backend with graceful shutdown.
+//! SRLTCP v0.2.11 Desktop — Tauri v2 backend with graceful shutdown.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -78,8 +78,21 @@ async fn connect_and_verify(
     remote_qr: String,
 ) -> Result<serde_json::Value, String> {
     let engine = state.engine.lock().await;
-    let (peer_id, sas) = engine.connect_and_verify(&remote_qr).await?;
-    Ok(serde_json::json!({ "peer_id": peer_id, "sas": sas }))
+    let (peer_id, sas, auto_trusted) = engine.connect_and_verify(&remote_qr).await?;
+    Ok(serde_json::json!({
+        "peer_id": peer_id,
+        "sas": sas,
+        "auto_trusted": auto_trusted,
+    }))
+}
+
+#[tauri::command]
+async fn load_trusted_pubkeys(
+    state: State<'_, AppState>,
+    pubkeys: Vec<String>,
+) -> Result<(), String> {
+    state.engine.lock().await.load_trusted_pubkeys(pubkeys).await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -263,6 +276,7 @@ fn main() {
             confirm_peer_trusted,
             set_wan_endpoint,
             get_wan_endpoint,
+            load_trusted_pubkeys,
             disconnect_peer,
             handshake,
             send_message,
@@ -312,11 +326,23 @@ fn main() {
                                 "reason": reason,
                             })
                         }
-                        EngineEvent::SasReady { peer_id, sas } => serde_json::json!({
+                        EngineEvent::SasReady {
+                            peer_id,
+                            sas,
+                            auto_trusted,
+                        } => serde_json::json!({
                             "type": "sas_ready",
                             "peer_id": peer_id,
                             "sas": sas,
+                            "auto_trusted": auto_trusted,
                         }),
+                        EngineEvent::PeerIdUpdated { old_id, new_id } => {
+                            serde_json::json!({
+                                "type": "peer_id_updated",
+                                "old_id": old_id,
+                                "new_id": new_id,
+                            })
+                        }
                         EngineEvent::TransferProgress { id, filename, progress } => {
                             serde_json::json!({
                                 "type": "transfer_progress",

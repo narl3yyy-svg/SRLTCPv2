@@ -162,10 +162,33 @@ fun ChatScreen() {
         showSnackbar("Contact removed")
     }
 
+    fun migratePeerId(oldId: String, newId: String) {
+        if (oldId == newId) return
+        val idx = peers.indexOf(oldId)
+        if (idx >= 0) peers[idx] = newId
+        peerVerified[newId] = peerVerified.remove(oldId) ?: false
+        if (activePeer == oldId) activePeer = newId
+        val cIdx = savedContacts.indexOfFirst { it.peerId == oldId }
+        if (cIdx >= 0) {
+            val c = savedContacts[cIdx]
+            savedContacts[cIdx] = c.copy(peerId = newId)
+            prefs.upsertContact(savedContacts[cIdx])
+        }
+    }
+
+    fun syncTrustedPubkeys(engine: uniffi.srltcp_core.SrltcpEngine) {
+        val pubkeys = savedContacts
+            .filter { it.verified && it.peerId.startsWith("peer:") }
+            .map { it.peerId.removePrefix("peer:").lowercase() }
+        if (pubkeys.isNotEmpty()) engine.loadTrustedPubkeys(pubkeys)
+    }
+
     LaunchedEffect(Unit) {
         displayName = prefs.displayName
         wanEndpoint = prefs.wanEndpoint
         val engine = SrltcpEngineHolder.getOrCreate()
+        val recvDir = File(context.filesDir, "received").apply { mkdirs() }
+        engine.setReceiveDir(recvDir.absolutePath)
         if (wanEndpoint.isNotBlank()) {
             engine.setWanEndpoint(wanEndpoint)
         }
@@ -174,6 +197,20 @@ fun ChatScreen() {
         prefs.loadContacts().forEach { c ->
             if (!peers.contains(c.peerId)) peers.add(c.peerId)
             peerVerified[c.peerId] = c.verified
+        }
+        syncTrustedPubkeys(engine)
+        savedContacts.filter { it.verified && it.qrPayload.isNotBlank() }.forEach { contact ->
+            scope.launch(Dispatchers.IO) {
+                val result = engine.connectAndVerify(contact.qrPayload)
+                withContext(Dispatchers.Main) {
+                    if (!result.sas.startsWith("error:")) {
+                        migratePeerId(contact.peerId, result.peerId)
+                        if (result.autoTrusted) peerVerified[result.peerId] = true
+                        if (!peers.contains(result.peerId)) peers.add(result.peerId)
+                        activePeer = result.peerId
+                    }
+                }
+            }
         }
     }
 
@@ -198,11 +235,23 @@ fun ChatScreen() {
                 if (activePeer == null) activePeer = id
                 showSnackbar("Peer connected — verify with QR + SAS")
             }
+            "peer_id_updated" -> {
+                val oldId = event.message
+                val newId = event.peerId
+                if (oldId != null && newId != null) migratePeerId(oldId, newId)
+            }
             "sas_ready" -> {
                 event.sas?.let { sas ->
-                    sasCode = sas
-                    sasPeerId = event.peerId
-                    showSasDialog = true
+                    val peer = event.peerId ?: return@let
+                    if (event.autoTrusted == true) {
+                        peerVerified[peer] = true
+                        activePeer = peer
+                        showSnackbar("Reconnected to trusted peer")
+                    } else {
+                        sasCode = sas
+                        sasPeerId = peer
+                        showSasDialog = true
+                    }
                 }
             }
             "peer_disconnected" -> event.peerId?.let { peers.remove(it) }
@@ -275,7 +324,11 @@ fun ChatScreen() {
         val peer = activePeer ?: return@rememberLauncherForActivityResult
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
-            val path = copyUriToCache(context, uri) ?: return@launch
+            val path = copyUriToCache(context, uri)
+            if (path == null) {
+                showSnackbar("Upload failed — could not read file")
+                return@launch
+            }
             val filename = File(path).name
             val result = withContext(Dispatchers.IO) {
                 SrltcpEngineHolder.getOrCreate().sendFile(peer, path)
@@ -338,7 +391,7 @@ fun ChatScreen() {
                     Column {
                         Text("SRLTCP", fontWeight = FontWeight.Bold)
                         Text(
-                            "v0.2.10 • ${if (engineOnline) "Online" else "Offline"} • bg active",
+                            "v0.2.11 • ${if (engineOnline) "Online" else "Offline"} • bg active",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -549,9 +602,24 @@ fun ChatScreen() {
                             val peer = result.peerId
                             if (!peers.contains(peer)) peers.add(peer)
                             activePeer = peer
-                            sasCode = result.sas
-                            sasPeerId = peer
-                            showSasDialog = true
+                            if (result.autoTrusted) {
+                                peerVerified[peer] = true
+                                val contact = SavedContact(
+                                    peerId = peer,
+                                    displayName = displayName.ifBlank { peer.take(12) },
+                                    verified = true,
+                                    qrPayload = qr,
+                                )
+                                prefs.upsertContact(contact)
+                                val idx = savedContacts.indexOfFirst { it.peerId == peer }
+                                if (idx >= 0) savedContacts[idx] = contact else savedContacts.add(contact)
+                                syncTrustedPubkeys(engine)
+                                showSnackbar("Reconnected to trusted peer")
+                            } else {
+                                sasCode = result.sas
+                                sasPeerId = peer
+                                showSasDialog = true
+                            }
                             showConnectSheet = false
                         }
                     }
@@ -572,10 +640,12 @@ fun ChatScreen() {
                         peerId = peerId,
                         displayName = displayName.ifBlank { peerId.take(20) },
                         verified = true,
+                        qrPayload = remoteQrInput.trim(),
                     )
                     prefs.upsertContact(contact)
                     val idx = savedContacts.indexOfFirst { it.peerId == peerId }
                     if (idx >= 0) savedContacts[idx] = contact else savedContacts.add(contact)
+                    syncTrustedPubkeys(SrltcpEngineHolder.getOrCreate())
                 }
                 showSasDialog = false
                 showSnackbar("Peer verified — secure channel established")
@@ -597,7 +667,7 @@ fun ChatScreen() {
 
     if (showSettingsSheet) {
         SettingsSheet(
-            version = "0.2.10",
+            version = "0.2.11",
             displayName = displayName,
             wanEndpoint = wanEndpoint,
             onDisplayNameChange = { name ->
@@ -969,9 +1039,12 @@ private suspend fun copyUriToCache(context: Context, uri: Uri): String? = withCo
         val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime ?: "") ?: "bin"
         val name = "upload_${System.currentTimeMillis()}.$ext"
         val out = File(context.cacheDir, name)
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            out.outputStream().use { output -> input.copyTo(output) }
+        val input = context.contentResolver.openInputStream(uri)
+            ?: return@withContext null
+        input.use { stream ->
+            out.outputStream().use { output -> stream.copyTo(output) }
         }
+        if (!out.exists() || out.length() == 0L) return@withContext null
         out.absolutePath
     } catch (_: Exception) {
         null
