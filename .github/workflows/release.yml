@@ -92,8 +92,14 @@ jobs:
 
       - name: Install Android SDK components
         run: |
-          yes | sdkmanager --licenses || true
-          sdkmanager "platforms;android-35" "ndk;27.2.12479018" "platform-tools"
+          sdkmanager --licenses < <(echo y; echo y; echo y; echo y; echo y) || true
+          sdkmanager "platform-tools" "platforms;android-35"
+          for attempt in 1 2 3; do
+            sdkmanager "ndk;27.2.12479018" && break
+            echo "NDK install attempt $attempt failed, retrying..."
+            sleep 15
+          done
+          test -d "$ANDROID_HOME/ndk/27.2.12479018" || test -d "$ANDROID_NDK_HOME"
 
       - name: Build APK
         run: ./scripts/build-android.sh --no-cleanup
@@ -135,6 +141,8 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
+          make_latest: true
+          fail_on_unmatched_files: false
           generate_release_notes: true
           body: |
             ## SRLTCP ${{ github.ref_name }}
