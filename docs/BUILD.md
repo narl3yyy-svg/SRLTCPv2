@@ -1,24 +1,32 @@
-# Build Instructions — SRLTCP v0.2.4
+# Build Instructions — SRLTCP v0.2.5
 
 ## Prerequisites
 
 | Component | Requirement |
 |-----------|-------------|
-| Rust | 1.85+ (auto-installed by `run.sh`) |
+| Rust | 1.85+ (only needed for `--rebuild` or developer builds) |
 | Desktop Linux | `webkit2gtk-4.1`, `gtk3`, `libudev-dev`, `base-devel` |
 | Android SDK | API 35 (`sdkmanager "platforms;android-35"`) |
 | Android NDK | r27+ (`sdkmanager "ndk;27.2.12479018"`) |
 | JDK | **17 only** — JDK 21+ breaks Gradle |
 | cargo-ndk | `cargo install cargo-ndk` |
 
-## Desktop
+## Desktop (End Users)
 
 ```bash
-./run.sh                              # Build (first run) + launch
-cargo build --release -p srltcp-desktop   # Manual rebuild
+./run.sh          # Linux/macOS — downloads prebuilt, no compile
+run.bat           # Windows
 ```
 
-Ctrl+C triggers graceful shutdown (releases serial ports and QUIC).
+Launchers use prebuilt binaries from GitHub Releases. Compile only when needed:
+
+```bash
+./run.sh --rebuild                              # Build + launch
+cargo build --release -p srltcp-desktop         # Manual rebuild
+./scripts/build-desktop.sh                      # Stage prebuilt in dist/
+```
+
+Ctrl+C or closing the window triggers graceful shutdown (releases serial ports and QUIC).
 
 ## Android — Recommended
 
@@ -30,10 +38,10 @@ Ctrl+C triggers graceful shutdown (releases serial ports and QUIC).
 
 This script:
 1. Auto-detects JDK 17, Android SDK, and NDK
-2. Cross-compiles `libsrltcp_core.so` for 3 ABIs
+2. Cross-compiles `libsrltcp_core.so` for 3 ABIs (android feature, no serialport)
 3. Generates UniFFI Kotlin bindings
 4. Runs `./gradlew assembleDebug`
-5. Copies APK to `dist/SRLTCPv2-0.2.4.apk`
+5. Copies APK to `dist/SRLTCPv2-0.2.5.apk`
 6. Cleans Gradle caches automatically
 
 ### APK only (jniLibs already built)
@@ -54,7 +62,7 @@ cd android
 ### Install
 
 ```bash
-adb install dist/SRLTCPv2-0.2.4.apk
+adb install dist/SRLTCPv2-0.2.5.apk
 ```
 
 ## Cleanup
@@ -84,9 +92,9 @@ Pushing a version tag triggers `.github/workflows/release.yml`, which builds and
 
 ```bash
 # Bump version in Cargo.toml, commit, then:
-git tag -a v0.2.4 -m "SRLTCP v0.2.4"
+git tag -a v0.2.5 -m "SRLTCP v0.2.5"
 git push origin main
-git push origin v0.2.4
+git push origin v0.2.5
 ```
 
 Manual fallback (local artifacts in `dist/`):
@@ -100,9 +108,12 @@ Manual fallback (local artifacts in `dist/`):
 ## Rust Core
 
 ```bash
-cargo check -p srltcp-core       # Fast check
+cargo check -p srltcp-core       # Fast check (desktop features)
 cargo test -p srltcp-core        # Run tests
 cargo build -p srltcp-core       # Library only
+
+# Android bindgen host build (no libudev required):
+cargo build -p srltcp-core --no-default-features --features android
 ```
 
 ## Troubleshooting
@@ -113,6 +124,8 @@ cargo build -p srltcp-core       # Library only
 | `Plugin compose not found` | Ensure `android/build.gradle.kts` has compose plugin |
 | `ANDROID_NDK_HOME` missing | `sdkmanager "ndk;27.2.12479018"` |
 | `Missing native libs` | Run full `./scripts/build-android.sh` |
+| `libudev` not found (CI/Android bindgen) | Fixed in v0.2.5 via android feature gate |
 | Compose BOM resolution error | BOM pinned to `2024.10.01` in `app/build.gradle.kts` |
 | Port 9473 in use | `./cleanup.sh` |
 | Tauri webkit error | Install `webkit2gtk-4.1-dev` |
+| `run.sh` says no prebuilt | Download from Releases or use `--rebuild` |

@@ -10,7 +10,7 @@ description = "SRLTCP v0.2.0 desktop application (Tauri v2)"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-srltcp-core = { path = "../../core" }
+srltcp-core = { path = "../../core", features = ["desktop"] }
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"

@@ -1,6 +1,6 @@
 # User Guide
 
-Using SRLTCP v0.2.0 for secure peer-to-peer messaging.
+Using SRLTCP v0.2.5 for secure peer-to-peer messaging.
 
 ## Getting Started
 
@@ -9,56 +9,51 @@ Using SRLTCP v0.2.0 for secure peer-to-peer messaging.
 1. Clone the repository to your desktop
 2. Open a terminal in the `SRLTCPv2` folder
 3. Run `./run.sh` (Linux/macOS) or `run.bat` (Windows)
-4. The app window opens — you're ready to connect
+4. The app window opens — no compilation required
 
-First launch takes a few minutes to compile. Subsequent launches are instant.
+The launcher downloads a prebuilt binary from GitHub Releases. Use `./run.sh --rebuild` only if you are developing from source.
 
 ### Android
 
-1. Build and install the APK (see [BUILD.md](BUILD.md))
+1. Download `SRLTCPv2-0.2.5.apk` from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest) or build locally (see [BUILD.md](BUILD.md))
 2. Open SRLTCP — the background service starts automatically
 3. A notification appears: "Listening for peers..."
 4. You can safely swipe the app away or press Home
 
 ## Connecting to a Peer
 
-### Method 1: QR Code + SAS (Recommended)
+### QR Code + SAS (Required)
 
-1. **Share identity:** Click "Copy QR Payload" in the sidebar. Send it to your peer (or display as QR in a future update).
-2. **Connect:** Use serial or LAN/WAN connection (see below).
-3. **Verify:** Paste your peer's QR payload and click "Handshake + SAS".
+SRLTCP v0.2.5 uses QR-based discovery only — there is no manual IP connect option.
+
+1. **Share identity:** Copy or display your QR code. Send the payload to your peer.
+2. **Wait for connection:** When a peer connects, they appear in the Peers list.
+3. **Verify:** Paste your peer's QR payload and click **Verify Peer (QR + SAS)**.
 4. **Compare:** Both sides see a 6-digit code. Verify verbally or through a known channel.
-5. **Trust:** If codes match, the connection is authenticated.
+5. **Trust:** If codes match, the connection is authenticated and messaging unlocks.
 
-### Method 2: Serial Cable
+### Serial Cable (Desktop, Optional)
 
-1. Connect a serial/USB cable between two devices
-2. Select the port from the dropdown (e.g., `/dev/ttyUSB0` or `COM3`)
-3. Click "Connect Serial"
-4. Complete SAS verification
+1. Connect a serial/USB cable between two machines
+2. Open **Add Peer** → **Serial cable (optional)**
+3. Select the port (e.g., `/dev/ttyUSB0` or `COM3`) and click **Connect Serial**
+4. Complete SAS verification with QR exchange
 
 Supported baud rates: 115200 (default), 230400, 460800, 921600.
 
-### Method 3: LAN/WAN (QUIC)
-
-1. Ensure both devices are on the same network (or port-forward 9473)
-2. Enter the peer's IP address and port (e.g., `192.168.1.10:9473`)
-3. Click "Connect LAN/WAN"
-4. Complete SAS verification
-
 ## Sending Messages
 
-1. Select a connected peer from the sidebar
+1. Select a connected, **verified** peer from the sidebar
 2. Type your message in the input field
 3. Press Enter or click Send
-4. Messages support full Unicode including emojis 🔒
+4. Messages support full Unicode including emojis
 
 ## File Transfer
 
-1. Select a peer
-2. Drag and drop a file or folder into the chat area (desktop)
+1. Select a verified peer
+2. Click the file button and choose a file (desktop)
 3. Transfer progress appears as a progress bar
-4. If interrupted, transfer resumes from the last acknowledged chunk
+4. Images and videos display inline in chat when supported
 
 ## Voice and Video Calls
 
@@ -83,11 +78,7 @@ SRLTCP on Android is designed to stay connected:
 - Press **Ctrl+C** in the terminal running `run.sh`
 - Or close the app window (triggers graceful shutdown)
 
-Both methods:
-- Close serial ports
-- Disconnect QUIC sessions
-- Release network ports
-- Clean up resources
+Both methods close serial ports, disconnect QUIC sessions, release network ports, and clean up resources.
 
 ### Full Cleanup
 
@@ -108,9 +99,9 @@ Settings → Apps → SRLTCP → Force Stop
 
 | Problem | Solution |
 |---------|----------|
-| App won't start | Check `cargo` is installed; run `run.sh` to auto-install |
+| `run.sh` says no prebuilt | Install from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases) or use `--rebuild` |
+| No peers appear | Share your QR; ensure both devices allow UDP/TCP 9473 through firewall |
 | No serial ports listed | Check cable connection; Linux: add user to `dialout` group |
-| Can't connect via LAN | Check firewall allows UDP/TCP 9473; verify IP address |
 | SAS codes don't match | Possible MITM — do not trust the connection; retry |
 | Port already in use | Run `./cleanup.sh` then restart |
 | Android service stopped | Disable battery optimization for SRLTCP |

@@ -1,12 +1,12 @@
 # SRLTCPv2
 
-**Secure Reliable LAN/TCP/Serial P2P Messaging — v0.2.4**
+**Secure Reliable LAN/TCP/Serial P2P Messaging — v0.2.5**
 
 Rust core + Tauri desktop + Android foreground service. COBS/CRC serial, QUIC networking, hybrid post-quantum crypto, file transfer, and voice/video calls.
 
 ## Quick Start (Prebuilt — No Compiler Required)
 
-Clone the repo and run the launcher. It automatically downloads the matching prebuilt binary from [GitHub Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases).
+Clone the repo and run the launcher. It downloads the matching prebuilt binary from [GitHub Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases) — no Rust or build tools needed.
 
 ### Desktop
 
@@ -22,7 +22,7 @@ cd SRLTCPv2
 run.bat           # Windows
 ```
 
-That's it — no Rust, no build tools, no compilation. Press **Ctrl+C** for graceful shutdown.
+Press **Ctrl+C** or close the window for graceful shutdown. Use `--rebuild` only if you want to compile from source.
 
 | Platform | Prebuilt asset (auto-downloaded) |
 |----------|----------------------------------|
@@ -31,14 +31,14 @@ That's it — no Rust, no build tools, no compilation. Press **Ctrl+C** for grac
 | macOS Intel | `srltcp-desktop-macos-x86_64` |
 | Windows x86_64 | `srltcp-desktop-windows-x86_64.exe` |
 
-**Optional flags:** `--rebuild` forces compile from source; `--no-prebuilt` skips download.
+**Flags:** `--rebuild` compiles from source; `--no-prebuilt` skips GitHub download (uses local `dist/` only).
 
 ### Android
 
-Download `SRLTCPv2-0.2.4.apk` from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest) and install:
+Download `SRLTCPv2-0.2.5.apk` from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest) and install:
 
 ```bash
-adb install SRLTCPv2-0.2.4.apk
+adb install SRLTCPv2-0.2.5.apk
 ```
 
 Or build from source (requires NDK, SDK, JDK 17):
@@ -46,6 +46,15 @@ Or build from source (requires NDK, SDK, JDK 17):
 ```bash
 ./scripts/build-android.sh
 ```
+
+## Connecting Peers (QR + SAS)
+
+v0.2.5 uses **QR-only** peer discovery — no manual IP entry:
+
+1. Share your QR code (desktop sidebar or Android connect sheet)
+2. Wait for the peer to connect
+3. Paste their QR payload and run **Verify Peer (QR + SAS)**
+4. Compare the 6-digit SAS code out-of-band before trusting
 
 ## Building from Source (Developers)
 
@@ -62,7 +71,7 @@ See [docs/BUILD.md](docs/BUILD.md) for full instructions. Desktop requires Rust 
 | Feature | Desktop | Android |
 |---------|---------|---------|
 | E2EE messaging | ✓ | ✓ |
-| QUIC P2P | ✓ | ✓ |
+| QUIC P2P (QR discovery) | ✓ | ✓ |
 | Serial transport | ✓ | — |
 | File transfer + progress | ✓ | ✓ |
 | Voice / video calls | ✓ | ✓ |
@@ -98,8 +107,9 @@ Every version tag (`v*`) triggers GitHub Actions to build and publish:
 - Android APK (`SRLTCPv2-<version>.apk`)
 
 ```bash
-git tag -a v0.2.4 -m "SRLTCP v0.2.4"
-git push origin v0.2.4
+git tag -a v0.2.5 -m "SRLTCP v0.2.5"
+git push origin main
+git push origin v0.2.5
 ```
 
 ## Cleanup

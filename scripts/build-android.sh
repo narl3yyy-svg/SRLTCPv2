@@ -75,10 +75,10 @@ if [[ "$SKIP_NATIVE" == false ]]; then
 
     cd "$CORE_DIR"
     cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 \
-        -o "$JNI_DIR" build --release
+        -o "$JNI_DIR" build --release --no-default-features --features android
 
     echo "[android] Generating UniFFI Kotlin bindings..."
-    cargo build --release -p srltcp-core
+    cargo build --release -p srltcp-core --no-default-features --features android
     cargo run --release --bin uniffi-bindgen -- generate \
         --language kotlin \
         --out-dir "$JAVA_OUT" \

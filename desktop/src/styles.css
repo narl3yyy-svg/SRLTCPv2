@@ -90,11 +90,20 @@ body {
 .panel.active { display: block; }
 
 .panel h2 {
-  font-size: 0.7rem;
+  font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--text-secondary);
+  color: var(--text-primary);
   margin-bottom: 10px;
+  font-weight: 700;
+}
+
+.field-label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
 }
 
 .panel-header-row {
@@ -119,15 +128,21 @@ body {
 }
 
 .qr-box {
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border);
+  background: #f4f6fb;
+  border: 1px solid #c8d0e0;
   border-radius: var(--radius-sm);
-  padding: 10px;
+  padding: 12px;
   word-break: break-all;
-  font-size: 0.65rem;
-  max-height: 72px;
-  overflow: hidden;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  max-height: 96px;
+  overflow-y: auto;
   margin-bottom: 8px;
+}
+
+.qr-box code {
+  color: #1a1f2e;
+  font-family: 'SF Mono', 'Fira Code', monospace;
 }
 
 .listen-badge {
@@ -149,7 +164,12 @@ body {
   animation: pulse 1.5s infinite;
 }
 
-.secure-hint { color: var(--success); margin-bottom: 10px; }
+.secure-hint {
+  color: #7ee8c8;
+  margin-bottom: 12px;
+  font-style: normal;
+  font-weight: 500;
+}
 
 textarea {
   width: 100%;
@@ -184,28 +204,24 @@ textarea:focus { border-color: var(--accent); }
   color: var(--danger);
 }
 
-.advanced-section {
-  margin-top: 16px;
+.serial-section {
+  margin-top: 20px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 10px;
+  padding: 12px;
+  background: var(--bg-tertiary);
 }
 
-.advanced-section summary {
+.serial-section summary {
   cursor: pointer;
-  font-size: 0.75rem;
-  color: var(--text-secondary);
+  font-size: 0.78rem;
+  color: var(--text-primary);
   font-weight: 600;
 }
 
-.warning-box {
-  margin: 10px 0;
-  padding: 10px;
-  background: rgba(253, 203, 110, 0.1);
-  border: 1px solid var(--warning);
-  border-radius: var(--radius-sm);
-  font-size: 0.72rem;
-  color: var(--warning);
+.serial-section .hint {
+  margin: 8px 0 10px;
+  font-style: normal;
 }
 
 .verified-badge { color: var(--success); margin-right: 4px; font-weight: 700; }
@@ -380,7 +396,13 @@ input:focus, select:focus { border-color: var(--accent); }
   border-radius: 8px;
 }
 
-.hint { font-size: 0.72rem; color: var(--text-secondary); font-style: italic; margin-top: 8px; }
+.hint {
+  font-size: 0.76rem;
+  color: #a8b0c4;
+  font-style: italic;
+  margin-top: 8px;
+  line-height: 1.4;
+}
 .hidden { display: none !important; }
 
 /* ── Chat area ───────────────────────────────────── */

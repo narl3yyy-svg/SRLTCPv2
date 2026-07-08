@@ -6,10 +6,10 @@ use bytes::{Bytes, BytesMut};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, info, warn};
 
-#[cfg(not(target_os = "android"))]
+#[cfg(all(not(target_os = "android"), feature = "desktop"))]
 use std::time::Duration;
 
-#[cfg(not(target_os = "android"))]
+#[cfg(all(not(target_os = "android"), feature = "desktop"))]
 use serialport::SerialPort;
 
 use super::frame::Frame;
@@ -50,7 +50,7 @@ pub struct SerialTransport {
     running: Arc<RwLock<bool>>,
     event_tx: mpsc::Sender<SerialEvent>,
     write_tx: mpsc::Sender<Bytes>,
-    #[cfg(not(target_os = "android"))]
+    #[cfg(all(not(target_os = "android"), feature = "desktop"))]
     port: Arc<Mutex<Option<Box<dyn SerialPort>>>>,
 }
 
@@ -64,7 +64,7 @@ impl SerialTransport {
             running: Arc::new(RwLock::new(false)),
             event_tx,
             write_tx,
-            #[cfg(not(target_os = "android"))]
+            #[cfg(all(not(target_os = "android"), feature = "desktop"))]
             port: Arc::new(Mutex::new(None)),
         };
 
@@ -72,12 +72,12 @@ impl SerialTransport {
     }
 
     pub async fn start(&self) -> Result<(), String> {
-        #[cfg(target_os = "android")]
+        #[cfg(not(all(not(target_os = "android"), feature = "desktop")))]
         {
-            return Err("serial transport is not available on Android".to_string());
+            return Err("serial transport is not available on this platform".to_string());
         }
 
-        #[cfg(not(target_os = "android"))]
+        #[cfg(all(not(target_os = "android"), feature = "desktop"))]
         {
             let mut running = self.running.write().await;
             if *running {
@@ -129,7 +129,7 @@ impl SerialTransport {
 
         info!(port = %self.config.port_name, "serial transport shutting down");
 
-        #[cfg(not(target_os = "android"))]
+        #[cfg(all(not(target_os = "android"), feature = "desktop"))]
         {
             let mut guard = self.port.lock().await;
             if let Some(port) = guard.take() {
@@ -219,17 +219,17 @@ fn extract_frame(buf: &mut BytesMut) -> Option<Vec<u8>> {
 
 /// List available serial ports.
 pub fn list_ports() -> Vec<String> {
-    #[cfg(target_os = "android")]
-    {
-        Vec::new()
-    }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(all(not(target_os = "android"), feature = "desktop"))]
     {
         serialport::available_ports()
             .unwrap_or_default()
             .into_iter()
             .map(|p| p.port_name)
             .collect()
+    }
+    #[cfg(not(all(not(target_os = "android"), feature = "desktop")))]
+    {
+        Vec::new()
     }
 }
 

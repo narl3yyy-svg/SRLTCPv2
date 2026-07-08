@@ -110,7 +110,6 @@ fun ChatScreen() {
     var sasCode by remember { mutableStateOf("") }
     var sasPeerId by remember { mutableStateOf<String?>(null) }
     var remoteQrInput by remember { mutableStateOf("") }
-    var ipInput by remember { mutableStateOf("") }
     val peerVerified = remember { mutableStateMapOf<String, Boolean>() }
     val listState = rememberLazyListState()
 
@@ -275,7 +274,7 @@ fun ChatScreen() {
                     Column {
                         Text("SRLTCP", fontWeight = FontWeight.Bold)
                         Text(
-                            "v0.2.4 • ${if (engineOnline) "Online" else "Offline"} • bg active",
+                            "v0.2.5 • ${if (engineOnline) "Online" else "Offline"} • bg active",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -463,8 +462,6 @@ fun ChatScreen() {
             qrPayload = qrPayload,
             remoteQr = remoteQrInput,
             onRemoteQrChange = { remoteQrInput = it },
-            ipAddress = ipInput,
-            onIpChange = { ipInput = it },
             onDismiss = { showConnectSheet = false },
             onVerify = {
                 scope.launch(Dispatchers.IO) {
@@ -475,15 +472,6 @@ fun ChatScreen() {
                         return@launch
                     }
                     var peer = activePeer
-                    val ip = ipInput.trim()
-                    if (ip.isNotEmpty()) {
-                        engine.connectQuic(ip)
-                        peer = "quic:$ip"
-                        withContext(Dispatchers.Main) {
-                            if (!peers.contains(peer)) peers.add(peer!!)
-                            activePeer = peer
-                        }
-                    }
                     if (peer == null) {
                         val connected = engine.connectedPeers()
                         peer = connected.firstOrNull()
@@ -539,8 +527,6 @@ fun ConnectPeerSheet(
     qrPayload: String,
     remoteQr: String,
     onRemoteQrChange: (String) -> Unit,
-    ipAddress: String,
-    onIpChange: (String) -> Unit,
     onDismiss: () -> Unit,
     onVerify: () -> Unit,
 ) {
@@ -572,14 +558,11 @@ fun ConnectPeerSheet(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Verify Peer (QR + SAS)")
             }
-            Spacer(modifier = Modifier.height(16.dp))
-            Text("Advanced — IP connect (less secure)", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
-            OutlinedTextField(
-                value = ipAddress,
-                onValueChange = onIpChange,
-                label = { Text("Peer IP (optional)") },
-                placeholder = { Text("192.168.1.10:9473") },
-                modifier = Modifier.fillMaxWidth(),
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                "Peers connect via QR exchange — no manual IP entry needed.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }

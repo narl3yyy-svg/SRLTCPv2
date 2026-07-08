@@ -30,8 +30,9 @@ USE_PREBUILT=true
 
 usage() {
     echo "Usage: $0 [--rebuild] [--no-prebuilt]"
-    echo "  --rebuild      Force recompile from source"
-    echo "  --no-prebuilt  Skip prebuilt binary lookup"
+    echo "  (default)      Launch prebuilt binary (local or downloaded from Releases)"
+    echo "  --rebuild      Compile from source, then launch"
+    echo "  --no-prebuilt  Skip prebuilt download (use local dist/ only)"
 }
 
 for arg in "$@"; do
@@ -185,9 +186,8 @@ check_macos_deps() {
 }
 
 find_binary() {
-    local platform built prebuilt cached
+    local platform prebuilt cached
 
-    built="target/release/srltcp-desktop"
     platform="$(platform_tag)"
     prebuilt="dist/bin/${platform}/srltcp-desktop"
     cached="dist/bin/srltcp-desktop"
@@ -206,11 +206,6 @@ find_binary() {
             echo "$cached"
             return 0
         fi
-    fi
-
-    if [[ -f "$built" && -x "$built" ]]; then
-        echo "$built"
-        return 0
     fi
 
     echo ""
@@ -258,7 +253,16 @@ build_from_source() {
 }
 
 resolve_binary() {
-    local bin
+    local bin platform
+    platform="$(platform_tag)"
+
+    if [[ "$FORCE_REBUILD" == true ]]; then
+        ensure_rust
+        build_from_source
+        echo "target/release/srltcp-desktop"
+        return 0
+    fi
+
     bin="$(find_binary)"
     if [[ -n "$bin" ]]; then
         echo "$bin"
@@ -271,9 +275,10 @@ resolve_binary() {
         return 0
     fi
 
-    ensure_rust
-    build_from_source
-    echo "target/release/srltcp-desktop"
+    err "No prebuilt binary found for ${platform}."
+    err "Download v${VERSION} from: https://github.com/${REPO}/releases/tag/v${VERSION}"
+    err "Or compile from source: $0 --rebuild"
+    exit 1
 }
 
 check_stale() {

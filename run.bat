@@ -33,7 +33,7 @@ if exist "%PID_FILE%" (
     del "%PID_FILE%"
 )
 
-set BINARY=target\release\srltcp-desktop.exe
+set BINARY=
 set PREBUILT=dist\bin\%PLATFORM%\srltcp-desktop.exe
 set FORCE_REBUILD=0
 set USE_PREBUILT=1
@@ -49,10 +49,6 @@ if "%USE_PREBUILT%"=="1" (
         echo [SRLTCP] Using local prebuilt binary.
         goto :launch
     )
-    if exist "%BINARY%" (
-        echo [SRLTCP] Binary found - skipping download/build.
-        goto :launch
-    )
     echo [SRLTCP] Trying prebuilt binary for %PLATFORM%...
     if not exist "dist\bin\%PLATFORM%" mkdir "dist\bin\%PLATFORM%"
     curl -fsSL --retry 2 -o "%PREBUILT%" "https://github.com/%REPO%/releases/download/v%VERSION%/srltcp-desktop-%PLATFORM%.exe"
@@ -62,18 +58,17 @@ if "%USE_PREBUILT%"=="1" (
         goto :launch
     )
     del "%PREBUILT%" 2>nul
-    echo [SRLTCP] Prebuilt not available - will try local build.
 )
 
-if exist "%BINARY%" (
-    echo [SRLTCP] Binary found - skipping build.
-    goto :launch
-)
+echo [SRLTCP] ERROR: No prebuilt binary found for %PLATFORM%.
+echo [SRLTCP] Download v%VERSION% from: https://github.com/%REPO%/releases/tag/v%VERSION%
+echo [SRLTCP] Or compile from source: run.bat --rebuild
+exit /b 1
 
 :build
 where cargo >nul 2>&1
 if %ERRORLEVEL% neq 0 (
-    echo [SRLTCP] Rust not found. Install from https://rustup.rs or use a release with prebuilt binaries.
+    echo [SRLTCP] Rust not found. Install from https://rustup.rs
     exit /b 1
 )
 

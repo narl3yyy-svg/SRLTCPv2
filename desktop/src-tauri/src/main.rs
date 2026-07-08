@@ -1,4 +1,4 @@
-//! SRLTCP v0.2.4 Desktop — Tauri v2 backend with graceful shutdown.
+//! SRLTCP v0.2.5 Desktop — Tauri v2 backend with graceful shutdown.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -58,35 +58,16 @@ async fn connect_serial(
 }
 
 #[tauri::command]
-async fn connect_quic(state: State<'_, AppState>, addr: String) -> Result<String, String> {
-    state.engine.lock().await.connect_quic(&addr).await?;
-    Ok(format!("quic:{addr}"))
-}
-
-#[tauri::command]
 async fn connect_and_verify(
     state: State<'_, AppState>,
     remote_qr: String,
-    addr: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let engine = state.engine.lock().await;
-    let peer_id = if let Some(ref address) = addr {
-        if !address.is_empty() {
-            engine.connect_quic(address).await?;
-            format!("quic:{address}")
-        } else {
-            return Err("address required for outbound connection".into());
-        }
-    } else {
-        let peers = engine.connected_peers().await;
-        peers
-            .first()
-            .cloned()
-            .ok_or_else(|| {
-                "No peer connected yet. Share your QR and wait for a peer, or use Advanced IP connect."
-                    .to_string()
-            })?
-    };
+    let peers = engine.connected_peers().await;
+    let peer_id = peers.first().cloned().ok_or_else(|| {
+        "No peer connected yet. Share your QR code and wait for a peer to connect, then paste their QR to verify."
+            .to_string()
+    })?;
 
     let sas = engine.handshake_with(&peer_id, &remote_qr).await?;
     Ok(serde_json::json!({ "peer_id": peer_id, "sas": sas }))
@@ -199,7 +180,7 @@ async fn run_auto_peer_test(engine: Arc<Mutex<P2pEngine>>) -> Result<(), String>
     let remote_qr = std::env::var("SRLTCP_TEST_QR")
         .unwrap_or_else(|_| "AjTqU9MmHMBy3dpi6xmxRTloSwOTD46pCpIN55kWHq3Z".into());
     let message = std::env::var("SRLTCP_TEST_MSG")
-        .unwrap_or_else(|_| "SRLTCPv2-0.2.4 desktop auto-test message".into());
+        .unwrap_or_else(|_| "SRLTCPv2-0.2.5 desktop auto-test message".into());
 
     let client_port: u16 = std::env::var("SRLTCP_CLIENT_PORT")
         .ok()
@@ -254,7 +235,6 @@ fn main() {
             get_qr_image,
             list_serial_ports,
             connect_serial,
-            connect_quic,
             connect_and_verify,
             disconnect_peer,
             handshake,

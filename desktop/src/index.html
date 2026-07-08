@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SRLTCP v0.2.4</title>
+  <title>SRLTCP v0.2.5</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -13,7 +13,7 @@
         <div class="brand-icon">S</div>
         <div>
           <h1>SRLTCP</h1>
-          <span class="version">v0.2.4</span>
+          <span class="version">v0.2.5</span>
         </div>
       </header>
 
@@ -39,24 +39,17 @@
 
         <section id="panel-connect" class="panel">
           <h2>Connect Securely</h2>
-          <p class="hint secure-hint">Paste the peer's QR code to verify their identity via SAS.</p>
-          <textarea id="remote-qr" rows="3" placeholder="Paste peer QR payload here…"></textarea>
+          <p class="hint secure-hint">Scan or paste the peer's QR code, then verify with SAS.</p>
+          <label class="field-label" for="remote-qr">Peer QR code</label>
+          <textarea id="remote-qr" rows="4" placeholder="Paste peer QR payload here…"></textarea>
           <button class="btn primary-btn" id="verify-secure">
             <span class="btn-icon">🔒</span> Verify Peer (QR + SAS)
           </button>
-          <p class="hint" id="connect-hint">If a peer already connected to you, verification starts immediately.</p>
+          <p class="hint" id="connect-hint">Share your QR first — when a peer connects, paste their QR and verify.</p>
 
-          <details class="advanced-section">
-            <summary>Advanced — IP connect (less secure)</summary>
-            <div class="warning-box">
-              ⚠️ Raw IP connections skip visual QR exchange. Always verify the SAS code with your peer out-of-band.
-            </div>
-            <div class="form-group">
-              <label>Peer IP address</label>
-              <input type="text" id="quic-addr" placeholder="192.168.1.10:9473" />
-            </div>
-            <button class="btn warn-btn" id="connect-quic">Connect via IP</button>
-            <hr class="divider" />
+          <details class="serial-section">
+            <summary>Serial cable (optional)</summary>
+            <p class="hint">Direct USB/serial link between two machines.</p>
             <div class="form-group">
               <label>Serial Port</label>
               <select id="serial-port"></select>

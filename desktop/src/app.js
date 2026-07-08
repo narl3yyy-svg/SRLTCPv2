@@ -1,4 +1,4 @@
-// SRLTCP v0.2.4 Desktop Frontend
+// SRLTCP v0.2.5 Desktop Frontend
 
 const invoke = window.__TAURI__?.core?.invoke
   ?? (async (cmd, args) => { console.log(`[mock] ${cmd}`, args); return null; });
@@ -312,7 +312,7 @@ function renderTransfers() {
     </div>`).join('');
 }
 
-async function runVerification(useIp) {
+async function runVerification() {
   const qr = document.getElementById('remote-qr').value.trim();
   if (!qr) {
     toast('Paste the peer QR code first', true);
@@ -320,14 +320,9 @@ async function runVerification(useIp) {
     return;
   }
 
-  const addr = useIp ? document.getElementById('quic-addr').value.trim() : null;
-
   try {
     toast('Running secure handshake…');
-    const result = await invoke('connect_and_verify', {
-      remoteQr: qr,
-      addr: addr || null,
-    });
+    const result = await invoke('connect_and_verify', { remoteQr: qr });
     if (result.peer_id && !peers.includes(result.peer_id)) addPeer(result.peer_id);
     selectPeer(result.peer_id);
     showSasModal(result.peer_id, result.sas);
@@ -342,23 +337,9 @@ document.getElementById('copy-qr').onclick = async () => {
   toast('QR payload copied — share with your peer');
 };
 
-document.getElementById('verify-secure').onclick = () => runVerification(false);
+document.getElementById('verify-secure').onclick = () => runVerification();
 document.getElementById('verify-banner-btn').onclick = () => {
   document.querySelector('[data-panel="connect"]').click();
-};
-
-document.getElementById('connect-quic').onclick = async () => {
-  const addr = document.getElementById('quic-addr').value.trim();
-  const qr = document.getElementById('remote-qr').value.trim();
-  if (!addr) { toast('Enter peer IP address', true); return; }
-  try {
-    const peerId = await invoke('connect_quic', { addr });
-    addPeer(peerId);
-    selectPeer(peerId);
-    toast(`Connected via IP — now verify with SAS`);
-    if (qr) await runVerification(false);
-    else toast('Paste peer QR and click Verify to complete SAS check', true);
-  } catch (e) { toast(`QUIC error: ${e}`, true); }
 };
 
 document.getElementById('connect-serial').onclick = async () => {
