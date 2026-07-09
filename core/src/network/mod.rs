@@ -1,10 +1,10 @@
-//! Network transports: QUIC (LAN/WAN) and relay fallback.
+//! Network transports: iroh (NAT traversal) + optional serial.
 
+pub mod iroh_transport;
 pub mod local;
-pub mod quic;
 
-pub use local::{detect_lan_ip, local_endpoint};
-pub use quic::{QuicError, QuicTransport};
+pub use iroh_transport::{IrohError, IrohTransport, SRLTCP_ALPN};
+pub use local::detect_lan_ip;
 
 /// Transport type selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "SRLTCP v0.2.12 core library — crypto, serial, P2P networking"
+description = "SRLTCP v0.2.13 core library — crypto, serial, P2P networking"
 
 [lib]
 crate-type = ["lib", "cdylib", "staticlib"]
@@ -46,10 +46,9 @@ hkdf = "0.12"
 # Post-quantum ML-KEM-768
 ml-kem = { version = "0.3", features = ["getrandom"] }
 
-# Networking
-quinn = "0.11"
-rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std"] }
-rcgen = "0.13"
+# Networking — iroh NAT traversal (relay + hole punch)
+iroh = "1"
+iroh-tickets = "1"
 
 # QR code generation
 qrcode = "0.14"
@@ -66,6 +65,9 @@ serialport = { version = "4.6", optional = true }
 
 # UniFFI bindings for Android/Kotlin
 uniffi = { version = "0.28", features = ["cli"] }
+double-ratchet-2 = "0.4.0-pre.2"
+hashbrown = "0.15"
+zeroize = "1"
 
 [[bin]]
 name = "uniffi-bindgen"
@@ -78,3 +80,10 @@ uniffi = { version = "0.28", features = ["build"] }
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3.14"
+criterion = "0.5"
+uuid = { workspace = true }
+chrono = { workspace = true }
+
+[[bench]]
+name = "ratchet_bench"
+harness = false

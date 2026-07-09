@@ -37,7 +37,8 @@ interface SrltcpEngine {
     string public_key_hex();
     string qr_payload();
     string qr_image_data_url();
-    string? local_endpoint();
+    string? iroh_ticket();
+    string? local_endpoint(); // deprecated alias for iroh_ticket
     ConnectResult connect_and_verify(string remote_qr);
     void confirm_peer_trusted(string peer_id);
     boolean is_peer_trusted(string peer_id);
@@ -46,9 +47,7 @@ interface SrltcpEngine {
 
     void start(u16 quic_port);
     void connect_serial(string port_name, u32 baud_rate);
-    void connect_quic(string addr);
-    void set_wan_endpoint(string? endpoint);
-    string? wan_endpoint();
+    void connect_quic(string addr); // iroh ticket dial
     void load_trusted_pubkeys(sequence<string> pubkeys);
     void set_receive_dir(string path);
     void disconnect_peer(string peer_id);

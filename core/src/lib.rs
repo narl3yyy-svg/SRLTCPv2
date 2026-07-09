@@ -10,10 +10,10 @@ pub mod transfer;
 pub mod webrtc;
 
 pub use crypto::{
-    compute_sas, parse_qr_payload, DoubleRatchet, HybridKeyExchange, Identity, ParsedQr,
+    compute_sas, parse_qr_payload, HybridKeyExchange, Identity, ParsedQr, SessionRatchet,
 };
 pub use qr_image::qr_png_data_url;
-pub use network::{QuicTransport, TransportKind};
+pub use network::{IrohTransport, TransportKind};
 pub use p2p::{EngineEvent, P2pEngine};
 pub use protocol::{ChatMessage, Envelope, MessageType};
 pub use serial::{list_ports, Frame, ReliabilityLayer, SerialConfig, SerialTransport};
@@ -31,10 +31,8 @@ use tokio::sync::Mutex;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DEFAULT_QUIC_PORT: u16 = 9473;
 
-/// Install the aws-lc-rs TLS crypto provider (required before QUIC/TLS).
-pub fn init_crypto() {
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-}
+/// Initialize crypto subsystem. iroh manages transport TLS internally.
+pub fn init_crypto() {}
 
 /// Initialize tracing/logging. Call once at startup.
 pub fn init_logging(level: &str) {
@@ -324,7 +322,10 @@ impl SrltcpEngine {
 
     pub fn qr_payload(&self) -> String {
         self.runtime.block_on(async {
-            self.inner.lock().await.qr_payload()
+            match self.inner.lock().await.qr_payload_async().await {
+                Ok(payload) => payload,
+                Err(_) => self.inner.lock().await.qr_payload(),
+            }
         })
     }
 
@@ -354,10 +355,15 @@ impl SrltcpEngine {
         })
     }
 
-    pub fn local_endpoint(&self) -> Option<String> {
+    pub fn iroh_ticket(&self) -> Option<String> {
         self.runtime.block_on(async {
-            self.inner.lock().await.local_endpoint()
+            self.inner.lock().await.iroh_ticket().await.ok()
         })
+    }
+
+    /// Deprecated — use `iroh_ticket()`.
+    pub fn local_endpoint(&self) -> Option<String> {
+        self.iroh_ticket()
     }
 
     pub fn connect_and_verify(&self, remote_qr: String) -> ConnectResult {
@@ -415,19 +421,6 @@ impl SrltcpEngine {
                 tracing::error!(error = %e, "quic connect failed");
             }
         });
-    }
-
-    pub fn set_wan_endpoint(&self, endpoint: Option<String>) {
-        let inner = self.inner.clone();
-        self.runtime.block_on(async move {
-            inner.lock().await.set_wan_endpoint(endpoint).await;
-        });
-    }
-
-    pub fn wan_endpoint(&self) -> Option<String> {
-        self.runtime.block_on(async {
-            self.inner.lock().await.wan_endpoint().await
-        })
     }
 
     pub fn load_trusted_pubkeys(&self, pubkeys: Vec<String>) {

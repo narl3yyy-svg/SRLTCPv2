@@ -1,8 +1,8 @@
-# Cryptography — SRLTCP v0.2.10
+# Cryptography — SRLTCP v0.2.13
 
 ## Overview
 
-SRLTCP v0.2.10 implements end-to-end encryption on the wire. The hybrid handshake runs interactively between peers; application data is encrypted with a Double Ratchet before leaving the device. SAS codes use a canonical handshake transcript (step bodies 1→2→3) so both peers derive identical values.
+SRLTCP v0.2.13 implements end-to-end encryption on the wire. The hybrid handshake runs interactively between peers; application data is encrypted with **double-ratchet-2** (Signal-spec) before leaving the device. SAS codes use a canonical handshake transcript (step bodies 1→2→3) so both peers derive identical values.
 
 ## Primitives
 
@@ -10,17 +10,17 @@ SRLTCP v0.2.10 implements end-to-end encryption on the wire. The hybrid handshak
 |-------|-----------|-------|
 | Identity | Ed25519 | QR-encoded long-term key; signs handshake frames |
 | KEX | X25519 + ML-KEM-768 | Hybrid post-quantum |
-| Messaging | Double Ratchet + AES-256-GCM | Forward secrecy; aws-lc-rs accelerated |
+| Messaging | double-ratchet-2 (Signal) | Forward secrecy; ChaCha20-Poly1305 via crate |
 | SAS | SHA-256 | 6-digit code over identities + secret + transcript |
 | Compression | zstd level 3 | Folder/bulk transfer (streaming) |
 
 ## Wire Handshake (v0.2.10)
 
-All steps are sent as `WireFrame::Handshake` JSON over QUIC or serial:
+All steps are sent as `WireFrame::Handshake` (postcard) over iroh or serial:
 
 1. **Step 1 (initiator)**: X25519 ephemeral + ML-KEM EK, signed with Ed25519 identity.
-2. **Step 2 (responder)**: X25519 ephemeral + ML-KEM CT + ML-KEM EK, signed.
-3. **Step 3 (initiator)**: Ratchet DH public key, signed.
+2. **Step 2 (responder)**: Hybrid KEX response + bob ratchet DH pubkey (32 bytes), signed.
+3. **Step 3 (initiator)**: Transcript completion marker, signed.
 
 The responder verifies each frame's Ed25519 signature and checks the identity matches the scanned QR.
 
@@ -35,7 +35,7 @@ Users must compare SAS out-of-band, then call `confirm_peer_trusted()` in the UI
 ## Message path
 
 ```
-ChatMessage JSON → DoubleRatchet.encrypt() → WireFrame::Encrypted → QUIC/serial
+ChatMessage JSON → SessionRatchet.encrypt() → WireFrame::Encrypted (v3) → iroh/serial
 ```
 
 Inbound path reverses decryption before parsing `ChatMessage`.

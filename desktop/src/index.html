@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SRLTCP v0.2.12</title>
+  <title>SRLTCP v0.2.13</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -13,7 +13,7 @@
         <div class="brand-icon">S</div>
         <div>
           <h1>SRLTCP</h1>
-          <span class="version">v0.2.12</span>
+          <span class="version">v0.2.13</span>
         </div>
       </header>
 
@@ -27,18 +27,18 @@
       <div class="sidebar-panels">
         <section id="panel-identity" class="panel active">
           <h2>Share Your Identity</h2>
-          <p class="hint">Your QR includes your LAN address — peers can connect automatically.</p>
+          <p class="hint">Your QR includes an iroh ticket — peers connect through NAT without port forwarding.</p>
           <div class="qr-visual">
             <img id="qr-image" alt="Your QR code" />
           </div>
           <div class="qr-box"><code id="qr-payload">Loading…</code></div>
           <button class="btn secondary" id="copy-qr">Copy QR Payload</button>
           <div class="endpoint-card">
-            <span class="endpoint-label">Your address</span>
-            <code id="local-endpoint">Detecting…</code>
+            <span class="endpoint-label">iroh ticket</span>
+            <code id="iroh-ticket">Detecting…</code>
           </div>
           <div class="listen-badge">
-            <span class="pulse-dot"></span> Listening on port 9473
+            <span class="pulse-dot"></span> NAT traversal active (iroh)
           </div>
         </section>
 
@@ -86,10 +86,6 @@
           <label class="field-label" for="display-name">Display name</label>
           <input type="text" id="display-name" placeholder="Shown to peers after verification" />
           <button class="btn secondary" id="save-display-name">Save display name</button>
-          <label class="field-label" for="wan-endpoint">WAN endpoint (optional)</label>
-          <input type="text" id="wan-endpoint" placeholder="public.host:9473 — used when LAN connect fails" />
-          <button class="btn secondary" id="save-wan-endpoint">Save WAN endpoint</button>
-          <p class="hint">Forward UDP/TCP port 9473 on your router for WAN. Connect &amp; Verify tries LAN from QR first, then WAN.</p>
           <div class="settings-card">
             <h3>Update app</h3>
             <p class="hint">Stay on <code>main</code> and run:</p>

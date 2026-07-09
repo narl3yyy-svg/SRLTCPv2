@@ -85,7 +85,22 @@ impl Identity {
         self.qr_payload_with_endpoint(None, crate::DEFAULT_QUIC_PORT)
     }
 
-    /// QR payload v3 embeds LAN endpoint so peers can connect without manual IP entry.
+    /// QR payload v4 embeds iroh EndpointTicket for NAT traversal (no port forwarding).
+    pub fn qr_payload_v4(&self, iroh_ticket: &str) -> String {
+        let ticket_bytes = iroh_ticket.as_bytes();
+        let ticket_len = ticket_bytes.len().min(4096);
+        let mut payload = Vec::with_capacity(35 + ticket_len);
+        payload.push(0x04);
+        payload.extend_from_slice(&self.public_key_bytes());
+        payload.extend_from_slice(&(ticket_len as u16).to_be_bytes());
+        payload.extend_from_slice(&ticket_bytes[..ticket_len]);
+        base64::Engine::encode(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+            &payload,
+        )
+    }
+
+    /// QR payload v3 embeds LAN endpoint (legacy — v0.2.12 and earlier).
     pub fn qr_payload_with_endpoint(&self, endpoint_host: Option<&str>, port: u16) -> String {
         if let Some(host) = endpoint_host.filter(|h| !h.is_empty()) {
             let host_bytes = host.as_bytes();
@@ -117,7 +132,10 @@ impl Identity {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedQr {
     pub public_key: [u8; 32],
+    /// Legacy v3 LAN endpoint (`host:port`) — deprecated in v0.2.13.
     pub endpoint: Option<String>,
+    /// iroh EndpointTicket string for NAT traversal (v4).
+    pub iroh_ticket: Option<String>,
 }
 
 /// Parse v2 (identity-only) or v3 (identity + endpoint) QR payloads.
@@ -142,6 +160,7 @@ pub fn parse_qr_payload(payload: &str) -> Result<ParsedQr, IdentityError> {
             Ok(ParsedQr {
                 public_key: key,
                 endpoint: None,
+                iroh_ticket: None,
             })
         }
         0x03 => {
@@ -163,6 +182,26 @@ pub fn parse_qr_payload(payload: &str) -> Result<ParsedQr, IdentityError> {
             Ok(ParsedQr {
                 public_key: key,
                 endpoint: Some(format_qr_endpoint(host, port)),
+                iroh_ticket: None,
+            })
+        }
+        0x04 => {
+            if decoded.len() < 35 {
+                return Err(IdentityError::InvalidKey("invalid v4 QR length".into()));
+            }
+            let mut key = [0u8; 32];
+            key.copy_from_slice(&decoded[1..33]);
+            let ticket_len = u16::from_be_bytes([decoded[33], decoded[34]]) as usize;
+            if decoded.len() < 35 + ticket_len {
+                return Err(IdentityError::InvalidKey("invalid v4 ticket field".into()));
+            }
+            let ticket = std::str::from_utf8(&decoded[35..35 + ticket_len])
+                .map_err(|e| IdentityError::InvalidKey(e.to_string()))?
+                .to_string();
+            Ok(ParsedQr {
+                public_key: key,
+                endpoint: None,
+                iroh_ticket: Some(ticket),
             })
         }
         _ => Err(IdentityError::InvalidKey("unsupported QR version".into())),

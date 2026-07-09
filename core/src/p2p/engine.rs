@@ -1,12 +1,11 @@
 //! Central P2P engine coordinating transports, crypto sessions, and messaging.
 
 use std::collections::{HashMap, HashSet};
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use quinn::Connection;
+use iroh::endpoint::Connection;
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tracing::{info, warn};
 
@@ -14,9 +13,8 @@ use crate::crypto::handshake::HybridKeyExchange;
 use crate::crypto::identity::{parse_qr_payload, Identity};
 use crate::crypto::peer_crypto::PeerCrypto;
 use crate::crypto::wire::{EncryptedPayload, SignedHandshake, WireFrame};
-use crate::network::local::{detect_lan_ip, local_endpoint};
 use crate::network::TransportKind;
-use crate::network::QuicTransport;
+use crate::network::IrohTransport;
 use crate::protocol::{ChatMessage, MessageType};
 use crate::serial::{list_ports, SerialConfig, SerialTransport};
 use crate::transfer::{ChunkedReceiver, ChunkedSender, TransferManifest};
@@ -67,7 +65,7 @@ struct ActiveCall {
 pub struct P2pEngine {
     identity: Identity,
     running: Arc<RwLock<bool>>,
-    quic: Arc<RwLock<QuicTransport>>,
+    iroh: Arc<RwLock<IrohTransport>>,
     serial: Arc<RwLock<Option<SerialTransport>>>,
     peers: Arc<RwLock<HashMap<String, PeerSession>>>,
     transfers: Arc<RwLock<HashMap<String, ActiveTransfer>>>,
@@ -91,7 +89,7 @@ impl P2pEngine {
         let engine = Self {
             identity,
             running: Arc::new(RwLock::new(false)),
-            quic: Arc::new(RwLock::new(QuicTransport::new())),
+            iroh: Arc::new(RwLock::new(IrohTransport::new())),
             serial: Arc::new(RwLock::new(None)),
             peers: Arc::new(RwLock::new(HashMap::new())),
             transfers: Arc::new(RwLock::new(HashMap::new())),
@@ -179,7 +177,7 @@ impl P2pEngine {
                 .ok_or_else(|| format!("peer not found: {conn_peer_id}"))?
         };
         self.peers.write().await.insert(canonical.clone(), session);
-        self.quic.read().await.rekey(conn_peer_id, &canonical).await;
+        self.iroh.read().await.rekey(conn_peer_id, &canonical).await;
 
         if let Some(tx) = self.handshake_wait.write().await.remove(conn_peer_id) {
             self.handshake_wait
@@ -220,7 +218,7 @@ impl P2pEngine {
             let peers = self.peers.read().await;
             if let Some(session) = peers.get(&canonical) {
                 if session.crypto.is_trusted()
-                    && self.quic.read().await.has_connection(&canonical).await
+                    && self.iroh.read().await.has_connection(&canonical).await
                 {
                     return Ok(canonical);
                 }
@@ -229,27 +227,22 @@ impl P2pEngine {
 
         self.cleanup_sessions_for_pubkey(&parsed.public_key).await;
 
-        if let Some(ref endpoint) = parsed.endpoint {
-            if self.connect_quic(endpoint).await.is_ok() {
-                return Ok(format!("quic:{endpoint}"));
+        if let Some(ref ticket) = parsed.iroh_ticket {
+            if self.connect_iroh_ticket(ticket).await.is_ok() {
+                return Ok(format!("iroh:{}", ticket.chars().take(16).collect::<String>()));
             }
         }
 
-        if let Some(wan) = self.wan_endpoint.read().await.clone() {
-            self.connect_wan(&wan).await?;
-            return Ok(format!("quic:{wan}"));
-        }
-
         Err(
-            "Could not reach peer. Ensure both apps are running, you are on the same LAN \
-             (or set a WAN endpoint in Settings), and use a QR from a running SRLTCP app."
+            "Could not reach peer. Ensure both apps are running and use a fresh QR (v0.2.13+) \
+             with iroh NAT traversal. Legacy IP-based QR may fail behind NAT."
                 .into(),
         )
     }
 
     pub async fn is_peer_connected(&self, peer_id: &str) -> bool {
         if let Ok(resolved) = self.resolve_peer_id(peer_id).await {
-            return self.quic.read().await.has_connection(&resolved).await;
+            return self.iroh.read().await.has_connection(&resolved).await;
         }
         false
     }
@@ -273,43 +266,50 @@ impl P2pEngine {
         self.identity.public_key_hex()
     }
 
+    pub async fn iroh_ticket(&self) -> Result<String, String> {
+        self.iroh
+            .read()
+            .await
+            .ticket_string()
+            .map_err(|e| e.to_string())
+    }
+
+    /// Deprecated — use `iroh_ticket()`.
+    pub async fn local_endpoint(&self) -> Option<String> {
+        self.iroh_ticket().await.ok()
+    }
+
     pub fn qr_payload(&self) -> String {
-        let host = detect_lan_ip()
-            .map(|ip| ip.to_string())
-            .unwrap_or_else(|| "127.0.0.1".to_string());
-        self.identity
-            .qr_payload_with_endpoint(Some(&host), 9473)
+        // Sync fallback before iroh is online — identity-only v2.
+        self.identity.qr_payload()
     }
 
-    pub fn local_endpoint(&self) -> Option<String> {
-        local_endpoint(9473)
+    pub async fn qr_payload_async(&self) -> Result<String, String> {
+        let ticket = self.iroh_ticket().await?;
+        Ok(self.identity.qr_payload_v4(&ticket))
     }
 
-    pub async fn start(&self, quic_port: u16) -> Result<(), String> {
+    pub async fn start(&self, _quic_port: u16) -> Result<(), String> {
         let mut running = self.running.write().await;
         if *running {
             return Ok(());
         }
 
-        let addr: SocketAddr = format!("0.0.0.0:{quic_port}")
-            .parse()
-            .map_err(|e| format!("invalid address: {e}"))?;
-
         {
-            let mut quic = self.quic.write().await;
-            quic.listen(addr).await.map_err(|e| e.to_string())?;
+            let mut transport = self.iroh.write().await;
+            transport.bind().await.map_err(|e| e.to_string())?;
         }
 
-        self.spawn_quic_accept_loop();
+        self.spawn_iroh_accept_loop();
 
         *running = true;
-        info!(port = quic_port, "P2P engine started");
+        info!("P2P engine started (iroh NAT traversal)");
         let _ = self.event_tx.send(EngineEvent::Started).await;
         Ok(())
     }
 
-    fn spawn_quic_accept_loop(&self) {
-        let quic = self.quic.clone();
+    fn spawn_iroh_accept_loop(&self) {
+        let iroh = self.iroh.clone();
         let event_tx = self.event_tx.clone();
         let peers = self.peers.clone();
         let running = self.running.clone();
@@ -322,24 +322,23 @@ impl P2pEngine {
                 }
 
                 let accepted = {
-                    let transport = quic.read().await;
+                    let transport = iroh.read().await;
                     match transport.try_accept().await {
                         Ok(result) => result,
                         Err(e) => {
-                            warn!(error = %e, "QUIC accept failed");
+                            warn!(error = %e, "iroh accept failed");
                             break;
                         }
                     }
                 };
 
-                let Some((conn, remote)) = accepted else {
+                let Some((conn, peer_id)) = accepted else {
                     tokio::time::sleep(Duration::from_millis(50)).await;
                     continue;
                 };
 
-                let peer_id = format!("quic:{remote}");
-                quic.read().await.register(peer_id.clone(), conn.clone()).await;
-                engine_self.spawn_quic_read_loop(peer_id.clone(), conn);
+                iroh.read().await.register(peer_id.clone(), conn.clone()).await;
+                engine_self.spawn_iroh_read_loop(peer_id.clone(), conn);
 
                 peers.write().await.insert(
                     peer_id.clone(),
@@ -363,7 +362,7 @@ impl P2pEngine {
     fn clone_for_inbound(&self) -> EngineInbound {
         EngineInbound {
             identity: self.identity.clone(),
-            quic: self.quic.clone(),
+            iroh: self.iroh.clone(),
             serial: self.serial.clone(),
             peers: self.peers.clone(),
             event_tx: self.event_tx.clone(),
@@ -375,9 +374,45 @@ impl P2pEngine {
         }
     }
 
-    fn spawn_quic_read_loop(&self, peer_id: String, conn: Connection) {
+    fn spawn_iroh_read_loop(&self, peer_id: String, conn: Connection) {
         self.clone_for_inbound()
-            .spawn_quic_read_loop(peer_id, conn);
+            .spawn_iroh_read_loop(peer_id, conn);
+    }
+
+    pub async fn connect_iroh_ticket(&self, ticket: &str) -> Result<(), String> {
+        let addr = IrohTransport::parse_ticket(ticket).map_err(|e| e.to_string())?;
+        self.connect_iroh_addr(addr, TransportKind::Relay).await
+    }
+
+    async fn connect_iroh_addr(
+        &self,
+        addr: iroh::EndpointAddr,
+        kind: TransportKind,
+    ) -> Result<(), String> {
+        let iroh = self.iroh.read().await;
+        let conn = iroh.connect(addr.clone()).await.map_err(|e| e.to_string())?;
+        let peer_id = format!("iroh:{}", addr.id);
+
+        iroh.register(peer_id.clone(), conn.clone()).await;
+        self.spawn_iroh_read_loop(peer_id.clone(), conn);
+
+        self.peers.write().await.insert(
+            peer_id.clone(),
+            PeerSession {
+                transport: kind,
+                crypto: PeerCrypto::new_connected(),
+                pending_kex: None,
+            },
+        );
+
+        let _ = self
+            .event_tx
+            .send(EngineEvent::PeerConnected {
+                peer_id,
+                transport: kind,
+            })
+            .await;
+        Ok(())
     }
 
     pub async fn connect_serial(&self, port_name: &str, baud_rate: u32) -> Result<(), String> {
@@ -450,48 +485,14 @@ impl P2pEngine {
         }
     }
 
+    /// Deprecated — use connect_iroh_ticket. Kept for API compatibility.
     pub async fn connect_quic(&self, addr: &str) -> Result<(), String> {
-        self.connect_quic_with_kind(addr, TransportKind::Lan).await
+        self.connect_iroh_ticket(addr).await
     }
 
-    pub async fn connect_wan(&self, addr: &str) -> Result<(), String> {
-        self.connect_quic_with_kind(addr, TransportKind::Wan).await
-    }
-
-    async fn connect_quic_with_kind(
-        &self,
-        addr: &str,
-        kind: TransportKind,
-    ) -> Result<(), String> {
-        let socket_addr: SocketAddr = addr
-            .parse()
-            .map_err(|e| format!("invalid address: {e}"))?;
-
-        let quic = self.quic.read().await;
-        let conn = quic.connect(socket_addr).await.map_err(|e| e.to_string())?;
-        let peer_id = format!("quic:{addr}");
-
-        quic.register(peer_id.clone(), conn.clone()).await;
-        self.spawn_quic_read_loop(peer_id.clone(), conn);
-
-        self.peers.write().await.insert(
-            peer_id.clone(),
-            PeerSession {
-                transport: kind,
-                crypto: PeerCrypto::new_connected(),
-                pending_kex: None,
-            },
-        );
-
-        let _ = self
-            .event_tx
-            .send(EngineEvent::PeerConnected {
-                peer_id,
-                transport: kind,
-            })
-            .await;
-
-        Ok(())
+    /// Deprecated — iroh handles WAN via NAT traversal.
+    pub async fn connect_wan(&self, ticket: &str) -> Result<(), String> {
+        self.connect_iroh_ticket(ticket).await
     }
 
     pub async fn disconnect_peer(&self, peer_id: &str) -> Result<(), String> {
@@ -511,10 +512,9 @@ impl P2pEngine {
                     }
                     *self.serial.write().await = None;
                 }
-                TransportKind::Lan | TransportKind::Wan => {
-                    self.quic.read().await.unregister(&resolved).await;
+                TransportKind::Lan | TransportKind::Wan | TransportKind::Relay => {
+                    self.iroh.read().await.unregister(&resolved).await;
                 }
-                TransportKind::Relay => {}
             }
         }
 
@@ -826,7 +826,18 @@ impl P2pEngine {
 
     async fn send_wire_message(&self, peer_id: &str, msg: ChatMessage) -> Result<(), String> {
         let resolved = self.resolve_peer_id(peer_id).await?;
-        if !self.quic.read().await.has_connection(&resolved).await {
+        let transport = self
+            .peers
+            .read()
+            .await
+            .get(&resolved)
+            .map(|s| s.transport)
+            .ok_or_else(|| format!("peer not found: {resolved}"))?;
+        let connected = match transport {
+            TransportKind::Serial => self.serial.read().await.is_some(),
+            _ => self.iroh.read().await.has_connection(&resolved).await,
+        };
+        if !connected {
             return Err("peer not connected — reconnect from Saved Peers".into());
         }
         if !self.is_peer_trusted(&resolved).await {
@@ -843,7 +854,7 @@ impl P2pEngine {
         };
 
         let payload = EncryptedPayload {
-            version: 2,
+            version: 3,
             ciphertext,
         };
         let wire = WireFrame::Encrypted(payload);
@@ -871,17 +882,14 @@ impl P2pEngine {
                     return Err("serial transport not connected".to_string());
                 }
             }
-            TransportKind::Lan | TransportKind::Wan => {
-                self.quic
+            TransportKind::Lan | TransportKind::Wan | TransportKind::Relay => {
+                self.iroh
                     .read()
                     .await
                     .send(&resolved, wire)
                     .await
                     .map_err(|e| e.to_string())?;
                 info!(peer = %resolved, len = wire.len(), "sent wire frame");
-            }
-            TransportKind::Relay => {
-                info!(peer = peer_id, "relay send not implemented");
             }
         }
         Ok(())
@@ -905,7 +913,7 @@ impl P2pEngine {
         }
         *self.serial.write().await = None;
 
-        self.quic.write().await.shutdown().await;
+        self.iroh.write().await.shutdown().await;
         self.peers.write().await.clear();
         self.transfers.write().await.clear();
         self.calls.write().await.clear();
@@ -933,7 +941,7 @@ impl P2pEngine {
 #[derive(Clone)]
 struct EngineInbound {
     identity: Identity,
-    quic: Arc<RwLock<QuicTransport>>,
+    iroh: Arc<RwLock<IrohTransport>>,
     serial: Arc<RwLock<Option<SerialTransport>>>,
     peers: Arc<RwLock<HashMap<String, PeerSession>>>,
     event_tx: mpsc::Sender<EngineEvent>,
@@ -945,29 +953,16 @@ struct EngineInbound {
 }
 
 impl EngineInbound {
-    fn spawn_quic_read_loop(&self, peer_id: String, conn: Connection) {
+    fn spawn_iroh_read_loop(&self, peer_id: String, conn: Connection) {
         let inbound = self.clone();
         tokio::spawn(async move {
-            loop {
-                match conn.accept_bi().await {
-                    Ok((_send, mut recv)) => match recv.read_to_end(16 * 1024 * 1024).await {
-                        Ok(data) if !data.is_empty() => {
-                            inbound.handle_inbound_bytes(&peer_id, &data).await;
-                        }
-                        Ok(_) => {}
-                        Err(e) => {
-                            warn!(error = %e, "QUIC stream read error");
-                            break;
-                        }
-                    },
-                    Err(quinn::ConnectionError::ApplicationClosed { .. })
-                    | Err(quinn::ConnectionError::LocallyClosed) => break,
-                    Err(e) => {
-                        warn!(error = %e, "QUIC accept_bi error");
-                        break;
-                    }
+            crate::network::iroh_transport::read_connection_loop(conn, peer_id, move |pid, data| {
+                let inbound = inbound.clone();
+                async move {
+                    inbound.handle_inbound_bytes(&pid, &data).await;
                 }
-            }
+            })
+            .await;
         });
     }
 
@@ -1268,7 +1263,7 @@ impl EngineInbound {
                 .ok_or_else(|| format!("peer not found: {conn_peer_id}"))?
         };
         self.peers.write().await.insert(canonical.clone(), session);
-        self.quic.read().await.rekey(conn_peer_id, &canonical).await;
+        self.iroh.read().await.rekey(conn_peer_id, &canonical).await;
 
         if let Some(tx) = self.handshake_wait.write().await.remove(conn_peer_id) {
             self.handshake_wait
@@ -1349,7 +1344,7 @@ impl EngineInbound {
     }
 
     async fn send_app_message(&self, peer_id: &str, msg: ChatMessage) -> Result<(), String> {
-        if !self.quic.read().await.has_connection(peer_id).await {
+        if !self.iroh.read().await.has_connection(peer_id).await {
             return Err("peer not connected".into());
         }
         let plaintext = msg.to_json().map_err(|e| e.to_string())?;
@@ -1364,7 +1359,7 @@ impl EngineInbound {
             session.crypto.encrypt(&plaintext)?
         };
         let payload = EncryptedPayload {
-            version: 2,
+            version: 3,
             ciphertext,
         };
         self.send_raw_frame(peer_id, &WireFrame::Encrypted(payload))
@@ -1394,15 +1389,14 @@ impl EngineInbound {
                     return Err("serial transport not connected".into());
                 }
             }
-            TransportKind::Lan | TransportKind::Wan => {
-                self.quic
+            TransportKind::Lan | TransportKind::Wan | TransportKind::Relay => {
+                self.iroh
                     .read()
                     .await
                     .send(peer_id, &wire)
                     .await
                     .map_err(|e| e.to_string())?;
             }
-            TransportKind::Relay => {}
         }
         Ok(())
     }

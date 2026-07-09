@@ -1,4 +1,4 @@
-//! SRLTCP v0.2.12 Desktop — Tauri v2 backend with graceful shutdown.
+//! SRLTCP v0.2.13 Desktop — Tauri v2 backend with graceful shutdown.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -29,12 +29,12 @@ async fn get_public_key(state: State<'_, AppState>) -> Result<String, String> {
 
 #[tauri::command]
 async fn get_qr_payload(state: State<'_, AppState>) -> Result<String, String> {
-    Ok(state.engine.lock().await.qr_payload())
+    state.engine.lock().await.qr_payload_async().await
 }
 
 #[tauri::command]
 async fn get_qr_image(state: State<'_, AppState>) -> Result<String, String> {
-    let payload = state.engine.lock().await.qr_payload();
+    let payload = state.engine.lock().await.qr_payload_async().await?;
     srltcp_core::qr_png_data_url(&payload)
 }
 
@@ -58,8 +58,8 @@ async fn connect_serial(
 }
 
 #[tauri::command]
-async fn get_local_endpoint(state: State<'_, AppState>) -> Result<Option<String>, String> {
-    Ok(state.engine.lock().await.local_endpoint())
+async fn get_iroh_ticket(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    Ok(state.engine.lock().await.iroh_ticket().await.ok())
 }
 
 #[tauri::command]
@@ -98,20 +98,6 @@ async fn load_trusted_pubkeys(
 #[tauri::command]
 async fn disconnect_peer(state: State<'_, AppState>, peer_id: String) -> Result<(), String> {
     state.engine.lock().await.disconnect_peer(&peer_id).await
-}
-
-#[tauri::command]
-async fn set_wan_endpoint(
-    state: State<'_, AppState>,
-    endpoint: Option<String>,
-) -> Result<(), String> {
-    state.engine.lock().await.set_wan_endpoint(endpoint).await;
-    Ok(())
-}
-
-#[tauri::command]
-async fn get_wan_endpoint(state: State<'_, AppState>) -> Result<Option<String>, String> {
-    Ok(state.engine.lock().await.wan_endpoint().await)
 }
 
 #[tauri::command]
@@ -269,13 +255,11 @@ fn main() {
             get_public_key,
             get_qr_payload,
             get_qr_image,
-            get_local_endpoint,
+            get_iroh_ticket,
             list_serial_ports,
             connect_serial,
             connect_and_verify,
             confirm_peer_trusted,
-            set_wan_endpoint,
-            get_wan_endpoint,
             load_trusted_pubkeys,
             disconnect_peer,
             handshake,

@@ -24,16 +24,16 @@ SRLTCP v0.2.0 system architecture.
 │  │  ┌────┴────────────────────────────────┐             │    │
 │  │  │         Transport Adapters           │             │    │
 │  │  ├──────────┬──────────┬───────────────┤             │    │
-│  │  │  Serial  │   QUIC   │    WebRTC     │             │    │
-│  │  │ COBS+ACK │  (quinn) │  (signaling)  │             │    │
+│  │  │  Serial  │   iroh   │    WebRTC     │             │    │
+│  │  │ COBS+ACK │ NAT trav │  (signaling)  │             │    │
 │  │  └──────────┴──────────┴───────────────┘             │    │
 │  └─────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────┘
          │              │                │
          ▼              ▼                ▼
     ┌─────────┐   ┌──────────┐    ┌───────────┐
-    │  UART   │   │ LAN/WAN  │    │  Media    │
-    │ /dev/tty│   │ UDP:9473 │    │  Streams  │
+    │  UART   │   │ iroh P2P │    │  Media    │
+    │ /dev/tty│   │ relay/HP │    │  Streams  │
     └─────────┘   └──────────┘    └───────────┘
 ```
 
@@ -60,18 +60,18 @@ Three-layer stack:
 
 ### Network Transport (`core/src/network/`)
 
-QUIC via `quinn` for LAN/WAN:
+iroh 1.0 for NAT traversal:
 
-- Self-signed TLS (identity verified via Ed25519, not PKI)
-- Default listen port: 9473
-- Connection pooling for multiple peers
-- Graceful close on shutdown
+- N0 relay preset + hole punching (no port forwarding)
+- ALPN `srltcp/1` application streams
+- QR v4 embeds shareable `EndpointTicket`
+- Connection registry per peer; graceful close on shutdown
 
 ### Crypto Module (`core/src/crypto/`)
 
 - **Identity** — Ed25519 keygen, sign, verify, QR encoding
 - **Handshake** — Hybrid X25519 + ML-KEM-768 with SAS
-- **Ratchet** — Double Ratchet for ongoing messages
+- **Ratchet** — double-ratchet-2 (Signal-spec) for ongoing messages
 
 ### Transfer Module (`core/src/transfer/`)
 
@@ -99,7 +99,7 @@ User types message
 ChatMessage::text() ─── JSON serialize
        │
        ▼
-DoubleRatchet::encrypt() ─── AES-256-GCM
+SessionRatchet::encrypt() ─── double-ratchet-2
        │
        ▼
 Envelope::new(encrypted=true) ─── JSON serialize
@@ -109,8 +109,8 @@ Envelope::new(encrypted=true) ─── JSON serialize
        │    Frame::data() → COBS + CRC        │
        │    UART write                         │
        │                                       │
-       └─── QUIC path ────────────────────────┤
-            QUIC bidirectional stream write    │
+       └─── iroh path ────────────────────────┤
+            bidirectional stream write         │
                                                ▼
                                          Peer receives
                                                │

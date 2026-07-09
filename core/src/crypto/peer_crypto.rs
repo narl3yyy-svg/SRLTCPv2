@@ -4,7 +4,7 @@ use x25519_dalek::PublicKey;
 
 use super::handshake::HybridKeyExchange;
 use super::identity::{compute_sas_with_transcript, Identity, IdentityError};
-use super::ratchet::DoubleRatchet;
+use super::ratchet::{RATCHET_PK_LEN, SessionRatchet};
 use super::wire::{HandshakeTranscript, SignedHandshake};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,7 +18,7 @@ pub enum TrustState {
 pub struct PeerCrypto {
     pub remote_identity: [u8; 32],
     pub trust: TrustState,
-    pub ratchet: Option<DoubleRatchet>,
+    pub ratchet: Option<SessionRatchet>,
     transcript: HandshakeTranscript,
     shared_secret: Option<Vec<u8>>,
 }
@@ -121,20 +121,13 @@ impl PeerCrypto {
             .shared_secret()
             .ok_or_else(|| "handshake incomplete".to_string())?
             .to_vec();
-        self.shared_secret = Some(secret);
+        self.shared_secret = Some(secret.clone());
 
-        let remote_dh = extract_dh_public(&remote_frame.body)?;
-        let ratchet = DoubleRatchet::init_sender(
-            self.shared_secret.as_ref().unwrap(),
-            &remote_dh,
-        );
-        let step3_body = ratchet
-            .dh_public_key()
-            .ok_or_else(|| "missing ratchet DH key".to_string())?
-            .as_bytes()
-            .to_vec();
+        let bob_ratchet_pk = extract_bob_ratchet_pk(&remote_frame.body)?;
+        let ratchet = SessionRatchet::init_initiator(&secret, &bob_ratchet_pk);
         self.ratchet = Some(ratchet);
-        Ok(step3_body)
+        // Step 3: signed transcript completion marker (no extra DH leg).
+        Ok(vec![0x01])
     }
 
     /// Initiator records step 3 and computes SAS (same moment as responder).
@@ -166,14 +159,20 @@ impl PeerCrypto {
             .responder_accept(&init_frame.body)
             .map_err(|e| e.to_string())?;
 
-        self.transcript.append_body(2, &resp_body)?;
         let secret = kex
             .shared_secret()
             .ok_or_else(|| "responder handshake incomplete".to_string())?
             .to_vec();
-        self.shared_secret = Some(secret);
+        self.shared_secret = Some(secret.clone());
 
-        let resp = Self::sign_handshake(identity, 2, resp_body);
+        let (ratchet, bob_pk) =
+            SessionRatchet::init_responder(&secret).map_err(|e| e.to_string())?;
+        self.ratchet = Some(ratchet);
+        let mut full_body = resp_body;
+        full_body.extend_from_slice(bob_pk.as_bytes());
+
+        self.transcript.append_body(2, &full_body)?;
+        let resp = Self::sign_handshake(identity, 2, full_body);
         Ok((resp, kex))
     }
 
@@ -192,19 +191,9 @@ impl PeerCrypto {
         }
         self.transcript.append_body(3, &finish_frame.body)?;
 
-        let secret = self
-            .shared_secret
-            .as_ref()
-            .ok_or_else(|| "no shared secret".to_string())?;
-
-        let dh_remote = PublicKey::from(
-            <[u8; 32]>::try_from(finish_frame.body.as_slice())
-                .map_err(|_| "invalid ratchet DH key".to_string())?,
-        );
-
-        let mut ratchet = DoubleRatchet::init_receiver(secret);
-        ratchet.dh_ratchet_step(&dh_remote);
-        self.ratchet = Some(ratchet);
+        if self.ratchet.is_none() {
+            return Err("responder ratchet not initialized".into());
+        }
 
         self.finalize_sas(identity)
     }
@@ -235,7 +224,9 @@ impl PeerCrypto {
             .ratchet
             .as_mut()
             .ok_or_else(|| "no session ratchet".to_string())?;
-        ratchet.encrypt(plaintext).map_err(|e| e.to_string())
+        ratchet
+            .encrypt_to_bytes(plaintext)
+            .map_err(|e| e.to_string())
     }
 
     pub fn decrypt(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>, String> {
@@ -246,16 +237,20 @@ impl PeerCrypto {
             .ratchet
             .as_mut()
             .ok_or_else(|| "no session ratchet".to_string())?;
-        ratchet.decrypt(ciphertext).map_err(|e| e.to_string())
+        ratchet
+            .decrypt_from_bytes(ciphertext)
+            .map_err(|e| e.to_string())
     }
 }
 
-fn extract_dh_public(resp_body: &[u8]) -> Result<PublicKey, String> {
-    if resp_body.len() < 32 {
-        return Err("handshake response too short".into());
+fn extract_bob_ratchet_pk(resp_body: &[u8]) -> Result<PublicKey, String> {
+    if resp_body.len() < RATCHET_PK_LEN {
+        return Err("handshake response missing ratchet pubkey".into());
     }
+    let start = resp_body.len() - RATCHET_PK_LEN;
     Ok(PublicKey::from(
-        <[u8; 32]>::try_from(&resp_body[..32]).map_err(|_| "invalid x25519 key".to_string())?,
+        <[u8; 32]>::try_from(&resp_body[start..])
+            .map_err(|_| "invalid ratchet DH key".to_string())?,
     ))
 }
 

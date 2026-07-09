@@ -1,8 +1,8 @@
-# Security — SRLTCP v0.2.10
+# Security — SRLTCP v0.2.13
 
 ## Goals
 
-1. **E2EE** — Peers encrypt all chat/file signaling with Double Ratchet after trust confirmation.
+1. **E2EE** — Peers encrypt all chat/file signaling with Signal-spec double-ratchet-2 after trust confirmation.
 2. **Forward secrecy** — Ratchet chains limit key compromise blast radius.
 3. **Post-quantum hybrid KEX** — ML-KEM-768 + X25519 against harvest-now-decrypt-later.
 4. **Authenticated handshake** — Ed25519-signed frames bound to QR identity.
@@ -10,7 +10,7 @@
 
 ## Threat model
 
-| Threat | Mitigation (v0.2.10) |
+| Threat | Mitigation (v0.2.13) |
 |--------|---------------------|
 | Passive network tap | Encrypted payloads after trust |
 | Active MITM on first contact | SAS + signed handshake tied to QR keys |
@@ -20,7 +20,7 @@
 
 ## Trust establishment
 
-1. Exchange QR codes (Ed25519 identity + optional LAN endpoint).
+1. Exchange QR v4 codes (Ed25519 identity + iroh ticket).
 2. Run wire handshake (automatic on connect).
 3. Compare 6-digit SAS verbally or in person.
 4. Tap **Codes Match** → `confirm_peer_trusted()` unlocks messaging.
@@ -31,7 +31,7 @@
 
 - Compromised endpoint (malware on device)
 - User skipping SAS verification
-- DDoS on QUIC listener
+- DDoS on iroh relay path
 - WebRTC media path hardening (experimental)
 
 ## Reporting

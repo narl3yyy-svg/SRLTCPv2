@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.2.13 — iroh NAT traversal, Signal Double Ratchet (2026-07-08)
+
+### Transport
+
+- **iroh 1.0** replaces quinn/QUIC — relay + hole punching, no port forwarding required.
+- QR **v4** embeds iroh `EndpointTicket` alongside Ed25519 identity.
+- WAN endpoint settings removed (desktop + Android); NAT handled by iroh.
+
+### Crypto
+
+- **double-ratchet-2** — Signal-spec Double Ratchet for 1:1 messaging (replaces simplified ratchet).
+- Hybrid **X25519 + ML-KEM-768** unchanged; handshake step 2 appends bob ratchet DH pubkey (32 bytes).
+- Encrypted payload version bumped to `3` (postcard `RatchetEnvelope`).
+
+### Tests
+
+- Wire dump test: no application plaintext on wire.
+- Signal KAT suite mirroring double-ratchet-2 upstream tests.
+- `ratchet_bench` criterion benchmark.
+
+### API
+
+- `iroh_ticket()` replaces `local_endpoint()` (deprecated alias kept).
+- `connect_quic()` now dials iroh tickets.
+
 ## v0.2.12 — Peer UX, postcard wire format, reconnect model (2026-07-08)
 
 ### Fixes

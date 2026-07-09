@@ -4,25 +4,24 @@
 
 SRLTCP is privacy-first communication software: no accounts, no central servers, and end-to-end encryption with a human-verifiable SAS step before you trust a peer. A single Rust core powers the desktop (Tauri) and Android (Kotlin/Compose) clients, so crypto and protocol behavior stay consistent everywhere.
 
-**Current release: [v0.2.12](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.12)**
+**Current release: [v0.2.13](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.13)**
 
 ---
 
 ## Security status (read this)
 
-v0.2.12 improves peer UX (disconnect vs remove, chat history, deduped peer list), switches wire frames to **postcard** binary format, and fixes reconnect/trust flow for saved contacts. v0.2.11 fixed peer routing (`peer:{pubkey}` IDs), file chunk transfer, and trusted-peer auto-reconnect. SAS codes are derived from a **canonical transcript** that both peers build identically.
+v0.2.13 replaces QUIC with **iroh** for NAT traversal (no port forwarding), upgrades messaging to **double-ratchet-2** (Signal-spec), and ships QR v4 with embedded iroh tickets. v0.2.12 improved peer UX and postcard wire frames. SAS codes use a **canonical transcript** both peers build identically.
 
 **What works today**
 
-- Wire handshake (X25519 + ML-KEM-768) with Ed25519-signed frames over QUIC/serial
-- E2EE messaging after you confirm the matching SAS code
+- Wire handshake (X25519 + ML-KEM-768) with Ed25519-signed frames over iroh/serial
+- Signal-spec Double Ratchet E2EE after SAS confirmation
+- iroh NAT traversal — connect across networks without router config
 - Explicit trust gate — no plaintext chat until SAS is verified
 
 **Caveats**
 
-- QUIC uses ephemeral TLS certificates; long-term identity is bound at the application handshake layer, not in TLS
-- Double Ratchet is a simplified implementation — not a full Signal-protocol clone
-- WAN requires port forwarding (UDP/TCP 9473) on your router
+- iroh transport is encrypted separately from app-layer E2EE (defense in depth)
 - WebRTC calls and folder-transfer UI are not yet fully E2EE-wrapped
 
 Do not treat this as production-grade secure messaging until you have reviewed [docs/SECURITY.md](docs/SECURITY.md) and [docs/CRYPTO.md](docs/CRYPTO.md) yourself.

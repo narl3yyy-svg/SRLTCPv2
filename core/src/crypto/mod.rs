@@ -17,5 +17,5 @@ pub use identity::{
     compute_sas, compute_sas_with_transcript, parse_qr_payload, Identity, IdentityError, ParsedQr,
 };
 pub use peer_crypto::{PeerCrypto, TrustState};
-pub use ratchet::{DoubleRatchet, RatchetError};
+pub use ratchet::{RatchetEnvelope, RatchetError, SessionRatchet};
 pub use wire::{EncryptedPayload, HandshakeTranscript, SignedHandshake, WireFrame};

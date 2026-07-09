@@ -1,6 +1,6 @@
-// SRLTCP v0.2.12 Desktop Frontend
+// SRLTCP v0.2.13 Desktop Frontend
 
-const STORAGE_KEY = 'srltcp_v0.2.12';
+const STORAGE_KEY = 'srltcp_v0.2.13';
 
 function loadState() {
   try {
@@ -16,7 +16,6 @@ function saveState(patch) {
 }
 
 let displayName = loadState().displayName || '';
-let wanEndpoint = loadState().wanEndpoint || '';
 let savedContacts = loadState().contacts || [];
 
 function pick(result, ...keys) {
@@ -56,7 +55,7 @@ function nowTime() {
 
 function shortPeer(id) {
   if (!id) return '';
-  return id.replace(/^peer:/, '').replace('quic:', '').slice(0, 12);
+  return id.replace(/^peer:/, '').replace(/^iroh:/, '').replace(/^quic:/, '').slice(0, 12);
 }
 
 function pubkeyFromPeerId(id) {
@@ -129,7 +128,7 @@ function addPeerUnique(id) {
 
 function reconcilePeers() {
   const canonical = new Set(savedContacts.map(c => c.id));
-  peers = peers.filter(id => !id.startsWith('quic:') || canonical.size === 0);
+  peers = peers.filter(id => !(id.startsWith('quic:') || id.startsWith('iroh:')) || canonical.size === 0);
   peers = [...new Set(peers)];
 }
 
@@ -166,11 +165,11 @@ async function init() {
     }
 
     try {
-      const endpoint = await invoke('get_local_endpoint');
-      document.getElementById('local-endpoint').textContent =
-        endpoint || 'localhost:9473 (LAN IP unavailable)';
+      const ticket = await invoke('get_iroh_ticket');
+      document.getElementById('iroh-ticket').textContent =
+        ticket || 'Starting iroh endpoint…';
     } catch (_) {
-      document.getElementById('local-endpoint').textContent = 'localhost:9473';
+      document.getElementById('iroh-ticket').textContent = 'iroh ticket unavailable';
     }
 
     const ports = await invoke('list_serial_ports');
@@ -184,16 +183,6 @@ async function init() {
         }).join('');
 
     document.getElementById('display-name').value = displayName;
-    document.getElementById('wan-endpoint').value = wanEndpoint;
-    try {
-      const storedWan = await invoke('get_wan_endpoint');
-      if (storedWan) {
-        wanEndpoint = storedWan;
-        document.getElementById('wan-endpoint').value = wanEndpoint;
-      } else if (wanEndpoint) {
-        await invoke('set_wan_endpoint', { endpoint: wanEndpoint });
-      }
-    } catch (_) {}
     restoreContacts();
     await syncTrustedPubkeys();
 
@@ -732,17 +721,6 @@ document.getElementById('save-display-name')?.addEventListener('click', () => {
   displayName = document.getElementById('display-name').value.trim();
   persistContacts();
   toast('Display name saved');
-});
-
-document.getElementById('save-wan-endpoint')?.addEventListener('click', async () => {
-  wanEndpoint = document.getElementById('wan-endpoint').value.trim();
-  saveState({ wanEndpoint });
-  try {
-    await invoke('set_wan_endpoint', { endpoint: wanEndpoint || null });
-    toast(wanEndpoint ? 'WAN endpoint saved' : 'WAN endpoint cleared');
-  } catch (e) {
-    toast(`WAN save failed: ${e}`, true);
-  }
 });
 
 document.getElementById('check-updates')?.addEventListener('click', () => {
