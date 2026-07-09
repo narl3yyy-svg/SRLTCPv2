@@ -24,6 +24,10 @@ fn peer_id_from_pubkey(pk: &[u8; 32]) -> String {
     format!("peer:{}", hex::encode(pk))
 }
 
+fn iroh_peer_id(node_id: impl std::fmt::Display) -> String {
+    format!("iroh:{node_id}")
+}
+
 /// Engine lifecycle events for UI/bindings.
 #[derive(Debug, Clone)]
 pub enum EngineEvent {
@@ -151,6 +155,10 @@ impl P2pEngine {
                 }
             }
         }
+        // Transient iroh: IDs — match any live session when exactly one transport peer exists.
+        if peer_id.starts_with("iroh:") && peers.len() == 1 {
+            return Ok(peers.keys().next().unwrap().clone());
+        }
         Err(format!("peer not connected: {peer_id}"))
     }
 
@@ -212,7 +220,33 @@ impl P2pEngine {
         }
     }
 
+    async fn ensure_started(&self) -> Result<(), String> {
+        if *self.running.read().await {
+            return Ok(());
+        }
+        self.start(crate::DEFAULT_QUIC_PORT).await
+    }
+
+    /// Block until iroh endpoint is bound (for QR v4 generation).
+    pub async fn wait_until_ready(&self, timeout_secs: u64) -> Result<(), String> {
+        self.ensure_started().await?;
+        let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
+        while std::time::Instant::now() < deadline {
+            if self.iroh.read().await.is_bound() {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        Err("iroh endpoint not ready — check network connection and retry".into())
+    }
+
+    pub async fn is_ready(&self) -> bool {
+        *self.running.read().await && self.iroh.read().await.is_bound()
+    }
+
     async fn ensure_connected(&self, parsed: &crate::crypto::identity::ParsedQr) -> Result<String, String> {
+        self.ensure_started().await?;
+
         let canonical = peer_id_from_pubkey(&parsed.public_key);
         {
             let peers = self.peers.read().await;
@@ -228,14 +262,20 @@ impl P2pEngine {
         self.cleanup_sessions_for_pubkey(&parsed.public_key).await;
 
         if let Some(ref ticket) = parsed.iroh_ticket {
-            if self.connect_iroh_ticket(ticket).await.is_ok() {
-                return Ok(format!("iroh:{}", ticket.chars().take(16).collect::<String>()));
-            }
+            return self.connect_iroh_ticket(ticket).await;
+        }
+
+        if parsed.endpoint.is_some() {
+            return Err(
+                "QR uses legacy LAN address (v3). Update both peers to v0.2.13+ and share a \
+                 fresh QR with iroh NAT traversal."
+                    .into(),
+            );
         }
 
         Err(
-            "Could not reach peer. Ensure both apps are running and use a fresh QR (v0.2.13+) \
-             with iroh NAT traversal. Legacy IP-based QR may fail behind NAT."
+            "QR has no iroh ticket (v4 required). Ask peer to open the app, wait until \
+             online, then share a fresh QR."
                 .into(),
         )
     }
@@ -285,6 +325,7 @@ impl P2pEngine {
     }
 
     pub async fn qr_payload_async(&self) -> Result<String, String> {
+        self.wait_until_ready(30).await?;
         let ticket = self.iroh_ticket().await?;
         Ok(self.identity.qr_payload_v4(&ticket))
     }
@@ -379,8 +420,8 @@ impl P2pEngine {
             .spawn_iroh_read_loop(peer_id, conn);
     }
 
-    pub async fn connect_iroh_ticket(&self, ticket: &str) -> Result<(), String> {
-        let addr = IrohTransport::parse_ticket(ticket).map_err(|e| e.to_string())?;
+    pub async fn connect_iroh_ticket(&self, ticket: &str) -> Result<String, String> {
+        let addr = IrohTransport::parse_ticket(ticket).map_err(|e| format!("invalid iroh ticket: {e}"))?;
         self.connect_iroh_addr(addr, TransportKind::Relay).await
     }
 
@@ -388,12 +429,26 @@ impl P2pEngine {
         &self,
         addr: iroh::EndpointAddr,
         kind: TransportKind,
-    ) -> Result<(), String> {
+    ) -> Result<String, String> {
+        let peer_id = iroh_peer_id(addr.id);
+
+        if self.iroh.read().await.has_connection(&peer_id).await
+            && self.peers.read().await.contains_key(&peer_id)
+        {
+            info!(%peer_id, "reusing existing iroh connection");
+            return Ok(peer_id);
+        }
+
         let iroh = self.iroh.read().await;
-        let conn = iroh.connect(addr.clone()).await.map_err(|e| e.to_string())?;
-        let peer_id = format!("iroh:{}", addr.id);
+        let conn = iroh.connect(addr.clone()).await.map_err(|e| {
+            format!(
+                "iroh dial failed ({e}). Peer may be offline, behind a strict firewall, \
+                 or using an expired QR — ask them to share a fresh QR while online."
+            )
+        })?;
 
         iroh.register(peer_id.clone(), conn.clone()).await;
+        drop(iroh);
         self.spawn_iroh_read_loop(peer_id.clone(), conn);
 
         self.peers.write().await.insert(
@@ -408,11 +463,11 @@ impl P2pEngine {
         let _ = self
             .event_tx
             .send(EngineEvent::PeerConnected {
-                peer_id,
+                peer_id: peer_id.clone(),
                 transport: kind,
             })
             .await;
-        Ok(())
+        Ok(peer_id)
     }
 
     pub async fn connect_serial(&self, port_name: &str, baud_rate: u32) -> Result<(), String> {
@@ -487,12 +542,12 @@ impl P2pEngine {
 
     /// Deprecated — use connect_iroh_ticket. Kept for API compatibility.
     pub async fn connect_quic(&self, addr: &str) -> Result<(), String> {
-        self.connect_iroh_ticket(addr).await
+        self.connect_iroh_ticket(addr).await.map(|_| ())
     }
 
     /// Deprecated — iroh handles WAN via NAT traversal.
     pub async fn connect_wan(&self, ticket: &str) -> Result<(), String> {
-        self.connect_iroh_ticket(ticket).await
+        self.connect_iroh_ticket(ticket).await.map(|_| ())
     }
 
     pub async fn disconnect_peer(&self, peer_id: &str) -> Result<(), String> {
@@ -535,7 +590,8 @@ impl P2pEngine {
         &self,
         remote_qr: &str,
     ) -> Result<(String, String, bool), String> {
-        let parsed = parse_qr_payload(remote_qr)
+        let normalized = crate::crypto::identity::normalize_qr_input(remote_qr);
+        let parsed = parse_qr_payload(&normalized)
             .map_err(|e| format!("invalid peer QR: {e}"))?;
 
         let canonical = peer_id_from_pubkey(&parsed.public_key);

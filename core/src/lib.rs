@@ -79,6 +79,7 @@ pub struct ConnectResult {
     pub peer_id: String,
     pub sas: String,
     pub auto_trusted: bool,
+    pub error: Option<String>,
 }
 
 fn engine_event_to_uniffi(event: EngineEvent) -> SrltcpEvent {
@@ -321,10 +322,29 @@ impl SrltcpEngine {
     }
 
     pub fn qr_payload(&self) -> String {
-        self.runtime.block_on(async {
-            match self.inner.lock().await.qr_payload_async().await {
+        let inner = self.inner.clone();
+        self.runtime.block_on(async move {
+            match inner.lock().await.qr_payload_async().await {
                 Ok(payload) => payload,
-                Err(_) => self.inner.lock().await.qr_payload(),
+                Err(e) => {
+                    tracing::warn!(error = %e, "QR v4 unavailable, returning identity-only fallback");
+                    inner.lock().await.qr_payload()
+                }
+            }
+        })
+    }
+
+    pub fn is_ready(&self) -> bool {
+        self.runtime.block_on(async {
+            self.inner.lock().await.is_ready().await
+        })
+    }
+
+    pub fn wait_until_ready(&self, timeout_secs: u64) {
+        let inner = self.inner.clone();
+        self.runtime.block_on(async {
+            if let Err(e) = inner.lock().await.wait_until_ready(timeout_secs).await {
+                tracing::error!(error = %e, "wait_until_ready failed");
             }
         })
     }
@@ -379,11 +399,13 @@ impl SrltcpEngine {
                     peer_id,
                     sas,
                     auto_trusted,
+                    error: None,
                 },
                 Err(e) => ConnectResult {
                     peer_id: String::new(),
-                    sas: format!("error: {e}"),
+                    sas: String::new(),
                     auto_trusted: false,
+                    error: Some(e),
                 },
             }
         })

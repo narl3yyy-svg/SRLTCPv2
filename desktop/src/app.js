@@ -1,6 +1,6 @@
-// SRLTCP v0.2.13 Desktop Frontend
+// SRLTCP v0.2.14 Desktop Frontend
 
-const STORAGE_KEY = 'srltcp_v0.2.13';
+const STORAGE_KEY = 'srltcp_v0.2.14';
 
 function loadState() {
   try {
@@ -103,7 +103,8 @@ async function reconnectContact(contact) {
     const result = await invoke('connect_and_verify', { remoteQr: contact.qr });
     const peerId = pick(result, 'peer_id', 'peerId');
     const autoTrusted = result?.auto_trusted ?? result?.autoTrusted;
-    if (result.sas?.startsWith?.('error:')) throw new Error(result.sas);
+    const err = result?.error || (result.sas?.startsWith?.('error:') ? result.sas : null);
+    if (err) throw new Error(String(err).replace(/^error:\s*/i, '').trim());
     if (peerId) {
       migratePeerId(contact.id, peerId);
       addPeerUnique(peerId);
@@ -153,24 +154,32 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
   };
 });
 
-async function init() {
+async function refreshOwnQr() {
   try {
+    await invoke('wait_for_engine');
     const qr = await invoke('get_qr_payload');
     document.getElementById('qr-payload').textContent = qr;
     try {
       const img = await invoke('get_qr_image');
       document.getElementById('qr-image').src = img;
+      document.getElementById('qr-image').alt = 'Your QR code';
     } catch (_) {
-      document.getElementById('qr-image').alt = 'QR unavailable';
+      document.getElementById('qr-image').alt = 'QR image unavailable';
     }
+    const ticket = await invoke('get_iroh_ticket');
+    document.getElementById('iroh-ticket').textContent =
+      ticket || 'iroh ticket pending…';
+    return true;
+  } catch (e) {
+    document.getElementById('iroh-ticket').textContent = `iroh not ready: ${e}`;
+    toast(`QR not ready: ${e}`, true);
+    return false;
+  }
+}
 
-    try {
-      const ticket = await invoke('get_iroh_ticket');
-      document.getElementById('iroh-ticket').textContent =
-        ticket || 'Starting iroh endpoint…';
-    } catch (_) {
-      document.getElementById('iroh-ticket').textContent = 'iroh ticket unavailable';
-    }
+async function init() {
+  try {
+    await refreshOwnQr();
 
     const ports = await invoke('list_serial_ports');
     const select = document.getElementById('serial-port');
@@ -201,6 +210,13 @@ async function init() {
 
 function handleEvent(p) {
   switch (p.type) {
+    case 'started':
+      setStatus('Online', true);
+      refreshOwnQr();
+      break;
+    case 'error':
+      toast(p.message || p.error || 'Engine error', true);
+      break;
     case 'message':
       appendMessage(p.content, 'received', shortPeer(pick(p, 'sender', 'Sender')));
       break;
@@ -628,9 +644,16 @@ async function runVerification() {
   try {
     toast('Connecting and running secure handshake…');
     const result = await invoke('connect_and_verify', { remoteQr: qr });
+    const err = result?.error;
     const peerId = pick(result, 'peer_id', 'peerId');
     const sas = pick(result, 'sas', 'Sas');
     const autoTrusted = result?.auto_trusted ?? result?.autoTrusted;
+    if (err || sas?.startsWith?.('error:')) {
+      throw new Error((err || sas).replace(/^error:\s*/i, '').trim());
+    }
+    if (!peerId) {
+      throw new Error('No peer connected — check QR is v4 (iroh) and peer is online');
+    }
     if (peerId) {
       addPeerUnique(peerId);
       connectedPeer = peerId;

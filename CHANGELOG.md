@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.2.14 — QR paste/connect fix, iroh stability (2026-07-09)
+
+### Fixes (critical)
+
+- **Peer ID mismatch**: `ensure_connected` no longer returns a truncated ticket prefix — uses actual `iroh:{node_id}` so handshake succeeds after dial.
+- **QR paste**: Whitespace/newlines stripped; URL-safe and standard base64 accepted.
+- **iroh before QR**: Engine waits for iroh bind before generating v4 QR (desktop + Android).
+- **Error surfacing**: `ConnectResult.error` field; UI shows actionable messages (expired QR, legacy v3, dial timeout).
+
+### Tests
+
+- QR v4 parsing suite (`qr_v4_parsing.rs`) + identity unit tests for paste normalization.
+
+### Docs
+
+- ML-KEM audit status and OpenMLS migration draft in `docs/CRYPTO.md`.
+
 ## v0.2.13 — iroh NAT traversal, Signal Double Ratchet (2026-07-08)
 
 ### Transport

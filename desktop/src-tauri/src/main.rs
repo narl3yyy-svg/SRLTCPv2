@@ -1,4 +1,4 @@
-//! SRLTCP v0.2.13 Desktop — Tauri v2 backend with graceful shutdown.
+//! SRLTCP v0.2.14 Desktop — Tauri v2 backend with graceful shutdown.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -29,7 +29,9 @@ async fn get_public_key(state: State<'_, AppState>) -> Result<String, String> {
 
 #[tauri::command]
 async fn get_qr_payload(state: State<'_, AppState>) -> Result<String, String> {
-    state.engine.lock().await.qr_payload_async().await
+    let engine = state.engine.lock().await;
+    engine.wait_until_ready(30).await?;
+    engine.qr_payload_async().await
 }
 
 #[tauri::command]
@@ -78,12 +80,23 @@ async fn connect_and_verify(
     remote_qr: String,
 ) -> Result<serde_json::Value, String> {
     let engine = state.engine.lock().await;
+    engine.wait_until_ready(30).await?;
     let (peer_id, sas, auto_trusted) = engine.connect_and_verify(&remote_qr).await?;
     Ok(serde_json::json!({
         "peer_id": peer_id,
         "sas": sas,
         "auto_trusted": auto_trusted,
     }))
+}
+
+#[tauri::command]
+async fn engine_is_ready(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(state.engine.lock().await.is_ready().await)
+}
+
+#[tauri::command]
+async fn wait_for_engine(state: State<'_, AppState>) -> Result<(), String> {
+    state.engine.lock().await.wait_until_ready(30).await
 }
 
 #[tauri::command]
@@ -256,6 +269,8 @@ fn main() {
             get_qr_payload,
             get_qr_image,
             get_iroh_ticket,
+            engine_is_ready,
+            wait_for_engine,
             list_serial_ports,
             connect_serial,
             connect_and_verify,
@@ -280,9 +295,21 @@ fn main() {
             let eng = engine.clone();
 
             tauri::async_runtime::spawn(async move {
-                let e = eng.lock().await;
-                if let Err(err) = e.start(9473).await {
+                let eng = eng.clone();
+                let start_err = {
+                    let e = eng.lock().await;
+                    e.start(9473).await.err()
+                };
+                if let Some(err) = start_err {
                     tracing::error!(error = %err, "failed to start engine");
+                    return;
+                }
+                let ready_err = {
+                    let e = eng.lock().await;
+                    e.wait_until_ready(30).await.err()
+                };
+                if let Some(err) = ready_err {
+                    tracing::error!(error = %err, "iroh not ready after start");
                 }
             });
 

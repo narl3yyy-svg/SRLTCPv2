@@ -238,10 +238,17 @@ fun ChatScreen() {
         }
         scope.launch(Dispatchers.IO) {
             val engine = SrltcpEngineHolder.getOrCreate()
+            engine.waitUntilReady(30u)
             val result = engine.connectAndVerify(contact.qrPayload)
             withContext(Dispatchers.Main) {
-                if (result.sas.startsWith("error:")) {
-                    showSnackbar(result.sas.removePrefix("error: ").trim())
+                val err = result.error
+                    ?: result.sas.takeIf { it.startsWith("error:") }?.removePrefix("error: ")?.trim()
+                if (!err.isNullOrBlank()) {
+                    showSnackbar(err)
+                    return@withContext
+                }
+                if (result.peerId.isBlank()) {
+                    showSnackbar("Reconnect failed — peer may be offline")
                     return@withContext
                 }
                 migratePeerId(contact.peerId, result.peerId)
@@ -348,7 +355,19 @@ fun ChatScreen() {
 
     val eventListener: (SrltcpEvent) -> Unit = { event ->
         when (event.eventType) {
-            "started" -> engineOnline = true
+            "started" -> {
+                engineOnline = true
+                scope.launch(Dispatchers.IO) {
+                    val eng = SrltcpEngineHolder.getOrCreate()
+                    eng.waitUntilReady(30u)
+                    val payload = eng.qrPayload()
+                    val img = eng.qrImageDataUrl()
+                    withContext(Dispatchers.Main) {
+                        qrPayload = payload
+                        qrImageDataUrl = img
+                    }
+                }
+            }
             "stopped" -> engineOnline = false
             "peer_connected" -> event.peerId?.let { id ->
                 if (id.startsWith("peer:")) addPeerUnique(id)
@@ -521,7 +540,7 @@ fun ChatScreen() {
                     Column {
                         Text("SRLTCP", fontWeight = FontWeight.Bold)
                         Text(
-                            "v0.2.13 • ${if (engineOnline) "Online" else "Offline"} • bg active",
+                            "v0.2.14 • ${if (engineOnline) "Online" else "Offline"} • bg active",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -702,10 +721,15 @@ fun ChatScreen() {
                         showSnackbar("Paste peer QR code first")
                         return@launch
                     }
+                    engine.waitUntilReady(30u)
                     val result = engine.connectAndVerify(qr)
                     withContext(Dispatchers.Main) {
-                        if (result.sas.startsWith("error:")) {
-                            showSnackbar(result.sas.removePrefix("error: ").trim())
+                        val err = result.error
+                            ?: result.sas.takeIf { it.startsWith("error:") }?.removePrefix("error: ")?.trim()
+                        if (!err.isNullOrBlank()) {
+                            showSnackbar(err)
+                        } else if (result.peerId.isBlank()) {
+                            showSnackbar("Connect failed — ensure peer is online with a fresh v4 QR")
                         } else {
                             val peer = result.peerId
                             addPeerUnique(peer)
@@ -774,7 +798,7 @@ fun ChatScreen() {
 
     if (showSettingsSheet) {
         SettingsSheet(
-            version = "0.2.13",
+            version = "0.2.14",
             displayName = displayName,
             onDisplayNameChange = { name ->
                 displayName = name

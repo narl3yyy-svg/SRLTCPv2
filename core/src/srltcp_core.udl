@@ -29,6 +29,7 @@ dictionary ConnectResult {
     string peer_id;
     string sas;
     boolean auto_trusted;
+    string? error;
 };
 
 interface SrltcpEngine {
@@ -46,6 +47,8 @@ interface SrltcpEngine {
     sequence<string> available_serial_ports();
 
     void start(u16 quic_port);
+    boolean is_ready();
+    void wait_until_ready(u64 timeout_secs);
     void connect_serial(string port_name, u32 baud_rate);
     void connect_quic(string addr); // iroh ticket dial
     void load_trusted_pubkeys(sequence<string> pubkeys);

@@ -9,7 +9,7 @@ use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 use iroh_tickets::Ticket;
 use iroh_tickets::endpoint::EndpointTicket;
 use thiserror::Error;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::RwLock;
 use tracing::info;
 
@@ -86,9 +86,14 @@ impl IrohTransport {
     pub async fn connect(&self, addr: EndpointAddr) -> Result<Connection, IrohError> {
         let ep = self.endpoint.as_ref().ok_or(IrohError::NotRunning)?;
         let remote = addr.id;
-        let conn = ep
-            .connect(addr, SRLTCP_ALPN)
+        let conn = tokio::time::timeout(Duration::from_secs(45), ep.connect(addr, SRLTCP_ALPN))
             .await
+            .map_err(|_| {
+                IrohError::Connection(
+                    "timed out after 45s (relay/hole-punch may be slow — retry with fresh QR)"
+                        .into(),
+                )
+            })?
             .map_err(|e| IrohError::Connection(e.to_string()))?;
         info!(%remote, "iroh outbound connection established");
         Ok(conn)

@@ -9,7 +9,7 @@ SRLTCP v0.2.13 implements end-to-end encryption on the wire. The hybrid handshak
 | Layer | Algorithm | Notes |
 |-------|-----------|-------|
 | Identity | Ed25519 | QR-encoded long-term key; signs handshake frames |
-| KEX | X25519 + ML-KEM-768 | Hybrid post-quantum |
+| KEX | X25519 + ML-KEM-768 | Hybrid post-quantum (ml-kem crate; Wycheproof-tested, not independently audited) |
 | Messaging | double-ratchet-2 (Signal) | Forward secrecy; ChaCha20-Poly1305 via crate |
 | SAS | SHA-256 | 6-digit code over identities + secret + transcript |
 | Compression | zstd level 3 | Folder/bulk transfer (streaming) |
@@ -48,3 +48,22 @@ Inbound path reverses decryption before parsing `ChatMessage`.
 | Handshaking | No |
 | SasPending | No (handshake only) |
 | Trusted | Yes (E2EE) |
+
+## ML-KEM audit status
+
+SRLTCP uses the Rust `ml-kem` crate (FIPS 203 ML-KEM-768). The crate validates against NIST ACVP and Wycheproof vectors, but **has not undergone an independent third-party audit**. Treat hybrid KEX as experimental for high-threat deployments until audit completes.
+
+## Planned: OpenMLS migration (multi-device / groups)
+
+1:1 messaging today uses **double-ratchet-2** (Signal-spec). A future **v0.3.x** track will evaluate **OpenMLS** for:
+
+- Audited MLS group semantics (when multi-peer chat is needed)
+- Cleaner ratchet state persistence across app restarts
+- Optional integration with hardware keystores
+
+Migration plan (draft):
+
+1. Keep QR + SAS + Ed25519 identity as the trust root.
+2. Run OpenMLS epoch setup inside the existing signed handshake transcript.
+3. Dual-stack period: double-ratchet-2 for v0.2 peers, MLS for v0.3+.
+4. No breaking wire change without a `EncryptedPayload` version bump.

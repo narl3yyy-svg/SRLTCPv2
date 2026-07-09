@@ -45,6 +45,7 @@ object SrltcpEngineHolder {
         initCrypto()
         val eng = SrltcpEngine()
         eng.start(QUIC_PORT)
+        eng.waitUntilReady(30u)
         engine = eng
         polling = false
         startEventPolling(eng)

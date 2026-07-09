@@ -138,13 +138,30 @@ pub struct ParsedQr {
     pub iroh_ticket: Option<String>,
 }
 
-/// Parse v2 (identity-only) or v3 (identity + endpoint) QR payloads.
+/// Strip whitespace/newlines from pasted QR payloads.
+pub fn normalize_qr_input(payload: &str) -> String {
+    payload.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+fn decode_qr_base64(payload: &str) -> Result<Vec<u8>, IdentityError> {
+    use base64::Engine;
+    use base64::engine::general_purpose::{STANDARD, URL_SAFE, URL_SAFE_NO_PAD};
+
+    let clean = normalize_qr_input(payload);
+    if clean.is_empty() {
+        return Err(IdentityError::InvalidKey("empty QR payload".into()));
+    }
+
+    URL_SAFE_NO_PAD
+        .decode(&clean)
+        .or_else(|_| URL_SAFE.decode(&clean))
+        .or_else(|_| STANDARD.decode(&clean))
+        .map_err(|e| IdentityError::InvalidKey(format!("invalid base64: {e}")))
+}
+
+/// Parse v2/v3/v4 QR payloads (identity, optional LAN endpoint, or iroh ticket).
 pub fn parse_qr_payload(payload: &str) -> Result<ParsedQr, IdentityError> {
-    let decoded = base64::Engine::decode(
-        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-        payload.trim(),
-    )
-    .map_err(|e| IdentityError::InvalidKey(e.to_string()))?;
+    let decoded = decode_qr_base64(payload)?;
 
     if decoded.is_empty() {
         return Err(IdentityError::InvalidKey("empty QR payload".into()));
@@ -301,6 +318,40 @@ mod tests {
         let qr = "A04h7pf673PM-S2B0PQSefFdtTOJuPTteIfn800Lvm2GEDEwLjAuMzAuMTAxOjk0NzMlAQ";
         let parsed = parse_qr_payload(qr).unwrap();
         assert_eq!(parsed.endpoint.as_deref(), Some("10.0.30.101:9473"));
+    }
+
+    #[test]
+    fn qr_v4_roundtrip() {
+        let id = Identity::generate();
+        let ticket = "3bq2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let qr = id.qr_payload_v4(ticket);
+        let parsed = parse_qr_payload(&qr).unwrap();
+        assert_eq!(parsed.public_key, id.public_key_bytes());
+        assert_eq!(parsed.iroh_ticket.as_deref(), Some(ticket));
+        assert!(parsed.endpoint.is_none());
+    }
+
+    #[test]
+    fn qr_v4_paste_with_whitespace() {
+        let id = Identity::generate();
+        let ticket = "ticket-with-dashes_and.dots/ok";
+        let qr = id.qr_payload_v4(ticket);
+        let pasted = format!("  {qr}\n\t ");
+        let parsed = parse_qr_payload(&pasted).unwrap();
+        assert_eq!(parsed.iroh_ticket.as_deref(), Some(ticket));
+    }
+
+    #[test]
+    fn qr_v4_rejects_v2_without_ticket() {
+        let id = Identity::generate();
+        let qr = id.qr_payload();
+        let parsed = parse_qr_payload(&qr).unwrap();
+        assert!(parsed.iroh_ticket.is_none());
+    }
+
+    #[test]
+    fn normalize_strips_all_whitespace() {
+        assert_eq!(normalize_qr_input(" ab\nc\t"), "abc");
     }
 
     #[test]

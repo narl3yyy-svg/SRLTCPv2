@@ -4,7 +4,7 @@
 
 SRLTCP is privacy-first communication software: no accounts, no central servers, and end-to-end encryption with a human-verifiable SAS step before you trust a peer. A single Rust core powers the desktop (Tauri) and Android (Kotlin/Compose) clients, so crypto and protocol behavior stay consistent everywhere.
 
-**Current release: [v0.2.13](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.13)**
+**Current release: [v0.2.14](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.14)**
 
 ---
 
