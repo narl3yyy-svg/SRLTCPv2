@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SRLTCP v0.2.16</title>
+  <title>SRLTCP v0.2.17</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -13,7 +13,7 @@
         <div class="brand-icon">S</div>
         <div>
           <h1>SRLTCP</h1>
-          <span class="version">v0.2.16</span>
+          <span class="version">v0.2.17</span>
         </div>
       </header>
 
@@ -61,10 +61,13 @@
 
           <details class="serial-section">
             <summary>Serial cable (optional)</summary>
-            <p class="hint">Direct USB/serial link between two machines.</p>
+            <p class="hint">USB/serial devices connected to this machine.</p>
+            <div class="serial-toolbar">
+              <button class="btn-sm" id="refresh-serial" type="button" title="Refresh devices">↻ Refresh</button>
+            </div>
             <div class="form-group">
-              <label>Serial Port</label>
-              <select id="serial-port"></select>
+              <label for="serial-port">Serial device</label>
+              <select id="serial-port"><option value="">Scanning…</option></select>
             </div>
             <button class="btn secondary" id="connect-serial">Connect Serial</button>
           </details>
@@ -72,11 +75,11 @@
 
         <section id="panel-peers" class="panel">
           <div class="panel-header-row">
-            <h2>Peers <span id="peer-count" class="badge">0</span></h2>
+            <h2>Peers Online <span id="peer-count" class="badge">0</span></h2>
             <button class="btn-sm" id="refresh-peers" title="Refresh">↻</button>
           </div>
           <ul id="peer-list" class="peer-list"></ul>
-          <p id="no-peers" class="hint">Verified peers appear here after SAS confirmation.</p>
+          <p id="no-peers" class="hint">Connected peers appear here while online.</p>
           <h2 class="sub-heading">Saved Contacts</h2>
           <div id="contacts-list" class="contacts-list"></div>
         </section>
@@ -91,6 +94,17 @@
             <p class="hint">Stay on <code>main</code> and run:</p>
             <code class="update-cmd">git pull && ./run.sh</code>
             <button class="btn secondary" id="check-updates">How to update</button>
+          </div>
+          <div class="settings-card">
+            <h3>Call settings</h3>
+            <label class="call-setting-row">
+              <input type="checkbox" id="call-setting-mic" checked />
+              <span>Microphone enabled</span>
+            </label>
+            <label class="call-setting-row">
+              <input type="checkbox" id="call-setting-camera" checked />
+              <span>Camera enabled</span>
+            </label>
           </div>
           <p class="hint settings-note">Voice/video use WebRTC (STUN) over encrypted signaling.</p>
         </section>
@@ -171,6 +185,39 @@
         <button class="btn danger-btn" id="sas-reject">✗ Codes Don't Match</button>
       </div>
       <p class="sas-warning">If codes differ, disconnect immediately — possible man-in-the-middle attack.</p>
+    </div>
+  </div>
+
+  <!-- Incoming call -->
+  <div id="incoming-call-modal" class="modal hidden">
+    <div class="modal-backdrop incoming-backdrop"></div>
+    <div class="modal-card incoming-call-card">
+      <div class="incoming-call-icon">📞</div>
+      <h2 id="incoming-call-type">Incoming call</h2>
+      <p id="incoming-call-peer" class="incoming-call-peer">Peer</p>
+      <div class="incoming-call-actions">
+        <button class="btn danger-btn" id="incoming-call-decline" type="button">Decline</button>
+        <button class="btn sas-confirm-btn" id="incoming-call-answer" type="button">Answer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Active call overlay -->
+  <div id="call-overlay" class="call-overlay hidden">
+    <div class="call-overlay-inner">
+      <div class="call-overlay-header">
+        <h3 id="call-peer-label">Peer</h3>
+        <span id="call-type-label" class="call-type-pill">Voice call</span>
+      </div>
+      <div class="call-videos">
+        <video id="remote-video" class="call-video remote" autoplay playsinline></video>
+        <video id="local-video" class="call-video local" autoplay playsinline muted></video>
+      </div>
+      <div class="call-controls">
+        <button class="call-ctrl-btn" id="call-mute-btn" type="button" title="Mute microphone">🎤</button>
+        <button class="call-ctrl-btn danger" id="call-end-overlay-btn" type="button" title="End call">📵</button>
+        <button class="call-ctrl-btn" id="call-camera-btn" type="button" title="Toggle camera">📷</button>
+      </div>
     </div>
   </div>
 

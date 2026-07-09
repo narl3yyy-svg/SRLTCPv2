@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use std::io::{Read, Write};
+
 use bytes::{Bytes, BytesMut};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, info, warn};
@@ -49,7 +51,7 @@ pub struct SerialTransport {
     config: SerialConfig,
     running: Arc<RwLock<bool>>,
     event_tx: mpsc::Sender<SerialEvent>,
-    write_tx: mpsc::Sender<Bytes>,
+    write_tx: Arc<tokio::sync::Mutex<Option<mpsc::Sender<Bytes>>>>,
     #[cfg(all(not(target_os = "android"), feature = "desktop"))]
     port: Arc<Mutex<Option<Box<dyn SerialPort>>>>,
 }
@@ -57,13 +59,12 @@ pub struct SerialTransport {
 impl SerialTransport {
     pub fn new(config: SerialConfig) -> (Self, mpsc::Receiver<SerialEvent>) {
         let (event_tx, event_rx) = mpsc::channel(256);
-        let (write_tx, _write_rx) = mpsc::channel::<Bytes>(256);
 
         let transport = Self {
             config,
             running: Arc::new(RwLock::new(false)),
             event_tx,
-            write_tx,
+            write_tx: Arc::new(tokio::sync::Mutex::new(None)),
             #[cfg(all(not(target_os = "android"), feature = "desktop"))]
             port: Arc::new(Mutex::new(None)),
         };
@@ -91,10 +92,77 @@ impl SerialTransport {
 
             info!(port = %self.config.port_name, baud = self.config.baud_rate, "serial port opened");
 
+            let port_arc = Arc::new(Mutex::new(port));
             {
                 let mut guard = self.port.lock().await;
-                *guard = Some(port);
+                *guard = None;
             }
+
+            let (write_tx, mut write_rx) = mpsc::channel::<Bytes>(256);
+            *self.write_tx.lock().await = Some(write_tx);
+
+            let running_w = self.running.clone();
+            let port_write = port_arc.clone();
+            tokio::spawn(async move {
+                while *running_w.read().await {
+                    match write_rx.recv().await {
+                        Some(data) => {
+                            let mut guard = port_write.lock().await;
+                            if let Err(e) = guard.write_all(&data) {
+                                warn!(error = %e, "serial write failed");
+                                break;
+                            }
+                            let _ = guard.flush();
+                        }
+                        None => break,
+                    }
+                }
+            });
+
+            let running_r = self.running.clone();
+            let event_tx = self.event_tx.clone();
+            let port_name_r = self.config.port_name.clone();
+            let port_read = port_arc.clone();
+            let rto = self.config.rto_ms;
+            let window = self.config.window_size;
+            tokio::task::spawn_blocking(move || {
+                let mut reader = SerialReader::new(rto, window);
+                let mut buf = [0u8; 4096];
+                while *running_r.blocking_read() {
+                    let n = {
+                        let mut guard = port_read.blocking_lock();
+                        match guard.read(&mut buf) {
+                            Ok(0) => break,
+                            Ok(n) => n,
+                            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
+                            Err(e) => {
+                                let _ = event_tx.blocking_send(SerialEvent::Error(format!(
+                                    "serial read error: {e}"
+                                )));
+                                break;
+                            }
+                        }
+                    };
+                    let output = reader.feed(&buf[..n]);
+                    for payload in output.delivered {
+                        let _ = event_tx.blocking_send(SerialEvent::DataReceived(payload));
+                    }
+                    for frame in output
+                        .responses
+                        .iter()
+                        .chain(output.retransmits.iter())
+                    {
+                        let encoded = frame.encode();
+                        let mut guard = port_read.blocking_lock();
+                        let _ = guard.write_all(&encoded);
+                        let _ = guard.flush();
+                    }
+                }
+                let _ = event_tx.blocking_send(SerialEvent::Disconnected {
+                    port: port_name_r,
+                    reason: "connection closed".to_string(),
+                });
+            });
 
             *running = true;
             drop(running);
@@ -114,7 +182,11 @@ impl SerialTransport {
         if !*self.running.read().await {
             return Err("transport not running".to_string());
         }
-        self.write_tx
+        let tx = self.write_tx.lock().await;
+        let Some(ref write_tx) = *tx else {
+            return Err("serial writer not ready".to_string());
+        };
+        write_tx
             .send(data)
             .await
             .map_err(|e| format!("write channel closed: {e}"))

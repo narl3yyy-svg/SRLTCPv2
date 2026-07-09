@@ -1,4 +1,4 @@
-# Build Instructions — SRLTCP v0.2.10
+# Build Instructions — SRLTCP v0.2.17
 
 ## Prerequisites
 
@@ -26,7 +26,7 @@ cargo build --release -p srltcp-desktop         # Manual rebuild
 ./scripts/build-desktop.sh                      # Stage prebuilt in dist/
 ```
 
-Ctrl+C or closing the window triggers graceful shutdown (releases serial ports and QUIC).
+Ctrl+C or closing the window triggers graceful shutdown (releases serial ports and iroh endpoint).
 
 ## Android — Recommended
 
@@ -41,7 +41,7 @@ This script:
 2. Cross-compiles `libsrltcp_core.so` for 3 ABIs (android feature, no serialport)
 3. Generates UniFFI Kotlin bindings
 4. Runs `./gradlew assembleDebug`
-5. Copies APK to `dist/SRLTCPv2-0.2.10.apk`
+5. Copies APK to `dist/SRLTCPv2-0.2.17.apk`
 6. Cleans Gradle caches automatically
 
 ### APK only (jniLibs already built)
@@ -62,7 +62,7 @@ cd android
 ### Install
 
 ```bash
-adb install dist/SRLTCPv2-0.2.10.apk
+adb install dist/SRLTCPv2-0.2.17.apk
 ```
 
 ## Cleanup
@@ -92,9 +92,9 @@ Pushing a version tag triggers `.github/workflows/release.yml`, which builds and
 
 ```bash
 # Bump version in Cargo.toml, commit, then:
-git tag -a v0.2.10 -m "SRLTCP v0.2.10"
+git tag -a v0.2.17 -m "SRLTCP v0.2.17"
 git push origin main
-git push origin v0.2.10
+git push origin v0.2.17
 ```
 
 Manual fallback (local artifacts in `dist/`):
@@ -126,6 +126,6 @@ cargo build -p srltcp-core --no-default-features --features android
 | `Missing native libs` | Run full `./scripts/build-android.sh` |
 | `libudev` not found (CI/Android bindgen) | Fixed in v0.2.5 via android feature gate |
 | Compose BOM resolution error | BOM pinned to `2024.10.01` in `app/build.gradle.kts` |
-| Port 9473 in use | `./cleanup.sh` |
+| Stale engine process | `./cleanup.sh` |
 | Tauri webkit error | Install `webkit2gtk-4.1-dev` |
 | `run.sh` says no prebuilt | Download from Releases or use `--rebuild` |

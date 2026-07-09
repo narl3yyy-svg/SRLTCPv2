@@ -1,4 +1,4 @@
-//! SRLTCP v0.2.16 Desktop — Tauri v2 backend with graceful shutdown.
+//! SRLTCP v0.2.17 Desktop — Tauri v2 backend with graceful shutdown.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -217,6 +217,17 @@ async fn register_saved_peer(
 }
 
 #[tauri::command]
+async fn set_display_name(state: State<'_, AppState>, name: String) -> Result<(), String> {
+    state.engine.lock().await.set_display_name(&name).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn broadcast_profile(state: State<'_, AppState>, peer_id: String) -> Result<(), String> {
+    state.engine.lock().await.broadcast_profile(&peer_id).await
+}
+
+#[tauri::command]
 async fn get_receive_dir(state: State<'_, AppState>) -> Result<String, String> {
     Ok(state
         .engine
@@ -294,6 +305,8 @@ fn main() {
             end_call,
             cancel_transfer,
             register_saved_peer,
+            set_display_name,
+            broadcast_profile,
             get_receive_dir,
             shutdown_engine,
         ])
@@ -439,6 +452,13 @@ fn main() {
                             serde_json::json!({
                                 "type": "reconnecting",
                                 "peer_id": peer_id,
+                            })
+                        }
+                        EngineEvent::PeerProfile { peer_id, display_name } => {
+                            serde_json::json!({
+                                "type": "peer_profile",
+                                "peer_id": peer_id,
+                                "display_name": display_name,
                             })
                         }
                         EngineEvent::Started => serde_json::json!({ "type": "started" }),

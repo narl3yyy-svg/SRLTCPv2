@@ -65,6 +65,9 @@ interface SrltcpEngine {
     string start_video_call(string peer_id);
     void end_call(string peer_id, string call_id);
     void register_saved_peer(string peer_id, string qr);
+    void set_display_name(string name);
+    void broadcast_profile(string peer_id);
+    string? get_peer_display_name(string peer_id);
 
     SrltcpEvent? poll_event();
     sequence<SrltcpEvent> drain_events();

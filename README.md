@@ -1,16 +1,16 @@
 # SRLTCP
 
-**Secure, reliable peer-to-peer messaging over LAN, WAN, QUIC, and serial.**
+**Secure, reliable peer-to-peer messaging over iroh (NAT traversal), LAN, and serial.**
 
 SRLTCP is privacy-first communication software: no accounts, no central servers, and end-to-end encryption with a human-verifiable SAS step before you trust a peer. A single Rust core powers the desktop (Tauri) and Android (Kotlin/Compose) clients, so crypto and protocol behavior stay consistent everywhere.
 
-**Current release: [v0.2.16](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.16)**
+**Current release: [v0.2.17](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.17)**
 
 ---
 
 ## Security status (read this)
 
-v0.2.16 adds **voice/video calls** (WebRTC + encrypted signaling), **reliable file transfer** (chunk ACKs), **offline message queue**, and seamless trusted reconnect. v0.2.15 fixed chat after connect; v0.2.13+ uses **iroh** NAT traversal (no port forwarding) and **double-ratchet-2** E2EE with QR v4.
+v0.2.17 fixes **call UI** (answer dialog, overlay, settings), **peer presence** (online/reconnecting/offline), **display name exchange**, **serial I/O**, and disconnect/reconnect behavior. v0.2.16 added voice/video calls, file transfer ACKs, and offline queue. v0.2.13+ uses **iroh** NAT traversal (no port forwarding) and **double-ratchet-2** E2EE with QR v4.
 
 **What works today**
 
@@ -77,7 +77,7 @@ run.bat
 Install the APK from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest):
 
 ```bash
-adb install dist/SRLTCPv2-0.2.16.apk
+adb install dist/SRLTCPv2-0.2.17.apk
 ```
 
 Or build locally (JDK 17, Android SDK/NDK):
@@ -114,6 +114,14 @@ Saved verified contacts reconnect automatically (fresh handshake, no SAS re-prom
 | Display name after auth | ✓ | ✓ |
 | Voice / video calls (WebRTC) | ✓ | ✓ |
 | Foreground background service | — | ✓ |
+
+### v0.2.17 highlights
+
+- Incoming call answer dialog (desktop + Android) — fixes WebKit `NotAllowedError`
+- Call overlay with end/mute/camera controls
+- Peers Online vs Saved Contacts with real presence status
+- Display name exchange after verification
+- Serial device detection refresh; serial read/write loop fix
 
 ### v0.2.16 highlights
 
@@ -170,9 +178,9 @@ SRLTCP uses hybrid post-quantum key exchange, a double ratchet for forward secre
 Pushing a version tag triggers CI to publish desktop prebuilts and the Android APK:
 
 ```bash
-git tag -a v0.2.16 -m "SRLTCP v0.2.16"
+git tag -a v0.2.17 -m "SRLTCP v0.2.17"
 git push origin main
-git push origin v0.2.16
+git push origin v0.2.17
 ```
 
 ---

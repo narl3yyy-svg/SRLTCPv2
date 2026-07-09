@@ -107,6 +107,13 @@ data class CallState(
     val isVideo: Boolean,
 )
 
+data class PendingCall(
+    val peerId: String,
+    val callId: String,
+    val sdp: String,
+    val isVideo: Boolean,
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen() {
@@ -131,14 +138,33 @@ fun ChatScreen() {
     var showSettingsSheet by remember { mutableStateOf(false) }
     var showPeersSheet by remember { mutableStateOf(false) }
     var displayName by remember { mutableStateOf("") }
+    var showIncomingCallDialog by remember { mutableStateOf(false) }
+    var pendingIncomingCall by remember { mutableStateOf<PendingCall?>(null) }
 
     val savedContacts = remember { mutableStateListOf<SavedContact>() }
     val prefs = remember { AppPreferences(context) }
     val peerVerified = remember { mutableStateMapOf<String, Boolean>() }
+    val peerStatus = remember { mutableStateMapOf<String, String>() }
+    val remoteDisplayNames = remember { mutableStateMapOf<String, String>() }
     var connectedPeer by remember { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
 
     fun showSnackbar(msg: String) { snackbarMessage = msg }
+
+    fun contactLabel(peerId: String): String {
+        remoteDisplayNames[peerId]?.takeIf { it.isNotBlank() }?.let { return it }
+        savedContacts.find { it.peerId == peerId }?.displayName?.takeIf { it.isNotBlank() }?.let { return it }
+        return peerId.removePrefix("peer:").take(12)
+    }
+
+    fun syncDisplayName(broadcastTo: String? = null) {
+        if (displayName.isBlank()) return
+        scope.launch(Dispatchers.IO) {
+            val engine = SrltcpEngineHolder.getOrCreate()
+            engine.setDisplayName(displayName)
+            broadcastTo?.let { engine.broadcastProfile(it) }
+        }
+    }
 
     val reconcilePeers: () -> Unit = {
         val canonical = savedContacts.map { it.peerId }.toSet()
@@ -229,6 +255,11 @@ fun ChatScreen() {
         }
         peers.remove(peerId)
         if (connectedPeer == peerId) connectedPeer = null
+        peerStatus[peerId] = "paused"
+        if (activePeer == peerId) {
+            activePeer = null
+            messages = emptyList()
+        }
         showSnackbar("Disconnected — contact saved, tap Reconnect to chat again")
     }
 
@@ -259,10 +290,12 @@ fun ChatScreen() {
                     peerVerified[result.peerId] = true
                 }
                 connectedPeer = result.peerId
+                peerStatus[result.peerId] = "online"
                 if (openChat) {
                     activePeer = result.peerId
                     messages = loadMessagesForPeer(result.peerId)
                 }
+                syncDisplayName(result.peerId)
                 if (!result.autoTrusted && result.sas.isNotBlank()) {
                     sasCode = result.sas
                     sasPeerId = result.peerId
@@ -329,8 +362,10 @@ fun ChatScreen() {
         savedContacts.filter { it.verified && it.qrPayload.isNotBlank() }.forEach { c ->
             engine.registerSavedPeer(c.peerId, c.qrPayload)
         }
+        syncDisplayName(null)
         reconcilePeers()
         refreshConnectedPeer()
+        connectedPeer?.let { peerStatus[it] = "online" }
     }
 
     LaunchedEffect(activePeer) {
@@ -374,8 +409,16 @@ fun ChatScreen() {
             "stopped" -> engineOnline = false
             "peer_connected" -> event.peerId?.let { id ->
                 addPeerUnique(id)
-                if (id.startsWith("peer:")) connectedPeer = id
+                if (id.startsWith("peer:")) {
+                    connectedPeer = id
+                    peerStatus[id] = "online"
+                }
                 refreshConnectedPeer()
+            }
+            "peer_profile" -> event.peerId?.let { id ->
+                event.content?.takeIf { it.isNotBlank() }?.let { name ->
+                    remoteDisplayNames[id] = name
+                }
             }
             "peer_id_updated" -> {
                 val oldId = event.message
@@ -404,12 +447,28 @@ fun ChatScreen() {
                 }
             }
             "peer_disconnected" -> event.peerId?.let { id ->
+                peers.remove(id)
                 if (connectedPeer == id) connectedPeer = null
-                savedContacts.find { it.peerId == id && it.verified && it.qrPayload.isNotBlank() }
-                    ?.let { reconnectContact(it) }
+                val reason = event.message.orEmpty()
+                peerStatus[id] = when (reason) {
+                    "connection lost" -> "reconnecting"
+                    "user disconnected" -> "paused"
+                    else -> "offline"
+                }
+                if (activePeer == id && reason != "connection lost") {
+                    activePeer = null
+                    messages = emptyList()
+                }
+                if (reason == "connection lost") {
+                    savedContacts.find { it.peerId == id && it.verified && it.qrPayload.isNotBlank() }
+                        ?.let { reconnectContact(it, openChat = activePeer == id) }
+                }
             }
             "message_queued" -> showSnackbar("Message queued — will send on reconnect")
-            "reconnecting" -> showSnackbar("Reconnecting…")
+            "reconnecting" -> {
+                event.peerId?.let { peerStatus[it] = "reconnecting" }
+                showSnackbar("Reconnecting…")
+            }
             "message" -> event.content?.let { content ->
                 messages = messages + ChatMessage(
                     content = content,
@@ -454,7 +513,23 @@ fun ChatScreen() {
                 }
                 showSnackbar(if (wasOutgoing) "Upload complete: $filename" else "Download complete: $filename")
             }
-            "call_offer", "call_answer", "call_ice" -> {
+            "call_offer" -> {
+                val peer = event.peerId
+                val callId = event.callId
+                if (peer != null && callId != null) {
+                    val payload = event.message ?: ""
+                    val isVideo = event.autoTrusted == true
+                    if (callState != null || pendingIncomingCall != null) {
+                        scope.launch(Dispatchers.IO) {
+                            SrltcpEngineHolder.getOrCreate().sendCallSignal(peer, callId, "end", "", isVideo)
+                        }
+                    } else {
+                        pendingIncomingCall = PendingCall(peer, callId, payload, isVideo)
+                        showIncomingCallDialog = true
+                    }
+                }
+            }
+            "call_answer", "call_ice" -> {
                 val peer = event.peerId ?: activePeer
                 val callId = event.callId
                 if (peer != null && callId != null) {
@@ -556,7 +631,7 @@ fun ChatScreen() {
                     Column {
                         Text("SRLTCP", fontWeight = FontWeight.Bold)
                         Text(
-                            "v0.2.16 • ${if (engineOnline) "Online" else "Offline"} • bg active",
+                            "v0.2.17 • ${if (engineOnline) "Online" else "Offline"} • bg active",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -621,6 +696,7 @@ fun ChatScreen() {
                 callState?.let { call ->
                     CallStatusBar(
                         call = call,
+                        peerLabel = contactLabel(call.peerId),
                         onEndCall = {
                             scope.launch(Dispatchers.IO) {
                                 SrltcpEngineHolder.getOrCreate().endCall(call.peerId, call.callId)
@@ -825,6 +901,7 @@ fun ChatScreen() {
                     val idx = savedContacts.indexOfFirst { it.peerId == peerId }
                     if (idx >= 0) savedContacts[idx] = contact else savedContacts.add(contact)
                     syncTrustedPubkeys(SrltcpEngineHolder.getOrCreate())
+                    syncDisplayName(peerId)
                 }
                 showSasDialog = false
                 showSnackbar("Peer verified — secure channel established")
@@ -839,29 +916,77 @@ fun ChatScreen() {
 
     if (showSettingsSheet) {
         SettingsSheet(
-            version = "0.2.16",
+            version = "0.2.17",
             displayName = displayName,
             onDisplayNameChange = { name ->
                 displayName = name
                 prefs.displayName = name
+                syncDisplayName(connectedPeer)
             },
             onDismiss = { showSettingsSheet = false },
         )
     }
 
+    if (showIncomingCallDialog) {
+        val incoming = pendingIncomingCall
+        if (incoming != null) {
+            IncomingCallDialog(
+                peerLabel = contactLabel(incoming.peerId),
+                isVideo = incoming.isVideo,
+                onAnswer = {
+                    showIncomingCallDialog = false
+                    val call = pendingIncomingCall
+                    pendingIncomingCall = null
+                    if (call != null) {
+                        scope.launch {
+                            WebRtcCallManagerHolder.handleSignal(
+                                context, call.peerId, call.callId, "offer",
+                                call.sdp, call.isVideo,
+                            ) { state -> callState = state }
+                        }
+                    }
+                },
+                onDecline = {
+                    showIncomingCallDialog = false
+                    val call = pendingIncomingCall
+                    pendingIncomingCall = null
+                    if (call != null) {
+                        scope.launch(Dispatchers.IO) {
+                            SrltcpEngineHolder.getOrCreate()
+                                .sendCallSignal(call.peerId, call.callId, "end", "", call.isVideo)
+                        }
+                    }
+                    showSnackbar("Call declined")
+                },
+            )
+        }
+    }
+
     if (showPeersSheet) {
+        val onlinePeers = SrltcpEngineHolder.getOrCreate()
+            .connectedPeers()
+            .filter { it.startsWith("peer:") }
+            .ifEmpty { connectedPeer?.let { listOf(it) } ?: emptyList() }
         PeersSheet(
+            onlinePeers = onlinePeers,
             contacts = savedContacts.toList(),
             activePeer = activePeer,
             connectedPeer = connectedPeer,
+            remoteDisplayNames = remoteDisplayNames,
+            peerStatus = peerStatus,
             onSelect = { contact ->
                 showPeersSheet = false
-                if (connectedPeer == contact.peerId && engineOnline) {
+                if (connectedPeer == contact.peerId) {
                     activePeer = contact.peerId
                     messages = loadMessagesForPeer(contact.peerId)
-                } else {
+                } else if (contact.verified && contact.qrPayload.isNotBlank()) {
                     reconnectContact(contact)
                 }
+            },
+            onSelectOnline = { peerId ->
+                showPeersSheet = false
+                activePeer = peerId
+                messages = loadMessagesForPeer(peerId)
             },
             onReconnect = { contact -> reconnectContact(contact) },
             onRemove = { removeContact(it) },
@@ -1052,7 +1177,27 @@ fun PeerChipRow(
 }
 
 @Composable
-fun CallStatusBar(call: CallState, onEndCall: () -> Unit) {
+fun IncomingCallDialog(
+    peerLabel: String,
+    isVideo: Boolean,
+    onAnswer: () -> Unit,
+    onDecline: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDecline,
+        title = { Text(if (isVideo) "Incoming video call" else "Incoming voice call") },
+        text = { Text("$peerLabel is calling") },
+        confirmButton = {
+            Button(onClick = onAnswer) { Text("Answer") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDecline) { Text("Decline") }
+        },
+    )
+}
+
+@Composable
+fun CallStatusBar(call: CallState, peerLabel: String, onEndCall: () -> Unit) {
     Surface(
         color = MaterialTheme.colorScheme.primaryContainer,
         modifier = Modifier.fillMaxWidth(),
@@ -1068,7 +1213,7 @@ fun CallStatusBar(call: CallState, onEndCall: () -> Unit) {
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = if (call.isVideo) "Video call with ${call.peerId}" else "Voice call with ${call.peerId}",
+                text = if (call.isVideo) "Video call with $peerLabel" else "Voice call with $peerLabel",
                 modifier = Modifier.weight(1f),
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
             )

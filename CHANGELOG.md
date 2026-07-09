@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.2.17 — Calls UI, presence, serial, docs (2026-07-09)
+
+### Fixes
+
+- **Voice/video calls (desktop)** — Incoming answer dialog (user gesture for mic/camera); call overlay with end/mute/camera; relaxed video constraints; CSP `media-src` for WebKit.
+- **Disconnect behavior** — User disconnect no longer auto-reconnects; disconnect closes chat; reconnect only on `connection lost`.
+- **Display names** — Profile exchange over wire; shown in chat header and contact lists after connect.
+- **Peer presence** — Online / reconnecting / paused / offline status in Peers Online vs Saved Contacts.
+- **Serial I/O** — Read/write loops after port open; refreshed device list UI on desktop.
+
+### Documentation
+
+- README tagline and BUILD.md aligned with iroh (no port 9473 forwarding).
+- ARCHITECTURE, SECURITY, CRYPTO version bumps and honest audit notes.
+
 ## v0.2.16 — Calls, transfers, queue, docs (2026-07-09)
 
 ### Features

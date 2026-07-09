@@ -290,6 +290,23 @@ fn engine_event_to_uniffi(event: EngineEvent) -> SrltcpEvent {
             error: None,
             auto_trusted: None,
         },
+        EngineEvent::PeerProfile {
+            peer_id,
+            display_name,
+        } => SrltcpEvent {
+            event_type: "peer_profile".into(),
+            peer_id: Some(peer_id),
+            message: None,
+            content: Some(display_name),
+            sas: None,
+            transfer_id: None,
+            filename: None,
+            progress: None,
+            transport: None,
+            call_id: None,
+            error: None,
+            auto_trusted: None,
+        },
         EngineEvent::CallEnded { call_id } => SrltcpEvent {
             event_type: "call_ended".into(),
             peer_id: None,
@@ -658,6 +675,26 @@ impl SrltcpEngine {
         let inner = self.inner.clone();
         self.runtime.block_on(async move {
             inner.lock().await.register_saved_peer(&peer_id, &qr).await;
+        });
+    }
+
+    pub fn set_display_name(&self, name: String) {
+        let inner = self.inner.clone();
+        self.runtime.block_on(async move {
+            inner.lock().await.set_display_name(&name).await;
+        });
+    }
+
+    pub fn get_peer_display_name(&self, peer_id: String) -> Option<String> {
+        self.runtime.block_on(async {
+            self.inner.lock().await.get_display_name(&peer_id).await
+        })
+    }
+
+    pub fn broadcast_profile(&self, peer_id: String) {
+        let inner = self.inner.clone();
+        self.runtime.block_on(async move {
+            let _ = inner.lock().await.broadcast_profile(&peer_id).await;
         });
     }
 

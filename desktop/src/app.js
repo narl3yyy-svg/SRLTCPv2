@@ -1,13 +1,16 @@
-// SRLTCP v0.2.16 Desktop Frontend
+// SRLTCP v0.2.17 Desktop Frontend
 
-const STORAGE_KEY = 'srltcp_v0.2.16';
+const STORAGE_KEY = 'srltcp_v0.2.17';
+const LEGACY_STORAGE_KEYS = ['srltcp_v0.2.16'];
 
 function loadState() {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-  } catch (_) {
-    return {};
+  for (const key of [STORAGE_KEY, ...LEGACY_STORAGE_KEYS]) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) return JSON.parse(raw);
+    } catch (_) {}
   }
+  return {};
 }
 
 function saveState(patch) {
@@ -34,6 +37,9 @@ const convertFileSrc = window.__TAURI__?.core?.convertFileSrc ?? ((p) => p);
 let activePeer = null;
 let connectedPeer = null;
 let peers = [];
+const connectedPeers = new Set();
+const peerStatus = new Map();
+const remoteDisplayNames = new Map();
 const peerVerified = new Map();
 let activeCall = null;
 const activeCallRef = { current: null };
@@ -111,9 +117,12 @@ async function reconnectContact(contact) {
       migratePeerId(contact.id, peerId);
       addPeerUnique(peerId);
       connectedPeer = peerId;
+      connectedPeers.add(peerId);
+      peerStatus.set(peerId, 'online');
       if (autoTrusted) {
         peerVerified.set(peerId, true);
         selectPeer(peerId);
+        await syncDisplayName(peerId);
         toast('Reconnected to trusted peer');
       } else {
         showSasModal(peerId, pick(result, 'sas', 'Sas'));
@@ -135,12 +144,42 @@ function reconcilePeers() {
   peers = [...new Set(peers)];
 }
 
+function closeChatWindow() {
+  activePeer = null;
+  document.getElementById('empty-state')?.classList.remove('hidden');
+  document.getElementById('messages')?.replaceChildren();
+  updateChatHeader();
+  updateInputState();
+  updateVerifyBanner();
+}
+
+function contactStatus(id) {
+  if (connectedPeers.has(id)) return { text: '● online', cls: 'online' };
+  if (peerStatus.get(id) === 'reconnecting') return { text: '↻ reconnecting', cls: 'reconnecting' };
+  if (peerStatus.get(id) === 'paused') return { text: '⏸ disconnected by you', cls: 'paused' };
+  const c = savedContacts.find(x => x.id === id);
+  if (c?.verified) return { text: '○ offline', cls: 'offline' };
+  return { text: 'unverified', cls: 'offline' };
+}
+
+async function syncDisplayName(broadcastTo) {
+  if (!displayName) return;
+  try {
+    await invoke('set_display_name', { name: displayName });
+    if (broadcastTo) await invoke('broadcast_profile', { peerId: broadcastTo });
+  } catch (_) {}
+}
+
 function softDisconnect(id) {
   invoke('disconnect_peer', { peerId: id }).catch(() => {});
   peers = peers.filter(p => p !== id);
+  connectedPeers.delete(id);
   if (connectedPeer === id) connectedPeer = null;
+  peerStatus.set(id, 'paused');
+  if (activePeer === id) closeChatWindow();
   renderPeers();
   renderPeerChips();
+  renderContactsList();
   updateChatHeader();
   updateInputState();
   toast('Disconnected — contact saved, reconnect from Contacts');
@@ -183,17 +222,10 @@ async function init() {
   try {
     await refreshOwnQr();
 
-    const ports = await invoke('list_serial_ports');
-    const select = document.getElementById('serial-port');
-    select.innerHTML = ports.length === 0
-      ? '<option value="">No ports found</option>'
-      : ports.map(p => {
-          const path = p.path ?? p;
-          const label = p.label ?? p;
-          return `<option value="${escapeHtml(path)}">${escapeHtml(label)}</option>`;
-        }).join('');
+    await refreshSerialPorts();
 
     document.getElementById('display-name').value = displayName;
+    if (displayName) await syncDisplayName(null);
     restoreContacts();
     await syncTrustedPubkeys();
     for (const c of savedContacts.filter(x => x.verified && x.qr)) {
@@ -202,7 +234,13 @@ async function init() {
     try { receiveDir = await invoke('get_receive_dir'); } catch (_) {}
 
     const existingPeers = await invoke('get_peers');
-    existingPeers.forEach(id => { if (id.startsWith('peer:')) addPeerUnique(id); });
+    existingPeers.forEach(id => {
+      if (id.startsWith('peer:')) {
+        addPeerUnique(id);
+        connectedPeers.add(id);
+        peerStatus.set(id, 'online');
+      }
+    });
     connectedPeer = existingPeers.find(id => id.startsWith('peer:')) || null;
     setStatus('Online', true);
   } catch (e) {
@@ -230,28 +268,71 @@ function handleEvent(p) {
       const id = pick(p, 'peer_id', 'peerId');
       if (id) {
         addPeerUnique(id);
-        if (id.startsWith('peer:')) connectedPeer = id;
+        if (id.startsWith('peer:')) {
+          connectedPeer = id;
+          connectedPeers.add(id);
+          peerStatus.set(id, 'online');
+        }
       }
-      break;
-    }
-    case 'peer_disconnected': {
-      const id = pick(p, 'peer_id', 'peerId');
-      if (connectedPeer === id) connectedPeer = null;
       renderPeers();
       renderPeerChips();
       renderContactsList();
       updateChatHeader();
       updateInputState();
-      const contact = savedContacts.find(c => c.id === id && c.verified && c.qr);
-      if (contact) reconnectContact(contact);
+      break;
+    }
+    case 'peer_disconnected': {
+      const id = pick(p, 'peer_id', 'peerId');
+      const reason = p.reason || '';
+      connectedPeers.delete(id);
+      peers = peers.filter(pId => pId !== id);
+      if (connectedPeer === id) connectedPeer = null;
+      if (reason === 'connection lost') {
+        peerStatus.set(id, 'reconnecting');
+      } else if (reason === 'user disconnected') {
+        peerStatus.set(id, 'paused');
+      } else {
+        peerStatus.set(id, 'offline');
+      }
+      if (activePeer === id && reason !== 'connection lost') closeChatWindow();
+      renderPeers();
+      renderPeerChips();
+      renderContactsList();
+      updateChatHeader();
+      updateInputState();
+      if (reason === 'connection lost') {
+        const contact = savedContacts.find(c => c.id === id && c.verified && c.qr);
+        if (contact) reconnectContact(contact);
+      }
+      break;
+    }
+    case 'peer_profile': {
+      const id = pick(p, 'peer_id', 'peerId');
+      const name = pick(p, 'display_name', 'displayName') || p.content || '';
+      if (id && name) {
+        remoteDisplayNames.set(id, name);
+        const idx = savedContacts.findIndex(c => c.id === id);
+        if (idx >= 0 && !savedContacts[idx].name) {
+          savedContacts[idx] = { ...savedContacts[idx], name };
+          persistContacts();
+        }
+        renderPeers();
+        renderPeerChips();
+        renderContactsList();
+        updateChatHeader();
+      }
       break;
     }
     case 'message_queued':
       toast(`Queued for ${shortPeer(pick(p, 'peer_id', 'peerId'))} — will send on reconnect`);
       break;
-    case 'reconnecting':
-      toast(`Reconnecting to ${shortPeer(pick(p, 'peer_id', 'peerId'))}…`);
+    case 'reconnecting': {
+      const id = pick(p, 'peer_id', 'peerId');
+      if (id) peerStatus.set(id, 'reconnecting');
+      renderContactsList();
+      toast(`Reconnecting to ${contactLabel(id)}…`);
       break;
+    }
     case 'sas_ready': {
       const id = pick(p, 'peer_id', 'peerId');
       const sas = pick(p, 'sas', 'Sas');
@@ -259,10 +340,13 @@ function handleEvent(p) {
       if (id && autoTrusted) {
         peerVerified.set(id, true);
         connectedPeer = id;
+        connectedPeers.add(id);
+        peerStatus.set(id, 'online');
         selectPeer(id);
         updateChatHeader();
         updateInputState();
         updateVerifyBanner();
+        syncDisplayName(id);
         toast('Reconnected to trusted peer');
       } else {
         showSasModal(id, sas);
@@ -301,21 +385,15 @@ function handleEvent(p) {
     case 'call_offer':
     case 'call_answer':
     case 'call_ice':
-      window.SrltcpWebRTC?.handleIncomingCallSignal(p, invoke, activeCallRef).then((c) => {
-        if (c) { activeCall = c; updateCallUI(); }
-      }).catch((e) => toast(`Call error: ${e}`, true));
+      window.SrltcpWebRTC?.handleIncomingCallSignal(p, invoke, activeCallRef, contactLabel)
+        .then((c) => { if (c) { activeCall = c; activeCallRef.current = c; updateCallUI(); } })
+        .catch((e) => toast(`Call error: ${e}`, true));
       break;
     case 'call_ended':
       activeCall = null;
       activeCallRef.current = null;
       window.SrltcpWebRTC?.cleanupCall();
       updateCallUI();
-      break;
-    case 'started': setStatus('Online', true); break;
-    case 'stopped': setStatus('Offline', false); break;
-    case 'error':
-      console.error(p.message);
-      toast(p.message, true);
       break;
   }
 }
@@ -360,8 +438,31 @@ function removePeer(id) {
 }
 
 function contactLabel(id) {
+  if (remoteDisplayNames.has(id)) return remoteDisplayNames.get(id);
   const c = savedContacts.find(x => x.id === id);
   return c?.name || shortPeer(id);
+}
+
+async function refreshSerialPorts() {
+  try {
+    const ports = await invoke('list_serial_ports');
+    const select = document.getElementById('serial-port');
+    if (!select) return;
+    select.innerHTML = ports.length === 0
+      ? '<option value="">No serial devices detected — plug in and refresh</option>'
+      : ports.map(p => {
+          const path = String(p.path ?? p);
+          const label = String(p.label ?? path);
+          return `<option value="${escapeHtml(path)}">${escapeHtml(label)}</option>`;
+        }).join('');
+  } catch (e) {
+    const select = document.getElementById('serial-port');
+    if (select) select.innerHTML = `<option value="">Error listing ports: ${escapeHtml(String(e))}</option>`;
+  }
+}
+
+function getOnlinePeerIds() {
+  return [...connectedPeers];
 }
 
 function persistContacts() {
@@ -422,13 +523,14 @@ function renderContactsList() {
     return;
   }
   el.innerHTML = savedContacts.map(c => {
-    const online = connectedPeer === c.id;
-    const status = online ? '● online' : (c.verified ? '○ offline' : 'unverified');
+    const online = connectedPeers.has(c.id);
+    const st = contactStatus(c.id);
+    const label = contactLabel(c.id);
     return `
     <div class="contact-row">
       <button class="contact-select" data-peer="${escapeHtml(c.id)}">
-        <span class="contact-name">${escapeHtml(c.name || shortPeer(c.id))}</span>
-        <span class="contact-meta">${status}</span>
+        <span class="contact-name">${escapeHtml(label)}</span>
+        <span class="contact-meta ${st.cls}">${st.text}</span>
       </button>
       ${c.verified && !online && c.qr ? `<button class="btn-sm" data-reconnect="${escapeHtml(c.id)}" title="Reconnect">↻</button>` : ''}
       ${online ? `<button class="btn-sm" data-disconnect="${escapeHtml(c.id)}" title="Disconnect">⏏</button>` : ''}
@@ -465,13 +567,14 @@ function renderContactsList() {
 function renderPeers() {
   const list = document.getElementById('peer-list');
   const noPeers = document.getElementById('no-peers');
-  document.getElementById('peer-count').textContent = peers.length;
-  noPeers.classList.toggle('hidden', peers.length > 0);
-  list.innerHTML = peers.map(id => {
+  const onlineIds = getOnlinePeerIds();
+  document.getElementById('peer-count').textContent = onlineIds.length;
+  noPeers.classList.toggle('hidden', onlineIds.length > 0);
+  list.innerHTML = onlineIds.map(id => {
     const verified = peerVerified.get(id);
     const badge = verified ? '<span class="verified-badge">✓</span>' : '<span class="unverified-badge">!</span>';
-    const online = connectedPeer === id;
-    return `<li class="${id === activePeer ? 'active' : ''}${verified ? ' verified' : ''}${online ? ' online' : ''}" data-peer="${escapeHtml(id)}">
+    const st = peerStatus.get(id) === 'reconnecting' ? ' reconnecting' : ' online';
+    return `<li class="${id === activePeer ? 'active' : ''}${verified ? ' verified' : ''}${st}" data-peer="${escapeHtml(id)}">
       <span class="peer-dot"></span>${badge}${escapeHtml(contactLabel(id))}
       <button class="peer-remove" data-disconnect="${escapeHtml(id)}" title="Disconnect">⏏</button>
     </li>`;
@@ -492,11 +595,12 @@ function renderPeers() {
 
 function renderPeerChips() {
   const bar = document.getElementById('peer-chips');
-  if (peers.length === 0) { bar.classList.add('hidden'); return; }
+  const onlineIds = getOnlinePeerIds();
+  if (onlineIds.length === 0) { bar.classList.add('hidden'); return; }
   bar.classList.remove('hidden');
-  bar.innerHTML = peers.map(id => {
+  bar.innerHTML = onlineIds.map(id => {
     const v = peerVerified.get(id) ? ' ✓' : '';
-    return `<button class="chip${id === activePeer ? ' active' : ''}${peerVerified.get(id) ? ' verified' : ''}" data-peer="${id}">${escapeHtml(shortPeer(id))}${v}</button>`;
+    return `<button class="chip${id === activePeer ? ' active' : ''}${peerVerified.get(id) ? ' verified' : ''}" data-peer="${id}">${escapeHtml(contactLabel(id))}${v}</button>`;
   }).join('');
   bar.querySelectorAll('.chip').forEach(c => {
     c.onclick = () => selectPeer(c.dataset.peer);
@@ -524,8 +628,10 @@ function updateChatHeader() {
   const sub = document.getElementById('chat-subtitle');
   if (activePeer) {
     const verified = peerVerified.get(activePeer);
-    title.textContent = shortPeer(activePeer);
-    sub.textContent = verified ? '✓ Verified — end-to-end encrypted' : '⚠ Not verified — run SAS check';
+    const st = contactStatus(activePeer);
+    title.textContent = contactLabel(activePeer);
+    const secure = verified ? '✓ Verified — end-to-end encrypted' : '⚠ Not verified — run SAS check';
+    sub.textContent = `${st.text} · ${secure}`;
   } else {
     title.textContent = 'Select a peer';
     sub.textContent = 'Share your QR to get started';
@@ -540,16 +646,16 @@ function updateVerifyBanner() {
 
 function updateInputState() {
   const hasPeer = !!activePeer;
-  const online = activePeer && connectedPeer === activePeer;
+  const online = activePeer && connectedPeers.has(activePeer);
   const verified = activePeer && peerVerified.get(activePeer);
   const inCall = !!activeCall;
-  const canChat = hasPeer && verified && !inCall;
+  const canChat = hasPeer && verified && online && !inCall;
   ['message-input', 'send-btn', 'send-file-btn'].forEach(id => {
     document.getElementById(id).disabled = !canChat;
   });
   document.getElementById('voice-call-btn').disabled = !hasPeer || !verified || inCall || !online;
   document.getElementById('video-call-btn').disabled = !hasPeer || !verified || inCall || !online;
-  document.getElementById('disconnect-btn').disabled = !hasPeer;
+  document.getElementById('disconnect-btn').disabled = !hasPeer || !online;
 }
 
 function updateCallUI() {
@@ -557,7 +663,7 @@ function updateCallUI() {
   const endBtn = document.getElementById('end-call-btn');
   if (activeCall) {
     const kind = activeCall.video ? 'Video' : 'Voice';
-    bar.innerHTML = `<span class="call-pulse"></span> ${kind} call — ${shortPeer(activeCall.peer)}`;
+    bar.innerHTML = `<span class="call-pulse"></span> ${kind} call — ${escapeHtml(contactLabel(activeCall.peer))}`;
     bar.classList.remove('hidden');
     endBtn.classList.remove('hidden');
   } else {
@@ -565,6 +671,18 @@ function updateCallUI() {
     endBtn.classList.add('hidden');
   }
   updateInputState();
+}
+
+async function endActiveCall() {
+  if (!activeCall) return;
+  try {
+    await invoke('end_call', { peerId: activeCall.peer, callId: activeCall.callId });
+    await window.SrltcpWebRTC?.cleanupCall();
+    activeCall = null;
+    activeCallRef.current = null;
+    updateCallUI();
+    toast('Call ended');
+  } catch (e) { toast(`End call error: ${e}`, true); }
 }
 
 function appendMessage(content, direction, sender, opts = {}, persist = true) {
@@ -691,6 +809,8 @@ async function runVerification() {
     if (peerId) {
       addPeerUnique(peerId);
       connectedPeer = peerId;
+      connectedPeers.add(peerId);
+      peerStatus.set(peerId, 'online');
       selectPeer(peerId);
     }
     document.getElementById('remote-qr').value = '';
@@ -705,6 +825,7 @@ async function runVerification() {
       persistContacts();
       await syncTrustedPubkeys();
       if (qr) await invoke('register_saved_peer', { peerId, qr });
+      await syncDisplayName(peerId);
       updateChatHeader();
       updateInputState();
       updateVerifyBanner();
@@ -755,6 +876,8 @@ document.getElementById('sas-confirm').onclick = async () => {
     }
     peerVerified.set(pendingSas.peerId, true);
     connectedPeer = pendingSas.peerId;
+    connectedPeers.add(pendingSas.peerId);
+    peerStatus.set(pendingSas.peerId, 'online');
     const name = displayName || shortPeer(pendingSas.peerId);
     const existing = savedContacts.findIndex(c => c.id === pendingSas.peerId);
     const qr = window._lastConnectQr || '';
@@ -764,6 +887,7 @@ document.getElementById('sas-confirm').onclick = async () => {
     persistContacts();
     await syncTrustedPubkeys();
     if (qr) await invoke('register_saved_peer', { peerId: pendingSas.peerId, qr });
+    await syncDisplayName(pendingSas.peerId);
     selectPeer(pendingSas.peerId);
     toast('Peer verified — secure channel established');
     hideSasModal();
@@ -776,9 +900,10 @@ document.getElementById('sas-confirm').onclick = async () => {
   }
 };
 
-document.getElementById('save-display-name')?.addEventListener('click', () => {
+document.getElementById('save-display-name')?.addEventListener('click', async () => {
   displayName = document.getElementById('display-name').value.trim();
   persistContacts();
+  await syncDisplayName(connectedPeer);
   toast('Display name saved');
 });
 
@@ -802,11 +927,33 @@ document.querySelector('.modal-backdrop')?.addEventListener('click', () => {
 document.getElementById('refresh-peers').onclick = async () => {
   try {
     const list = await invoke('get_peers');
-    peers = [];
-    list.forEach(addPeer);
-    toast(`Peers refreshed (${list.length})`);
+    connectedPeers.clear();
+    list.forEach(id => {
+      if (id.startsWith('peer:')) {
+        addPeerUnique(id);
+        connectedPeers.add(id);
+        peerStatus.set(id, 'online');
+      }
+    });
+    connectedPeer = list.find(id => id.startsWith('peer:')) || null;
+    renderPeers();
+    renderPeerChips();
+    renderContactsList();
+    toast(`Peers refreshed (${connectedPeers.size} online)`);
   } catch (e) { toast(`Refresh error: ${e}`, true); }
 };
+
+document.getElementById('refresh-serial')?.addEventListener('click', async () => {
+  await refreshSerialPorts();
+  toast('Serial devices refreshed');
+});
+
+document.getElementById('call-setting-mic')?.addEventListener('change', (e) => {
+  window.SrltcpWebRTC?.setCallSettings({ mic: e.target.checked });
+});
+document.getElementById('call-setting-camera')?.addEventListener('change', (e) => {
+  window.SrltcpWebRTC?.setCallSettings({ camera: e.target.checked });
+});
 
 document.getElementById('disconnect-btn').onclick = async () => {
   if (!activePeer) return;
@@ -814,9 +961,11 @@ document.getElementById('disconnect-btn').onclick = async () => {
 };
 
 document.getElementById('voice-call-btn').onclick = async () => {
-  if (!activePeer || connectedPeer !== activePeer) return;
+  if (!activePeer || !connectedPeers.has(activePeer)) return;
   try {
-    activeCall = await window.SrltcpWebRTC.startOutgoingCall(activePeer, false, invoke);
+    activeCall = await window.SrltcpWebRTC.startOutgoingCall(
+      activePeer, false, invoke, contactLabel(activePeer),
+    );
     activeCallRef.current = activeCall;
     updateCallUI();
     toast('Voice call started');
@@ -824,30 +973,49 @@ document.getElementById('voice-call-btn').onclick = async () => {
 };
 
 document.getElementById('video-call-btn').onclick = async () => {
-  if (!activePeer || connectedPeer !== activePeer) return;
+  if (!activePeer || !connectedPeers.has(activePeer)) return;
   try {
-    activeCall = await window.SrltcpWebRTC.startOutgoingCall(activePeer, true, invoke);
+    activeCall = await window.SrltcpWebRTC.startOutgoingCall(
+      activePeer, true, invoke, contactLabel(activePeer),
+    );
     activeCallRef.current = activeCall;
     updateCallUI();
     toast('Video call started');
   } catch (e) { toast(`Video call failed: ${e}`, true); }
 };
 
-document.getElementById('end-call-btn').onclick = async () => {
-  if (!activeCall) return;
+document.getElementById('end-call-btn').onclick = () => endActiveCall();
+document.getElementById('call-end-overlay-btn')?.addEventListener('click', () => endActiveCall());
+
+document.getElementById('incoming-call-answer')?.addEventListener('click', async () => {
   try {
-    await invoke('end_call', { peerId: activeCall.peer, callId: activeCall.id });
-    await window.SrltcpWebRTC.cleanupCall();
-    activeCall = null;
-    activeCallRef.current = null;
+    activeCall = await window.SrltcpWebRTC.answerIncomingCall(invoke);
+    activeCallRef.current = activeCall;
     updateCallUI();
-    toast('Call ended');
-  } catch (e) { toast(`End call error: ${e}`, true); }
-};
+    toast('Call connected');
+  } catch (e) { toast(`Answer failed: ${e}`, true); }
+});
+
+document.getElementById('incoming-call-decline')?.addEventListener('click', async () => {
+  try {
+    await window.SrltcpWebRTC.declineIncomingCall(invoke);
+    toast('Call declined');
+  } catch (e) { toast(`Decline error: ${e}`, true); }
+});
+
+document.getElementById('call-mute-btn')?.addEventListener('click', () => {
+  const on = window.SrltcpWebRTC?.toggleMute();
+  document.getElementById('call-mute-btn')?.classList.toggle('muted', on === false);
+});
+
+document.getElementById('call-camera-btn')?.addEventListener('click', () => {
+  const on = window.SrltcpWebRTC?.toggleCamera();
+  document.getElementById('call-camera-btn')?.classList.toggle('muted', on === false);
+});
 
 document.getElementById('send-file-btn').onclick = async () => {
   if (!activePeer || !peerVerified.get(activePeer)) return;
-  const offline = connectedPeer !== activePeer;
+  const offline = activePeer && !connectedPeers.has(activePeer);
   let filePath;
   try { filePath = await openFileDialog({ multiple: false }); } catch (_) {}
   if (!filePath) return;
@@ -879,7 +1047,7 @@ async function sendMessage() {
     toast('Verify peer with SAS before messaging', true);
     return;
   }
-  const offline = connectedPeer !== activePeer;
+  const offline = activePeer && !connectedPeers.has(activePeer);
   try {
     await invoke('send_message', { peerId: activePeer, content });
     appendMessage(content, 'sent', 'You');

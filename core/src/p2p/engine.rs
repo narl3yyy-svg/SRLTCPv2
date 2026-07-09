@@ -93,6 +93,7 @@ pub enum EngineEvent {
     CallEnded { call_id: String },
     MessageQueued { peer_id: String, queue_size: usize },
     Reconnecting { peer_id: String },
+    PeerProfile { peer_id: String, display_name: String },
     Error(String),
 }
 
@@ -143,6 +144,9 @@ pub struct P2pEngine {
     /// Saved peer QR payloads for seamless auto-reconnect.
     saved_peer_qr: Arc<RwLock<HashMap<String, String>>>,
     cancelled_transfers: Arc<RwLock<HashSet<String>>>,
+    user_paused: Arc<RwLock<HashSet<String>>>,
+    local_display_name: Arc<RwLock<String>>,
+    remote_display_names: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl P2pEngine {
@@ -169,6 +173,9 @@ impl P2pEngine {
             pending_outbound: Arc::new(RwLock::new(HashMap::new())),
             saved_peer_qr: Arc::new(RwLock::new(HashMap::new())),
             cancelled_transfers: Arc::new(RwLock::new(HashSet::new())),
+            user_paused: Arc::new(RwLock::new(HashSet::new())),
+            local_display_name: Arc::new(RwLock::new(String::new())),
+            remote_display_names: Arc::new(RwLock::new(HashMap::new())),
         };
 
         (engine, event_rx)
@@ -312,7 +319,39 @@ impl P2pEngine {
             pending_outbound: self.pending_outbound.clone(),
             saved_peer_qr: self.saved_peer_qr.clone(),
             cancelled_transfers: self.cancelled_transfers.clone(),
+            user_paused: self.user_paused.clone(),
+            local_display_name: self.local_display_name.clone(),
+            remote_display_names: self.remote_display_names.clone(),
         }
+    }
+
+    pub async fn set_display_name(&self, name: &str) {
+        *self.local_display_name.write().await = name.trim().to_string();
+    }
+
+    pub async fn get_display_name(&self, peer_id: &str) -> Option<String> {
+        if let Ok(resolved) = self.resolve_peer_id(peer_id).await {
+            return self.remote_display_names.read().await.get(&resolved).cloned();
+        }
+        self.remote_display_names.read().await.get(peer_id).cloned()
+    }
+
+    pub async fn broadcast_profile(&self, peer_id: &str) -> Result<(), String> {
+        let name = self.local_display_name.read().await.clone();
+        if name.is_empty() {
+            return Ok(());
+        }
+        let resolved = self.resolve_peer_id(peer_id).await?;
+        let msg = ChatMessage {
+            id: uuid::Uuid::new_v4(),
+            sender_id: self.public_key_hex(),
+            recipient_id: resolved.clone(),
+            msg_type: MessageType::System,
+            content: name.clone(),
+            timestamp: chrono::Utc::now(),
+            metadata: Some(serde_json::json!({ "action": "profile" })),
+        };
+        self.send_wire_message(&resolved, msg).await
     }
 
     fn transfer_storage_name(transfer_id: &str, filename: &str) -> String {
@@ -513,7 +552,7 @@ impl P2pEngine {
         let event_tx = self.event_tx.clone();
         let peers = self.peers.clone();
         let running = self.running.clone();
-        let engine_self = self.clone_for_inbound();
+        let engine_self = self.clone_engine();
 
         tokio::spawn(async move {
             loop {
@@ -574,12 +613,32 @@ impl P2pEngine {
             transfers: self.transfers.clone(),
             pending_outbound: self.pending_outbound.clone(),
             cancelled_transfers: self.cancelled_transfers.clone(),
+            user_paused: self.user_paused.clone(),
+            local_display_name: self.local_display_name.clone(),
+            remote_display_names: self.remote_display_names.clone(),
         }
     }
 
     fn spawn_iroh_read_loop(&self, peer_id: String, conn: Connection) {
-        self.clone_for_inbound()
-            .spawn_iroh_read_loop(peer_id, conn);
+        let inbound = self.clone_for_inbound();
+        let engine = self.clone_engine();
+        tokio::spawn(async move {
+            crate::network::iroh_transport::read_connection_loop(conn, peer_id.clone(), move |pid, data| {
+                let inbound = inbound.clone();
+                async move {
+                    inbound.handle_inbound_bytes(&pid, &data).await;
+                }
+            })
+            .await;
+            let resolved = resolve_session_peer(
+                &engine.peers,
+                &engine.peer_aliases,
+                &peer_id,
+            )
+            .await
+            .unwrap_or(peer_id);
+            engine.on_connection_lost(&resolved).await;
+        });
     }
 
     pub async fn connect_iroh_ticket(&self, ticket: &str) -> Result<String, String> {
@@ -737,7 +796,7 @@ impl P2pEngine {
 
         self.peers.write().await.remove(&resolved);
         self.handshake_wait.write().await.remove(&resolved);
-        let peer_for_reconnect = resolved.clone();
+        self.user_paused.write().await.insert(resolved.clone());
         let _ = self
             .event_tx
             .send(EngineEvent::PeerDisconnected {
@@ -745,8 +804,21 @@ impl P2pEngine {
                 reason: "user disconnected".to_string(),
             })
             .await;
-        self.schedule_auto_reconnect(peer_for_reconnect);
         Ok(())
+    }
+
+    async fn on_connection_lost(&self, peer_id: &str) {
+        if self.user_paused.read().await.contains(peer_id) {
+            return;
+        }
+        let _ = self
+            .event_tx
+            .send(EngineEvent::PeerDisconnected {
+                peer_id: peer_id.to_string(),
+                reason: "connection lost".to_string(),
+            })
+            .await;
+        self.schedule_auto_reconnect(peer_id.to_string());
     }
 
     /// Connect, run handshake, canonicalize peer id. Returns (peer_id, sas, auto_trusted).
@@ -879,8 +951,10 @@ impl P2pEngine {
             })
             .await;
 
+        self.user_paused.write().await.remove(&canonical);
         if auto_trusted {
             self.flush_pending_for_peer(&canonical).await;
+            let _ = self.broadcast_profile(&canonical).await;
         }
 
         Ok((canonical, sas, auto_trusted))
@@ -903,6 +977,8 @@ impl P2pEngine {
                 .await
                 .insert(hex::encode(remote_pk).to_lowercase());
         }
+        self.user_paused.write().await.remove(&resolved);
+        let _ = self.broadcast_profile(&resolved).await;
         Ok(())
     }
 
@@ -1295,9 +1371,29 @@ struct EngineInbound {
     transfers: Arc<RwLock<HashMap<String, ActiveTransfer>>>,
     pending_outbound: Arc<RwLock<HashMap<String, VecDeque<PendingOutbound>>>>,
     cancelled_transfers: Arc<RwLock<HashSet<String>>>,
+    user_paused: Arc<RwLock<HashSet<String>>>,
+    local_display_name: Arc<RwLock<String>>,
+    remote_display_names: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl EngineInbound {
+    async fn send_profile(&self, peer_id: &str) {
+        let name = self.local_display_name.read().await.clone();
+        if name.is_empty() {
+            return;
+        }
+        let msg = ChatMessage {
+            id: uuid::Uuid::new_v4(),
+            sender_id: self.identity.public_key_hex(),
+            recipient_id: peer_id.to_string(),
+            msg_type: MessageType::System,
+            content: name,
+            timestamp: chrono::Utc::now(),
+            metadata: Some(serde_json::json!({ "action": "profile" })),
+        };
+        let _ = self.send_app_message(peer_id, msg).await;
+    }
+
     async fn flush_pending_inbound(&self, peer_id: &str) {
         let items: Vec<PendingOutbound> = {
             let mut map = self.pending_outbound.write().await;
@@ -1315,19 +1411,6 @@ impl EngineInbound {
                 PendingOutbound::File(_) => {}
             }
         }
-    }
-
-    fn spawn_iroh_read_loop(&self, peer_id: String, conn: Connection) {
-        let inbound = self.clone();
-        tokio::spawn(async move {
-            crate::network::iroh_transport::read_connection_loop(conn, peer_id, move |pid, data| {
-                let inbound = inbound.clone();
-                async move {
-                    inbound.handle_inbound_bytes(&pid, &data).await;
-                }
-            })
-            .await;
-        });
     }
 
     async fn handle_inbound_bytes(&self, peer_id: &str, data: &[u8]) {
@@ -1442,7 +1525,9 @@ impl EngineInbound {
                 };
                 if auto_trusted {
                     self.flush_pending_inbound(&canonical).await;
+                    self.send_profile(&canonical).await;
                 }
+                self.user_paused.write().await.remove(&canonical);
                 let _ = self
                     .event_tx
                     .send(EngineEvent::SasReady {
@@ -1695,6 +1780,28 @@ impl EngineInbound {
                                 signal: signal.to_string(),
                                 payload: msg.content.clone(),
                                 is_video,
+                            })
+                            .await;
+                    }
+                    return;
+                }
+            }
+        }
+
+        if msg.msg_type == MessageType::System {
+            if let Some(meta) = &msg.metadata {
+                if meta.get("action").and_then(|v| v.as_str()) == Some("profile") {
+                    let name = msg.content.trim().to_string();
+                    if !name.is_empty() {
+                        self.remote_display_names
+                            .write()
+                            .await
+                            .insert(peer_id.to_string(), name.clone());
+                        let _ = self
+                            .event_tx
+                            .send(EngineEvent::PeerProfile {
+                                peer_id: peer_id.to_string(),
+                                display_name: name,
                             })
                             .await;
                     }

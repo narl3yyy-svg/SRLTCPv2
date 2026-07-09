@@ -4,9 +4,9 @@ SRLTCP v0.2.0 serial transport — COBS framing, CRC32 integrity, and sequenced 
 
 ## Why This Design?
 
-Serial links are fundamentally different from TCP/QUIC:
+Serial links are fundamentally different from iroh/TCP streams:
 
-| Property | Serial | TCP/QUIC |
+| Property | Serial | iroh/TCP |
 |----------|--------|----------|
 | Framing | None (byte stream) | Built-in |
 | Error detection | None | Checksum + retransmit |
@@ -162,13 +162,13 @@ Only missing chunks are retransmitted — critical for serial where re-sending a
 
 ## Comparison with Higher-Level Transports
 
-On LAN/WAN (QUIC), the serial reliability layer is **bypassed** — QUIC provides its own framing, checksums, and retransmission. The same `Envelope` and `ChatMessage` types are used; only the transport adapter differs:
+On LAN/WAN (iroh), the serial reliability layer is **bypassed** — iroh provides stream framing and retransmission. The same `Envelope` and `ChatMessage` types are used; only the transport adapter differs:
 
 ```
 Application Message
        │
        ├── Serial: Envelope → AES encrypt → ReliabilityLayer → COBS+CRC → UART
-       └── QUIC:   Envelope → AES encrypt → QUIC stream (reliability built-in)
+       └── iroh:   Envelope → AES encrypt → iroh bidirectional stream
 ```
 
 ## Configuration
