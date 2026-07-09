@@ -370,13 +370,21 @@ fun ChatScreen() {
             }
             "stopped" -> engineOnline = false
             "peer_connected" -> event.peerId?.let { id ->
-                if (id.startsWith("peer:")) addPeerUnique(id)
+                addPeerUnique(id)
+                if (id.startsWith("peer:")) connectedPeer = id
                 refreshConnectedPeer()
             }
             "peer_id_updated" -> {
                 val oldId = event.message
                 val newId = event.peerId
-                if (oldId != null && newId != null) migratePeerId(oldId, newId)
+                if (oldId != null && newId != null) {
+                    migratePeerId(oldId, newId)
+                    if (connectedPeer == oldId || connectedPeer == null) connectedPeer = newId
+                    if (activePeer == oldId || activePeer == null) {
+                        activePeer = newId
+                        messages = loadMessagesForPeer(newId)
+                    }
+                }
             }
             "sas_ready" -> {
                 event.sas?.let { sas ->
@@ -540,7 +548,7 @@ fun ChatScreen() {
                     Column {
                         Text("SRLTCP", fontWeight = FontWeight.Bold)
                         Text(
-                            "v0.2.14 • ${if (engineOnline) "Online" else "Offline"} • bg active",
+                            "v0.2.15 • ${if (engineOnline) "Online" else "Offline"} • bg active",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -798,7 +806,7 @@ fun ChatScreen() {
 
     if (showSettingsSheet) {
         SettingsSheet(
-            version = "0.2.14",
+            version = "0.2.15",
             displayName = displayName,
             onDisplayNameChange = { name ->
                 displayName = name

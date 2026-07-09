@@ -4,13 +4,13 @@
 
 SRLTCP is privacy-first communication software: no accounts, no central servers, and end-to-end encryption with a human-verifiable SAS step before you trust a peer. A single Rust core powers the desktop (Tauri) and Android (Kotlin/Compose) clients, so crypto and protocol behavior stay consistent everywhere.
 
-**Current release: [v0.2.14](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.14)**
+**Current release: [v0.2.15](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.15)**
 
 ---
 
 ## Security status (read this)
 
-v0.2.13 replaces QUIC with **iroh** for NAT traversal (no port forwarding), upgrades messaging to **double-ratchet-2** (Signal-spec), and ships QR v4 with embedded iroh tickets. v0.2.12 improved peer UX and postcard wire frames. SAS codes use a **canonical transcript** both peers build identically.
+v0.2.15 fixes **chat messaging** after connect (peer alias resolution for iroh transport). v0.2.14 fixed QR paste/connect. v0.2.13 added **iroh** NAT traversal and **double-ratchet-2** (Signal-spec) with QR v4. SAS codes use a **canonical transcript** both peers build identically.
 
 **What works today**
 

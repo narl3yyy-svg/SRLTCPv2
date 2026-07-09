@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.2.15 — Messaging fix, security cleanup (2026-07-09)
+
+### Fixes (critical)
+
+- **Chat send/receive broken after connect**: iroh read loops kept stale `iroh:{node}` ids after handshake canonicalized sessions to `peer:{pubkey}`. Incoming encrypted frames could not find the peer session. Fixed with `peer_aliases` map resolved on every inbound frame.
+- **UI connection state**: Desktop/Android now track `connectedPeer` through `peer_id_updated` events.
+- **Send errors surfaced**: Android/desktop receive `error` events when `send_message` fails (trust, offline, etc.).
+
+### Security / cleanup
+
+- Removed `SRLTCP_AUTO_TEST` desktop backdoor and `peer_connect` example binary.
+- Removed dead WAN endpoint code from engine.
+
 ## v0.2.14 — QR paste/connect fix, iroh stability (2026-07-09)
 
 ### Fixes (critical)

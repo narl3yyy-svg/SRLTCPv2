@@ -28,6 +28,30 @@ fn iroh_peer_id(node_id: impl std::fmt::Display) -> String {
     format!("iroh:{node_id}")
 }
 
+/// Resolve transient transport ids to canonical peer session keys.
+async fn resolve_session_peer(
+    peers: &Arc<RwLock<HashMap<String, PeerSession>>>,
+    aliases: &Arc<RwLock<HashMap<String, String>>>,
+    peer_id: &str,
+) -> Result<String, String> {
+    if let Some(canonical) = aliases.read().await.get(peer_id) {
+        return Ok(canonical.clone());
+    }
+    let peers = peers.read().await;
+    if peers.contains_key(peer_id) {
+        return Ok(peer_id.to_string());
+    }
+    if let Some(hex_id) = peer_id.strip_prefix("peer:") {
+        let hex_id = hex_id.to_lowercase();
+        for (id, session) in peers.iter() {
+            if hex::encode(session.crypto.remote_identity).to_lowercase() == hex_id {
+                return Ok(id.clone());
+            }
+        }
+    }
+    Err(format!("peer not connected: {peer_id}"))
+}
+
 /// Engine lifecycle events for UI/bindings.
 #[derive(Debug, Clone)]
 pub enum EngineEvent {
@@ -77,8 +101,8 @@ pub struct P2pEngine {
     event_tx: mpsc::Sender<EngineEvent>,
     /// Handshake step-2/3 waiters keyed by peer_id.
     handshake_wait: Arc<RwLock<HashMap<String, oneshot::Sender<SignedHandshake>>>>,
-    /// Optional WAN endpoint (host:port) for connect fallback when LAN QR endpoint fails.
-    wan_endpoint: Arc<RwLock<Option<String>>>,
+    /// Maps transient transport ids (e.g. iroh:…) to canonical peer:{pubkey}.
+    peer_aliases: Arc<RwLock<HashMap<String, String>>>,
     /// Previously verified peer Ed25519 public keys (hex).
     trusted_pubkeys: Arc<RwLock<HashSet<String>>>,
     incoming_transfers: Arc<RwLock<HashMap<String, ChunkedReceiver>>>,
@@ -100,7 +124,7 @@ impl P2pEngine {
             calls: Arc::new(RwLock::new(HashMap::new())),
             event_tx,
             handshake_wait: Arc::new(RwLock::new(HashMap::new())),
-            wan_endpoint: Arc::new(RwLock::new(None)),
+            peer_aliases: Arc::new(RwLock::new(HashMap::new())),
             trusted_pubkeys: Arc::new(RwLock::new(HashSet::new())),
             incoming_transfers: Arc::new(RwLock::new(HashMap::new())),
             receive_dir: Arc::new(RwLock::new(
@@ -126,40 +150,17 @@ impl P2pEngine {
         }
     }
 
-    pub async fn set_wan_endpoint(&self, endpoint: Option<String>) {
-        let normalized = endpoint.and_then(|e| {
-            let trimmed = e.trim().to_string();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed)
-            }
-        });
-        *self.wan_endpoint.write().await = normalized;
-    }
-
-    pub async fn wan_endpoint(&self) -> Option<String> {
-        self.wan_endpoint.read().await.clone()
-    }
-
     async fn resolve_peer_id(&self, peer_id: &str) -> Result<String, String> {
-        let peers = self.peers.read().await;
-        if peers.contains_key(peer_id) {
-            return Ok(peer_id.to_string());
+        resolve_session_peer(&self.peers, &self.peer_aliases, peer_id).await
+    }
+
+    async fn register_peer_alias(&self, old_id: &str, canonical: &str) {
+        if old_id != canonical {
+            self.peer_aliases
+                .write()
+                .await
+                .insert(old_id.to_string(), canonical.to_string());
         }
-        if let Some(hex_id) = peer_id.strip_prefix("peer:") {
-            let hex_id = hex_id.to_lowercase();
-            for (id, session) in peers.iter() {
-                if hex::encode(session.crypto.remote_identity).to_lowercase() == hex_id {
-                    return Ok(id.clone());
-                }
-            }
-        }
-        // Transient iroh: IDs — match any live session when exactly one transport peer exists.
-        if peer_id.starts_with("iroh:") && peers.len() == 1 {
-            return Ok(peers.keys().next().unwrap().clone());
-        }
-        Err(format!("peer not connected: {peer_id}"))
     }
 
     async fn canonicalize_peer(&self, conn_peer_id: &str) -> Result<String, String> {
@@ -186,6 +187,7 @@ impl P2pEngine {
         };
         self.peers.write().await.insert(canonical.clone(), session);
         self.iroh.read().await.rekey(conn_peer_id, &canonical).await;
+        self.register_peer_alias(conn_peer_id, &canonical).await;
 
         if let Some(tx) = self.handshake_wait.write().await.remove(conn_peer_id) {
             self.handshake_wait
@@ -408,6 +410,7 @@ impl P2pEngine {
             peers: self.peers.clone(),
             event_tx: self.event_tx.clone(),
             handshake_wait: self.handshake_wait.clone(),
+            peer_aliases: self.peer_aliases.clone(),
             trusted_pubkeys: self.trusted_pubkeys.clone(),
             incoming_transfers: self.incoming_transfers.clone(),
             receive_dir: self.receive_dir.clone(),
@@ -1002,6 +1005,7 @@ struct EngineInbound {
     peers: Arc<RwLock<HashMap<String, PeerSession>>>,
     event_tx: mpsc::Sender<EngineEvent>,
     handshake_wait: Arc<RwLock<HashMap<String, oneshot::Sender<SignedHandshake>>>>,
+    peer_aliases: Arc<RwLock<HashMap<String, String>>>,
     trusted_pubkeys: Arc<RwLock<HashSet<String>>>,
     incoming_transfers: Arc<RwLock<HashMap<String, ChunkedReceiver>>>,
     receive_dir: Arc<RwLock<PathBuf>>,
@@ -1023,8 +1027,15 @@ impl EngineInbound {
     }
 
     async fn handle_inbound_bytes(&self, peer_id: &str, data: &[u8]) {
+        let resolved = match resolve_session_peer(&self.peers, &self.peer_aliases, peer_id).await {
+            Ok(id) => id,
+            Err(e) => {
+                warn!(error = %e, inbound_id = %peer_id, "inbound peer resolution failed");
+                peer_id.to_string()
+            }
+        };
         if let Ok(frame) = WireFrame::deserialize(data) {
-            self.handle_wire_frame(peer_id, frame).await;
+            self.handle_wire_frame(&resolved, frame).await;
             return;
         }
         // Try legacy JSON if postcard parse failed on non-magic data
@@ -1320,6 +1331,12 @@ impl EngineInbound {
         };
         self.peers.write().await.insert(canonical.clone(), session);
         self.iroh.read().await.rekey(conn_peer_id, &canonical).await;
+        if conn_peer_id != canonical {
+            self.peer_aliases
+                .write()
+                .await
+                .insert(conn_peer_id.to_string(), canonical.clone());
+        }
 
         if let Some(tx) = self.handshake_wait.write().await.remove(conn_peer_id) {
             self.handshake_wait

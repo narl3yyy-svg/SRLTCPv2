@@ -489,9 +489,26 @@ impl SrltcpEngine {
 
     pub fn send_message(&self, peer_id: String, content: String) {
         let inner = self.inner.clone();
+        let events = self.events.clone();
         self.runtime.spawn(async move {
             if let Err(e) = inner.lock().await.send_message(&peer_id, &content).await {
                 tracing::error!(error = %e, "send failed");
+                if let Ok(mut q) = events.lock() {
+                    q.push_back(SrltcpEvent {
+                        event_type: "error".into(),
+                        peer_id: Some(peer_id),
+                        message: None,
+                        content: None,
+                        sas: None,
+                        transfer_id: None,
+                        filename: None,
+                        progress: None,
+                        transport: None,
+                        call_id: None,
+                        error: Some(e),
+                        auto_trusted: None,
+                    });
+                }
             }
         });
     }

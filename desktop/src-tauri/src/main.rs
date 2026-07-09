@@ -1,4 +1,4 @@
-//! SRLTCP v0.2.14 Desktop — Tauri v2 backend with graceful shutdown.
+//! SRLTCP v0.2.15 Desktop — Tauri v2 backend with graceful shutdown.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -210,50 +210,9 @@ fn install_shutdown_handler(engine: Arc<Mutex<P2pEngine>>, shutting_down: Arc<At
     }
 }
 
-async fn run_auto_peer_test(engine: Arc<Mutex<P2pEngine>>) -> Result<(), String> {
-    let addr = std::env::var("SRLTCP_TEST_ADDR").unwrap_or_else(|_| "10.0.30.101:9473".into());
-    let remote_qr = std::env::var("SRLTCP_TEST_QR")
-        .unwrap_or_else(|_| "AjTqU9MmHMBy3dpi6xmxRTloSwOTD46pCpIN55kWHq3Z".into());
-    let message = std::env::var("SRLTCP_TEST_MSG")
-        .unwrap_or_else(|_| "SRLTCPv2-0.2.6 desktop auto-test message".into());
-
-    let client_port: u16 = std::env::var("SRLTCP_CLIENT_PORT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(9474);
-
-    let peer_id = format!("quic:{addr}");
-    {
-        let e = engine.lock().await;
-        e.start(client_port).await?;
-        e.connect_quic(&addr).await?;
-        e.handshake_with(&peer_id, &remote_qr).await?;
-        e.send_message(&peer_id, &message).await?;
-        tracing::info!(%addr, %message, "desktop auto-test message sent");
-    }
-    graceful_shutdown(engine).await;
-    Ok(())
-}
-
 fn main() {
     srltcp_core::init_crypto();
     srltcp_core::init_logging("info");
-
-    if std::env::var("SRLTCP_AUTO_TEST").is_ok() {
-        let (engine, _) = P2pEngine::new();
-        let engine = Arc::new(Mutex::new(engine));
-        let result = tauri::async_runtime::block_on(run_auto_peer_test(engine));
-        match result {
-            Ok(()) => {
-                println!("Desktop peer test: message sent successfully");
-                std::process::exit(0);
-            }
-            Err(e) => {
-                eprintln!("Desktop peer test failed: {e}");
-                std::process::exit(1);
-            }
-        }
-    }
 
     let (engine, mut event_rx) = P2pEngine::new();
     let engine = Arc::new(Mutex::new(engine));

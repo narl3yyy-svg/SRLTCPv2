@@ -1,6 +1,6 @@
-// SRLTCP v0.2.14 Desktop Frontend
+// SRLTCP v0.2.15 Desktop Frontend
 
-const STORAGE_KEY = 'srltcp_v0.2.14';
+const STORAGE_KEY = 'srltcp_v0.2.15';
 
 function loadState() {
   try {
@@ -222,9 +222,9 @@ function handleEvent(p) {
       break;
     case 'peer_connected': {
       const id = pick(p, 'peer_id', 'peerId');
-      if (id?.startsWith('peer:')) {
+      if (id) {
         addPeerUnique(id);
-        connectedPeer = id;
+        if (id.startsWith('peer:')) connectedPeer = id;
       }
       break;
     }
@@ -262,8 +262,9 @@ function handleEvent(p) {
     case 'peer_id_updated': {
       const oldId = pick(p, 'old_id', 'oldId');
       const newId = pick(p, 'new_id', 'newId');
-      if (connectedPeer === oldId) connectedPeer = newId;
+      if (connectedPeer === oldId || connectedPeer === null) connectedPeer = newId;
       migratePeerId(oldId, newId);
+      if (activePeer === oldId || activePeer === null) selectPeer(newId);
       break;
     }
     case 'transfer_progress':
