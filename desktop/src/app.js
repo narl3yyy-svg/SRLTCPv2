@@ -385,15 +385,15 @@ function handleEvent(p) {
     case 'call_offer':
     case 'call_answer':
     case 'call_ice':
-      window.SrltcpWebRTC?.handleIncomingCallSignal(p, invoke, activeCallRef, contactLabel)
+    case 'call_end':
+      window.SrltcpWebRTC?.handleIncomingCallSignal(
+        p, invoke, activeCallRef, contactLabel, onCallEndedLocal,
+      )
         .then((c) => { if (c) { activeCall = c; activeCallRef.current = c; updateCallUI(); } })
         .catch((e) => toast(`Call error: ${e}`, true));
       break;
     case 'call_ended':
-      activeCall = null;
-      activeCallRef.current = null;
-      window.SrltcpWebRTC?.cleanupCall();
-      updateCallUI();
+      onCallEndedLocal();
       break;
   }
 }
@@ -673,16 +673,75 @@ function updateCallUI() {
   updateInputState();
 }
 
+async function onCallEndedLocal(notifyRemote = false) {
+  const call = activeCall;
+  activeCall = null;
+  activeCallRef.current = null;
+  window.SrltcpWebRTC?.cleanupCall();
+  updateCallUI();
+  if (notifyRemote && call) {
+    try {
+      await invoke('end_call', { peerId: call.peer, callId: call.callId });
+    } catch (_) {}
+  }
+}
+
 async function endActiveCall() {
-  if (!activeCall) return;
+  if (!activeCall) {
+    onCallEndedLocal();
+    return;
+  }
   try {
     await invoke('end_call', { peerId: activeCall.peer, callId: activeCall.callId });
-    await window.SrltcpWebRTC?.cleanupCall();
-    activeCall = null;
-    activeCallRef.current = null;
-    updateCallUI();
+    onCallEndedLocal();
     toast('Call ended');
   } catch (e) { toast(`End call error: ${e}`, true); }
+}
+
+function buildVideoPlayer(path, filename) {
+  const wrap = document.createElement('div');
+  wrap.className = 'msg-video-wrap';
+
+  const vid = document.createElement('video');
+  vid.className = 'msg-media';
+  vid.controls = true;
+  vid.playsInline = true;
+  vid.preload = 'metadata';
+  vid.src = convertFileSrc(path);
+
+  const toolbar = document.createElement('div');
+  toolbar.className = 'msg-video-toolbar';
+
+  const playBtn = document.createElement('button');
+  playBtn.type = 'button';
+  playBtn.className = 'btn-sm';
+  playBtn.textContent = '▶ Play';
+  playBtn.onclick = () => { vid.play().catch(() => toast('Playback failed', true)); };
+
+  const pauseBtn = document.createElement('button');
+  pauseBtn.type = 'button';
+  pauseBtn.className = 'btn-sm';
+  pauseBtn.textContent = '⏸ Pause';
+  pauseBtn.onclick = () => vid.pause();
+
+  const openBtn = document.createElement('button');
+  openBtn.type = 'button';
+  openBtn.className = 'btn-sm';
+  openBtn.textContent = '↗ Open';
+  openBtn.onclick = async () => {
+    try {
+      await window.__TAURI__?.opener?.open(path)
+        ?? window.__TAURI__?.shell?.open(path);
+    } catch (_) {
+      toast(`Open file: ${path}`);
+    }
+  };
+
+  vid.onerror = () => toast(`Video playback failed: ${filename}`, true);
+
+  toolbar.append(playBtn, pauseBtn, openBtn);
+  wrap.append(vid, toolbar);
+  return wrap;
 }
 
 function appendMessage(content, direction, sender, opts = {}, persist = true) {
@@ -697,11 +756,7 @@ function appendMessage(content, direction, sender, opts = {}, persist = true) {
     img.alt = content;
     div.appendChild(img);
   } else if (opts.kind === 'video' && opts.path) {
-    const vid = document.createElement('video');
-    vid.src = convertFileSrc(opts.path);
-    vid.controls = true;
-    vid.className = 'msg-media';
-    div.appendChild(vid);
+    div.appendChild(buildVideoPlayer(opts.path, content));
   } else {
     const text = document.createElement('div');
     text.className = 'msg-text';
@@ -964,7 +1019,7 @@ document.getElementById('voice-call-btn').onclick = async () => {
   if (!activePeer || !connectedPeers.has(activePeer)) return;
   try {
     activeCall = await window.SrltcpWebRTC.startOutgoingCall(
-      activePeer, false, invoke, contactLabel(activePeer),
+      activePeer, false, invoke, contactLabel(activePeer), onCallEndedLocal,
     );
     activeCallRef.current = activeCall;
     updateCallUI();
@@ -976,7 +1031,7 @@ document.getElementById('video-call-btn').onclick = async () => {
   if (!activePeer || !connectedPeers.has(activePeer)) return;
   try {
     activeCall = await window.SrltcpWebRTC.startOutgoingCall(
-      activePeer, true, invoke, contactLabel(activePeer),
+      activePeer, true, invoke, contactLabel(activePeer), onCallEndedLocal,
     );
     activeCallRef.current = activeCall;
     updateCallUI();
@@ -989,7 +1044,7 @@ document.getElementById('call-end-overlay-btn')?.addEventListener('click', () =>
 
 document.getElementById('incoming-call-answer')?.addEventListener('click', async () => {
   try {
-    activeCall = await window.SrltcpWebRTC.answerIncomingCall(invoke);
+    activeCall = await window.SrltcpWebRTC.answerIncomingCall(invoke, onCallEndedLocal);
     activeCallRef.current = activeCall;
     updateCallUI();
     toast('Call connected');

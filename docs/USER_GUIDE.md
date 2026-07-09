@@ -1,6 +1,6 @@
 # User Guide
 
-Using SRLTCP v0.2.17 for secure peer-to-peer messaging.
+Using SRLTCP v0.2.18 for secure peer-to-peer messaging.
 
 ## Getting Started
 
@@ -15,7 +15,7 @@ The launcher downloads a prebuilt binary from GitHub Releases. Use `./run.sh --r
 
 ### Android
 
-1. Download `SRLTCPv2-0.2.17.apk` from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest) or build locally (see [BUILD.md](BUILD.md))
+1. Download `SRLTCPv2-0.2.18.apk` from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest) or build locally (see [BUILD.md](BUILD.md))
 2. Open SRLTCP — the background service starts automatically
 3. A notification appears: "Listening for peers..."
 4. You can safely swipe the app away or press Home
@@ -24,7 +24,7 @@ The launcher downloads a prebuilt binary from GitHub Releases. Use `./run.sh --r
 
 ### QR Code + SAS (Required)
 
-SRLTCP v0.2.17 uses **QR v4** with an **iroh ticket** for NAT traversal — no port forwarding or WAN settings required. Paste the peer's QR and tap **Connect & Verify**.
+SRLTCP v0.2.18 uses **QR v4** with an **iroh ticket** for NAT traversal — no port forwarding or WAN settings required. Paste the peer's QR and tap **Connect & Verify**.
 
 1. **Share identity:** Copy or display your QR code. Send the payload to your peer.
 2. **Paste peer QR:** Open **Add Peer**, paste their QR payload, and click **Connect & Verify (QR + SAS)**.
@@ -75,7 +75,7 @@ The **Peers** panel has two sections:
 1. Select a verified peer
 2. Click the file button and choose a file (desktop)
 3. Transfer progress appears as a progress bar
-4. Images and videos display inline in chat; tap **Cancel** to abort an in-flight transfer
+4. Images and videos display inline in chat. Videos include **Play/Pause** controls (and **Open** on desktop); tap **Cancel** to abort an in-flight transfer
 5. Messages to offline saved contacts queue automatically and send on reconnect
 
 ## Voice and Video Calls
@@ -130,9 +130,10 @@ Settings → Apps → SRLTCP → Force Stop
 | No peers in Peers Online | Only connected peers appear there; check **Saved Contacts** and tap **Reconnect** |
 | Peer shows offline but is up | They may have disconnected from you; reconnect from Saved Contacts |
 | Voice call permission denied | Linux: grant portal mic access; answer incoming calls with **Answer** (not auto) |
-| Transfer stuck | Wait for ACK progress; cancel and retry; both peers on v0.2.17+ |
+| Video won't play | Use the Play button or native controls; on desktop try **Open** to play in your system player |
+| Transfer stuck | Wait for ACK progress; cancel and retry; both peers on v0.2.18+ |
 | No serial ports listed | Plug in device, click **Refresh**; Linux: add user to `dialout` group |
-| Serial connect fails | Both peers on v0.2.17+; try another baud rate; check cable |
+| Serial connect fails | Both peers on v0.2.18+; try another baud rate; check cable |
 | SAS codes don't match | Possible MITM — do not trust the connection; retry |
 | Port already in use | Run `./cleanup.sh` then restart |
 | Android service stopped | Disable battery optimization for SRLTCP |

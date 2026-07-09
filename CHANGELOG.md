@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.2.18 — Video playback & call reliability (2026-07-09)
+
+### Fixes
+
+- **Video playback (desktop)** — Chat videos show native controls plus Play/Pause/Open toolbar; CSP allows `asset:` URLs for Tauri file playback.
+- **Video playback (Android)** — `MediaController` on received videos; explicit Play/Pause buttons in chat.
+- **Voice/video calls (desktop)** — ICE candidate queue before remote SDP; `video.play()` on streams; voice-only fallback when camera unavailable; auto `end_call` on connection failure; expanded CSP for WebRTC.
+- **Voice/video calls (Android)** — Runtime mic/camera permission on answer; ICE queue; camera fallback to voice-only; WebRTC on IO thread with main-thread UI updates; remote video track binding fixes.
+
 ## v0.2.17 — Calls UI, presence, serial, docs (2026-07-09)
 
 ### Fixes

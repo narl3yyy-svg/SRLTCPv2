@@ -408,6 +408,42 @@ textarea:focus { border-color: var(--accent); }
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
+.call-videos.voice-only {
+  min-height: 200px;
+  background: linear-gradient(160deg, #1a2030, #0f1520);
+}
+
+.call-voice-only {
+  text-align: center;
+  color: var(--text-primary);
+}
+
+.call-voice-only .call-voice-icon {
+  font-size: 3rem;
+  display: block;
+  margin-bottom: 8px;
+}
+
+.call-videos .call-video.hidden { display: none; }
+
+.msg-video-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.msg-video-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.msg-video-toolbar .btn-sm {
+  width: auto;
+  margin-top: 0;
+}
+
 .call-controls {
   display: flex;
   justify-content: center;

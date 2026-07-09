@@ -1,13 +1,17 @@
 package com.srltcp.v2
 
 import com.srltcp.v2.webrtc.WebRtcCallManagerHolder
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.webkit.MimeTypeMap
+import android.widget.MediaController
 import android.widget.VideoView
+import androidx.core.content.ContextCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -41,7 +45,10 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import org.webrtc.SurfaceViewRenderer
 import com.srltcp.v2.data.AppPreferences
 import com.srltcp.v2.data.SavedContact
 import com.srltcp.v2.service.SrltcpForegroundService
@@ -148,8 +155,57 @@ fun ChatScreen() {
     val remoteDisplayNames = remember { mutableStateMapOf<String, String>() }
     var connectedPeer by remember { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
+    var pendingCallAction by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     fun showSnackbar(msg: String) { snackbarMessage = msg }
+
+    val callPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { results ->
+        if (results.values.all { it }) {
+            pendingCallAction?.invoke()
+        } else {
+            showSnackbar("Microphone/camera permission required for calls")
+        }
+        pendingCallAction = null
+    }
+
+    fun ensureCallPermissions(video: Boolean, onGranted: () -> Unit) {
+        val needed = buildList {
+            add(Manifest.permission.RECORD_AUDIO)
+            if (video) add(Manifest.permission.CAMERA)
+        }
+        val missing = needed.filter {
+            ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isEmpty()) {
+            onGranted()
+        } else {
+            pendingCallAction = onGranted
+            callPermissionLauncher.launch(missing.toTypedArray())
+        }
+    }
+
+    fun endActiveCall() {
+        val call = callState ?: return
+        scope.launch(Dispatchers.IO) {
+            SrltcpEngineHolder.getOrCreate().endCall(call.peerId, call.callId)
+            WebRtcCallManagerHolder.end()
+            withContext(Dispatchers.Main) { callState = null }
+        }
+    }
+
+    fun startOutgoingCall(peer: String, video: Boolean) {
+        ensureCallPermissions(video) {
+            scope.launch {
+                try {
+                    WebRtcCallManagerHolder.startOutgoing(context, peer, video) { callState = it }
+                } catch (e: Exception) {
+                    showSnackbar("Call failed: ${e.message ?: e}")
+                }
+            }
+        }
+    }
 
     fun contactLabel(peerId: String): String {
         remoteDisplayNames[peerId]?.takeIf { it.isNotBlank() }?.let { return it }
@@ -535,17 +591,23 @@ fun ChatScreen() {
                 if (peer != null && callId != null) {
                     val payload = event.message ?: ""
                     val isVideo = event.autoTrusted == true
-                    scope.launch(Dispatchers.Main) {
-                        WebRtcCallManagerHolder.handleSignal(
-                            context, peer, callId, event.eventType.removePrefix("call_"),
-                            payload, isVideo,
-                        ) { state -> callState = state }
+                    scope.launch {
+                        try {
+                            WebRtcCallManagerHolder.handleSignal(
+                                context, peer, callId, event.eventType.removePrefix("call_"),
+                                payload, isVideo,
+                            ) { state -> callState = state }
+                        } catch (e: Exception) {
+                            showSnackbar("Call error: ${e.message ?: e}")
+                        }
                     }
                 }
             }
             "call_ended" -> {
                 WebRtcCallManagerHolder.end()
                 callState = null
+                showIncomingCallDialog = false
+                pendingIncomingCall = null
                 showSnackbar("Call ended")
             }
             "error" -> showSnackbar(event.error ?: "Unknown error")
@@ -662,14 +724,12 @@ fun ChatScreen() {
                         onClick = {
                             val peer = activePeer ?: return@IconButton
                             if (connectedPeer != peer) {
-                                showSnackbar("Peer offline — reconnecting")
+                                showSnackbar("Peer offline — tap Reconnect")
                                 return@IconButton
                             }
-                            scope.launch {
-                                WebRtcCallManagerHolder.startOutgoing(context, peer, false) { callState = it }
-                            }
+                            startOutgoingCall(peer, false)
                         },
-                        enabled = activePeer != null && connectedPeer == activePeer && peerVerified[activePeer] == true,
+                        enabled = activePeer != null && connectedPeer == activePeer && peerVerified[activePeer] == true && callState == null,
                     ) {
                         Icon(Icons.Default.Call, contentDescription = "Voice call")
                     }
@@ -677,14 +737,12 @@ fun ChatScreen() {
                         onClick = {
                             val peer = activePeer ?: return@IconButton
                             if (connectedPeer != peer) {
-                                showSnackbar("Peer offline — reconnecting")
+                                showSnackbar("Peer offline — tap Reconnect")
                                 return@IconButton
                             }
-                            scope.launch {
-                                WebRtcCallManagerHolder.startOutgoing(context, peer, true) { callState = it }
-                            }
+                            startOutgoingCall(peer, true)
                         },
-                        enabled = activePeer != null && connectedPeer == activePeer && peerVerified[activePeer] == true,
+                        enabled = activePeer != null && connectedPeer == activePeer && peerVerified[activePeer] == true && callState == null,
                     ) {
                         Icon(Icons.Default.Videocam, contentDescription = "Video call")
                     }
@@ -697,12 +755,7 @@ fun ChatScreen() {
                     CallStatusBar(
                         call = call,
                         peerLabel = contactLabel(call.peerId),
-                        onEndCall = {
-                            scope.launch(Dispatchers.IO) {
-                                SrltcpEngineHolder.getOrCreate().endCall(call.peerId, call.callId)
-                                WebRtcCallManagerHolder.end()
-                            }
-                        },
+                        onEndCall = { endActiveCall() },
                     )
                 }
                 transfers.values.filter { !it.isComplete }.forEach { transfer ->
@@ -938,11 +991,21 @@ fun ChatScreen() {
                     val call = pendingIncomingCall
                     pendingIncomingCall = null
                     if (call != null) {
-                        scope.launch {
-                            WebRtcCallManagerHolder.handleSignal(
-                                context, call.peerId, call.callId, "offer",
-                                call.sdp, call.isVideo,
-                            ) { state -> callState = state }
+                        ensureCallPermissions(call.isVideo) {
+                            scope.launch {
+                                try {
+                                    WebRtcCallManagerHolder.handleSignal(
+                                        context, call.peerId, call.callId, "offer",
+                                        call.sdp, call.isVideo,
+                                    ) { state -> callState = state }
+                                } catch (e: Exception) {
+                                    showSnackbar("Answer failed: ${e.message ?: e}")
+                                    scope.launch(Dispatchers.IO) {
+                                        SrltcpEngineHolder.getOrCreate()
+                                            .sendCallSignal(call.peerId, call.callId, "end", "", call.isVideo)
+                                    }
+                                }
+                            }
                         }
                     }
                 },
@@ -992,6 +1055,14 @@ fun ChatScreen() {
             onRemove = { removeContact(it) },
             onDisconnect = { softDisconnect(it) },
             onDismiss = { showPeersSheet = false },
+        )
+    }
+
+    callState?.let { call ->
+        ActiveCallOverlay(
+            call = call,
+            peerLabel = contactLabel(call.peerId),
+            onEnd = { endActiveCall() },
         )
     }
 }
@@ -1305,26 +1376,130 @@ fun MessageBubble(message: ChatMessage) {
 
 @Composable
 fun VideoPreview(path: String) {
-    var playing by remember { mutableStateOf(false) }
-    if (playing) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        var videoView by remember { mutableStateOf<VideoView?>(null) }
         AndroidView(
             factory = { ctx ->
-                VideoView(ctx).apply {
-                    setVideoPath(path)
-                    setOnPreparedListener { mp -> mp.isLooping = false; start() }
+                VideoView(ctx).also { vv ->
+                    videoView = vv
+                    val controller = MediaController(ctx)
+                    vv.setMediaController(controller)
+                    controller.setAnchorView(vv)
+                    vv.setVideoPath(path)
+                    vv.setOnPreparedListener { mp ->
+                        mp.isLooping = false
+                        controller.show(0)
+                    }
+                    vv.setOnErrorListener { _, _, _ -> false }
                 }
             },
-            modifier = Modifier.fillMaxWidth().height(200.dp),
+            update = { vv ->
+                if (vv.tag != path) {
+                    vv.tag = path
+                    vv.setVideoPath(path)
+                }
+            },
+            modifier = Modifier.fillMaxWidth().height(220.dp),
         )
-    } else {
-        Box(
-            modifier = Modifier.fillMaxWidth().height(120.dp),
-            contentAlignment = Alignment.Center,
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            FilledTonalButton(onClick = { playing = true }) {
-                Icon(Icons.Default.PlayArrow, contentDescription = "Play video")
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(File(path).name)
+            TextButton(onClick = { videoView?.start() }) { Text("Play") }
+            TextButton(onClick = { videoView?.pause() }) { Text("Pause") }
+        }
+        Text(
+            File(path).name,
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+    }
+}
+
+@Composable
+fun ActiveCallOverlay(
+    call: CallState,
+    peerLabel: String,
+    onEnd: () -> Unit,
+) {
+    var muted by remember { mutableStateOf(false) }
+    Dialog(
+        onDismissRequest = {},
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(12.dp),
+                verticalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column {
+                    Text(
+                        if (call.isVideo) "Video call" else "Voice call",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                    )
+                    Text(peerLabel, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (call.isVideo) {
+                    Row(
+                        modifier = Modifier.weight(1f).fillMaxWidth().padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        AndroidView(
+                            factory = { ctx ->
+                                SurfaceViewRenderer(ctx).apply {
+                                    WebRtcCallManagerHolder.bindRemote(this)
+                                }
+                            },
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                        )
+                        AndroidView(
+                            factory = { ctx ->
+                                SurfaceViewRenderer(ctx).apply {
+                                    WebRtcCallManagerHolder.bindLocal(this)
+                                }
+                            },
+                            modifier = Modifier.weight(0.45f).fillMaxHeight(),
+                        )
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Default.Call, contentDescription = null, modifier = Modifier.size(72.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Voice call active", fontSize = 14.sp)
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            muted = !muted
+                            WebRtcCallManagerHolder.setMute(muted)
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(if (muted) Icons.Default.MicOff else Icons.Default.Mic, contentDescription = null)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(if (muted) "Unmute" else "Mute")
+                    }
+                    Button(
+                        onClick = onEnd,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    ) {
+                        Icon(Icons.Default.CallEnd, contentDescription = null)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("End")
+                    }
+                }
             }
         }
     }

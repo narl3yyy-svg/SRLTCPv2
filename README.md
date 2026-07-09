@@ -4,13 +4,13 @@
 
 SRLTCP is privacy-first communication software: no accounts, no central servers, and end-to-end encryption with a human-verifiable SAS step before you trust a peer. A single Rust core powers the desktop (Tauri) and Android (Kotlin/Compose) clients, so crypto and protocol behavior stay consistent everywhere.
 
-**Current release: [v0.2.17](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.17)**
+**Current release: [v0.2.18](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.18)**
 
 ---
 
 ## Security status (read this)
 
-v0.2.17 fixes **call UI** (answer dialog, overlay, settings), **peer presence** (online/reconnecting/offline), **display name exchange**, **serial I/O**, and disconnect/reconnect behavior. v0.2.16 added voice/video calls, file transfer ACKs, and offline queue. v0.2.13+ uses **iroh** NAT traversal (no port forwarding) and **double-ratchet-2** E2EE with QR v4.
+v0.2.18 fixes **video playback controls** in chat and **voice/video call reliability** (ICE queuing, permissions, camera fallback). v0.2.17 fixed **call UI** (answer dialog, overlay, settings), **peer presence** (online/reconnecting/offline), **display name exchange**, **serial I/O**, and disconnect/reconnect behavior. v0.2.16 added voice/video calls, file transfer ACKs, and offline queue. v0.2.13+ uses **iroh** NAT traversal (no port forwarding) and **double-ratchet-2** E2EE with QR v4.
 
 **What works today**
 

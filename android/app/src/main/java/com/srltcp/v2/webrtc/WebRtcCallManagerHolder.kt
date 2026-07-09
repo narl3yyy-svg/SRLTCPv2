@@ -2,12 +2,18 @@ package com.srltcp.v2.webrtc
 
 import android.content.Context
 import com.srltcp.v2.CallState
+import com.srltcp.v2.SrltcpEngineHolder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import com.srltcp.v2.SrltcpEngineHolder
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
+import org.webrtc.SurfaceViewRenderer
 
 object WebRtcCallManagerHolder {
     private var manager: WebRtcCallManager? = null
+
+    private fun mgr(context: Context): WebRtcCallManager =
+        manager ?: WebRtcCallManager(context.applicationContext).also { manager = it }
 
     suspend fun handleSignal(
         context: Context,
@@ -17,21 +23,24 @@ object WebRtcCallManagerHolder {
         payload: String,
         isVideo: Boolean,
         onState: (CallState) -> Unit,
-    ) {
-        val mgr = manager ?: WebRtcCallManager(context.applicationContext).also { manager = it }
+    ) = withContext(Dispatchers.IO) {
+        val m = mgr(context)
         val engine = SrltcpEngineHolder.getOrCreate()
+        val notify: (CallState) -> Unit = { state ->
+            CoroutineScope(Dispatchers.Main).launch { onState(state) }
+        }
         when (signal) {
-            "offer" -> mgr.handleOffer(callId, payload, isVideo, { ice ->
+            "offer" -> m.handleOffer(callId, payload, isVideo, { ice ->
                 engine.sendCallSignal(peerId, callId, "ice", ice, isVideo)
             }) { answer ->
                 engine.sendCallSignal(peerId, callId, "answer", answer, isVideo)
-                onState(CallState(callId, peerId, isVideo))
+                notify(CallState(callId, peerId, isVideo))
             }
             "answer" -> {
-                mgr.handleAnswer(payload)
-                onState(CallState(callId, peerId, isVideo))
+                m.handleAnswer(payload)
+                notify(CallState(callId, peerId, isVideo))
             }
-            "ice" -> mgr.handleIce(payload)
+            "ice" -> m.handleIce(payload)
         }
     }
 
@@ -41,16 +50,30 @@ object WebRtcCallManagerHolder {
         isVideo: Boolean,
         onState: (CallState) -> Unit,
     ): String = withContext(Dispatchers.IO) {
-        val mgr = manager ?: WebRtcCallManager(context.applicationContext).also { manager = it }
+        val m = mgr(context)
         val engine = SrltcpEngineHolder.getOrCreate()
         var activeCallId = ""
-        mgr.startOutgoing(isVideo, { ice ->
+        m.startOutgoing(isVideo, { ice ->
             engine.sendCallSignal(peerId, activeCallId, "ice", ice, isVideo)
         }) { callId, offer ->
             activeCallId = callId
             engine.sendCallSignal(peerId, callId, "offer", offer, isVideo)
-            onState(CallState(callId, peerId, isVideo))
+            CoroutineScope(Dispatchers.Main).launch {
+                onState(CallState(callId, peerId, isVideo))
+            }
         }
+    }
+
+    fun bindLocal(renderer: SurfaceViewRenderer) {
+        manager?.bindLocal(renderer)
+    }
+
+    fun bindRemote(renderer: SurfaceViewRenderer) {
+        manager?.bindRemote(renderer)
+    }
+
+    fun setMute(muted: Boolean) {
+        manager?.setMute(muted)
     }
 
     fun end() {
