@@ -1,6 +1,6 @@
 # Architecture
 
-SRLTCP v0.2.0 system architecture.
+SRLTCP v0.2.16 system architecture.
 
 ## High-Level Overview
 
@@ -10,8 +10,8 @@ SRLTCP v0.2.0 system architecture.
 │  ┌──────────────────┐       ┌──────────────────────────┐    │
 │  │  Tauri Desktop   │       │  Android (Compose)       │    │
 │  │  HTML/CSS/JS     │       │  + Foreground Service    │    │
+│  │  + WebRTC media  │       │  + WebRTC media          │    │
 │  └────────┬─────────┘       └──────────┬───────────────┘    │
-│           │                            │                     │
 │           │ Tauri IPC                    │ UniFFI JNI          │
 │           ▼                            ▼                     │
 │  ┌─────────────────────────────────────────────────────┐    │
@@ -24,16 +24,16 @@ SRLTCP v0.2.0 system architecture.
 │  │  ┌────┴────────────────────────────────┐             │    │
 │  │  │         Transport Adapters           │             │    │
 │  │  ├──────────┬──────────┬───────────────┤             │    │
-│  │  │  Serial  │   iroh   │    WebRTC     │             │    │
-│  │  │ COBS+ACK │ NAT trav │  (signaling)  │             │    │
+│  │  │  Serial  │   iroh   │ Call signaling│             │    │
+│  │  │ COBS+ACK │ NAT trav │  (E2EE wire)  │             │    │
 │  │  └──────────┴──────────┴───────────────┘             │    │
 │  └─────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────┘
          │              │                │
          ▼              ▼                ▼
     ┌─────────┐   ┌──────────┐    ┌───────────┐
-    │  UART   │   │ iroh P2P │    │  Media    │
-    │ /dev/tty│   │ relay/HP │    │  Streams  │
+    │  UART   │   │ iroh P2P │    │ WebRTC    │
+    │ /dev/tty│   │ relay/HP │    │ STUN media│
     └─────────┘   └──────────┘    └───────────┘
 ```
 
@@ -41,141 +41,82 @@ SRLTCP v0.2.0 system architecture.
 
 ### P2P Engine (`core/src/p2p/engine.rs`)
 
-Central coordinator that:
+Central coordinator:
 
-- Manages the local Ed25519 identity
-- Starts/stops transport adapters
-- Tracks peer sessions and connection state
-- Routes messages to the correct transport
-- Emits events to UI layers (Tauri events / UniFFI callbacks)
-- Handles graceful shutdown of all resources
+- Ed25519 identity and peer session map (`peer:{pubkey}` canonical ids)
+- `peer_aliases` — maps stale `iroh:{node}` ids to canonical sessions
+- Outbound queue for trusted saved peers when offline
+- Auto-reconnect with backoff using saved QR payloads
+- iroh + serial transport routing
+- Encrypted wire frames (handshake + double ratchet payloads)
+
+### Network Transport (`core/src/network/iroh_transport.rs`)
+
+**iroh 1.0** — primary WAN/LAN path:
+
+- N0 relay preset + hole punching — **no port forwarding**
+- ALPN `srltcp/1` bidirectional streams
+- QR v4 embeds shareable `EndpointTicket`
+- Connection registry per peer; rekey on handshake canonicalization
+
+Legacy QUIC/quinn and port 9473 forwarding were removed in v0.2.13.
 
 ### Serial Transport (`core/src/serial/`)
 
-Three-layer stack:
-
-1. **Frame** — COBS encoding + CRC32
-2. **Reliability** — Sequence numbers, ACK/NACK, retransmit
-3. **Transport** — Async serial port I/O with event channel
-
-### Network Transport (`core/src/network/`)
-
-iroh 1.0 for NAT traversal:
-
-- N0 relay preset + hole punching (no port forwarding)
-- ALPN `srltcp/1` application streams
-- QR v4 embeds shareable `EndpointTicket`
-- Connection registry per peer; graceful close on shutdown
+COBS frames + reliability layer for USB/UART links.
 
 ### Crypto Module (`core/src/crypto/`)
 
-- **Identity** — Ed25519 keygen, sign, verify, QR encoding
-- **Handshake** — Hybrid X25519 + ML-KEM-768 with SAS
-- **Ratchet** — double-ratchet-2 (Signal-spec) for ongoing messages
+| Layer | Implementation |
+|-------|----------------|
+| Identity | Ed25519 sign/verify, QR v4 |
+| Handshake | Hybrid X25519 + ML-KEM-768, Ed25519-signed wire steps |
+| SAS | Canonical transcript (steps 1→2→3) |
+| Messaging | double-ratchet-2 (Signal-spec, Curve25519/X25519 ecosystem) |
+
+**Note:** `ml-kem` 0.3 is Wycheproof-tested but not independently audited. `double-ratchet-2` is pre-release (0.4.0-pre.2).
 
 ### Transfer Module (`core/src/transfer/`)
 
-Chunked file/folder transfer:
+- 4 KB chunks, SHA-256 manifest
+- Selective ACK wired on receive — sender completes when all chunks ACKed
+- Cancel via `action: "cancel"` message
+- Unique storage names: `{transfer_id_prefix}_{filename}`
 
-- 4KB chunks (fits serial frames)
-- SHA-256 manifest for integrity
-- Selective ACK for partial retransmit
-- Resumable after disconnect
+### WebRTC (`core` signaling + platform media)
 
-### WebRTC Module (`core/src/webrtc/`)
+- SDP offer/answer/ICE relayed as encrypted `CallOffer` / `CallAnswer` / `CallIce` messages
+- Desktop: browser `RTCPeerConnection` in webview
+- Android: Stream WebRTC Android
+- Media uses STUN; signaling is E2EE over iroh
 
-Voice/video calling:
-
-- SDP offer/answer over encrypted P2P channel
-- ICE candidate exchange via ChatMessage types
-- E2EE signaling; DTLS-SRTP for media
-
-## Data Flow: Sending a Message
+## Data Flow: Encrypted Message
 
 ```
-User types message
-       │
-       ▼
-ChatMessage::text() ─── JSON serialize
-       │
-       ▼
-SessionRatchet::encrypt() ─── double-ratchet-2
-       │
-       ▼
-Envelope::new(encrypted=true) ─── JSON serialize
-       │
-       ├─── Serial path ──────────────────────┐
-       │    ReliabilityLayer::prepare_send()   │
-       │    Frame::data() → COBS + CRC        │
-       │    UART write                         │
-       │                                       │
-       └─── iroh path ────────────────────────┤
-            bidirectional stream write         │
-                                               ▼
-                                         Peer receives
-                                               │
-                                               ▼
-                                    Reverse pipeline → UI
+User input → ChatMessage JSON → PeerCrypto::encrypt (double-ratchet-2)
+    → WireFrame::Encrypted → iroh bi-stream → peer
+    → resolve_session_peer → decrypt → UI event
 ```
 
-## Android Background Architecture
+## Trusted Reconnect
 
-```
-┌──────────────────────────────────────┐
-│ MainActivity (Compose UI)            │
-│  - Chat interface                    │
-│  - QR display / scan                 │
-│  - Starts service on onCreate()      │
-│  - Does NOT stop service on destroy  │
-└──────────────┬───────────────────────┘
-               │ startForegroundService()
-               ▼
-┌──────────────────────────────────────┐
-│ SrltcpForegroundService              │
-│  - Persistent notification           │
-│  - START_STICKY (restarts if killed) │
-│  - stopWithTask=false                │
-│  - Holds UniFFI SrltcpEngine ref     │
-│  - P2P listen + active sessions      │
-└──────────────────────────────────────┘
-```
+1. Verified contacts store Ed25519 pubkey hex + QR payload locally
+2. `load_trusted_pubkeys()` on startup
+3. Fresh handshake on reconnect; SAS skipped when pubkey matches saved trust
+4. Outbound queue flushes after auto-trust
+5. Engine auto-reconnects with exponential backoff
 
-## Graceful Shutdown Sequence
+## Android Background
 
-```
-Signal (Ctrl+C / window close / ACTION_STOP)
-       │
-       ▼
-1. P2pEngine::shutdown()
-       │
-       ├── SerialTransport::shutdown()
-       │     ├── Send FIN frame
-       │     ├── Flush write buffer
-       │     └── Close port handle
-       │
-       ├── QuicTransport::shutdown()
-       │     ├── Close all connections
-       │     └── Wait idle + close endpoint
-       │
-       ├── Clear peer sessions
-       └── Drop crypto state (keys zeroed)
-       │
-       ▼
-2. Remove PID file, release ports
-```
+`SrltcpForegroundService` holds the UniFFI engine (`START_STICKY`). UI polls events; P2P stays up when app is backgrounded.
 
 ## Technology Stack
 
 | Layer | Technology |
 |-------|------------|
-| Core language | Rust 2021 |
-| Async runtime | tokio |
-| Desktop shell | Tauri v2 |
-| Desktop UI | HTML/CSS/JS (Svelte-ready) |
-| Android UI | Kotlin + Jetpack Compose |
-| Android bindings | UniFFI-rs |
-| Crypto backend | aws-lc-rs |
-| Post-quantum | ml-kem 0.3 (ML-KEM-768) |
-| Networking | quinn (QUIC) |
-| Serial | serialport + custom protocol |
-| Logging | tracing + tracing-subscriber |
+| Core | Rust 2021, tokio |
+| Desktop | Tauri v2, HTML/JS, WebRTC |
+| Android | Kotlin Compose, UniFFI, Stream WebRTC |
+| Crypto | aws-lc-rs, ml-kem, double-ratchet-2 |
+| Networking | **iroh 1.0** (not quinn) |
+| Serial | serialport + COBS protocol |

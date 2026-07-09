@@ -1,5 +1,6 @@
 package com.srltcp.v2
 
+import com.srltcp.v2.webrtc.WebRtcCallManagerHolder
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -253,6 +254,7 @@ fun ChatScreen() {
                 }
                 migratePeerId(contact.peerId, result.peerId)
                 addPeerUnique(result.peerId)
+                engine.registerSavedPeer(result.peerId, contact.qrPayload)
                 if (result.autoTrusted) {
                     peerVerified[result.peerId] = true
                 }
@@ -274,20 +276,18 @@ fun ChatScreen() {
 
     fun sendCurrentMessage() {
         val peer = activePeer ?: return
-        if (connectedPeer != peer) {
-            showSnackbar("Peer offline — tap Reconnect in Saved Peers")
-            return
-        }
         if (peerVerified[peer] != true) {
             showSnackbar("Verify peer with SAS first")
             return
         }
+        val offline = connectedPeer != peer
         val text = inputText.trim()
         if (text.isEmpty()) return
         SrltcpEngineHolder.getOrCreate().sendMessage(peer, text)
         val sender = displayName.ifBlank { "You" }
         messages = messages + ChatMessage(content = text, isSent = true, sender = sender)
         inputText = ""
+        if (offline) showSnackbar("Message queued — reconnecting…")
     }
 
     fun removeContact(peerId: String) {
@@ -326,6 +326,9 @@ fun ChatScreen() {
             peerVerified[c.peerId] = c.verified
         }
         syncTrustedPubkeys(engine)
+        savedContacts.filter { it.verified && it.qrPayload.isNotBlank() }.forEach { c ->
+            engine.registerSavedPeer(c.peerId, c.qrPayload)
+        }
         reconcilePeers()
         refreshConnectedPeer()
     }
@@ -401,9 +404,12 @@ fun ChatScreen() {
                 }
             }
             "peer_disconnected" -> event.peerId?.let { id ->
-                peers.remove(id)
                 if (connectedPeer == id) connectedPeer = null
+                savedContacts.find { it.peerId == id && it.verified && it.qrPayload.isNotBlank() }
+                    ?.let { reconnectContact(it) }
             }
+            "message_queued" -> showSnackbar("Message queued — will send on reconnect")
+            "reconnecting" -> showSnackbar("Reconnecting…")
             "message" -> event.content?.let { content ->
                 messages = messages + ChatMessage(
                     content = content,
@@ -422,13 +428,16 @@ fun ChatScreen() {
                     isOutgoing = existing?.isOutgoing ?: false,
                 )
             }
+            "transfer_cancelled" -> event.transferId?.let { transfers.remove(it) }
             "transfer_complete" -> event.transferId?.let { id ->
                 val filename = event.filename ?: "file"
                 val wasOutgoing = transfers[id]?.isOutgoing ?: false
                 transfers.remove(id)
+                val explicitPath = event.message
                 val cachePath = File(context.cacheDir, filename)
                 val recvPath = File(context.filesDir, "received/$filename")
                 val mediaPath = when {
+                    !explicitPath.isNullOrBlank() && File(explicitPath).exists() -> explicitPath
                     recvPath.exists() -> recvPath.absolutePath
                     cachePath.exists() -> cachePath.absolutePath
                     else -> null
@@ -445,23 +454,22 @@ fun ChatScreen() {
                 }
                 showSnackbar(if (wasOutgoing) "Upload complete: $filename" else "Download complete: $filename")
             }
-            "voice_call_started" -> {
-                val callId = event.callId ?: ""
-                if (callId.startsWith("error:")) {
-                    showSnackbar(callId.removePrefix("error: ").trim())
-                } else {
-                    callState = CallState(callId, event.peerId ?: activePeer ?: "", false)
-                }
-            }
-            "video_call_started" -> {
-                val callId = event.callId ?: ""
-                if (callId.startsWith("error:")) {
-                    showSnackbar(callId.removePrefix("error: ").trim())
-                } else {
-                    callState = CallState(callId, event.peerId ?: activePeer ?: "", true)
+            "call_offer", "call_answer", "call_ice" -> {
+                val peer = event.peerId ?: activePeer
+                val callId = event.callId
+                if (peer != null && callId != null) {
+                    val payload = event.message ?: ""
+                    val isVideo = event.autoTrusted == true
+                    scope.launch(Dispatchers.Main) {
+                        WebRtcCallManagerHolder.handleSignal(
+                            context, peer, callId, event.eventType.removePrefix("call_"),
+                            payload, isVideo,
+                        ) { state -> callState = state }
+                    }
                 }
             }
             "call_ended" -> {
+                WebRtcCallManagerHolder.end()
                 callState = null
                 showSnackbar("Call ended")
             }
@@ -548,7 +556,7 @@ fun ChatScreen() {
                     Column {
                         Text("SRLTCP", fontWeight = FontWeight.Bold)
                         Text(
-                            "v0.2.15 • ${if (engineOnline) "Online" else "Offline"} • bg active",
+                            "v0.2.16 • ${if (engineOnline) "Online" else "Offline"} • bg active",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -571,25 +579,39 @@ fun ChatScreen() {
                     }
                     IconButton(
                         onClick = { filePicker.launch("*/*") },
-                        enabled = activePeer != null && connectedPeer == activePeer && peerVerified[activePeer] == true,
+                        enabled = activePeer != null && peerVerified[activePeer] == true,
                     ) {
                         Icon(Icons.Default.AttachFile, contentDescription = "Send file")
                     }
                     IconButton(
                         onClick = {
-                            showSnackbar("Voice calls require platform WebRTC (coming soon)")
+                            val peer = activePeer ?: return@IconButton
+                            if (connectedPeer != peer) {
+                                showSnackbar("Peer offline — reconnecting")
+                                return@IconButton
+                            }
+                            scope.launch {
+                                WebRtcCallManagerHolder.startOutgoing(context, peer, false) { callState = it }
+                            }
                         },
-                        enabled = false,
+                        enabled = activePeer != null && connectedPeer == activePeer && peerVerified[activePeer] == true,
                     ) {
-                        Icon(Icons.Default.Call, contentDescription = "Voice call (coming soon)")
+                        Icon(Icons.Default.Call, contentDescription = "Voice call")
                     }
                     IconButton(
                         onClick = {
-                            showSnackbar("Video calls require platform WebRTC (coming soon)")
+                            val peer = activePeer ?: return@IconButton
+                            if (connectedPeer != peer) {
+                                showSnackbar("Peer offline — reconnecting")
+                                return@IconButton
+                            }
+                            scope.launch {
+                                WebRtcCallManagerHolder.startOutgoing(context, peer, true) { callState = it }
+                            }
                         },
-                        enabled = false,
+                        enabled = activePeer != null && connectedPeer == activePeer && peerVerified[activePeer] == true,
                     ) {
-                        Icon(Icons.Default.Videocam, contentDescription = "Video call (coming soon)")
+                        Icon(Icons.Default.Videocam, contentDescription = "Video call")
                     }
                 },
             )
@@ -601,13 +623,22 @@ fun ChatScreen() {
                         call = call,
                         onEndCall = {
                             scope.launch(Dispatchers.IO) {
-                                SrltcpEngineHolder.getOrCreate().endCall(call.callId)
+                                SrltcpEngineHolder.getOrCreate().endCall(call.peerId, call.callId)
+                                WebRtcCallManagerHolder.end()
                             }
                         },
                     )
                 }
                 transfers.values.filter { !it.isComplete }.forEach { transfer ->
-                    TransferProgressBar(transfer)
+                    TransferProgressBar(
+                        transfer = transfer,
+                        onCancel = {
+                            scope.launch(Dispatchers.IO) {
+                                SrltcpEngineHolder.getOrCreate().cancelTransfer(transfer.id)
+                            }
+                            transfers.remove(transfer.id)
+                        },
+                    )
                 }
                 Surface(tonalElevation = 3.dp) {
                     Row(
@@ -620,7 +651,7 @@ fun ChatScreen() {
                             modifier = Modifier.weight(1f),
                             placeholder = { Text("Message…") },
                             singleLine = true,
-                            enabled = activePeer != null && connectedPeer == activePeer && peerVerified[activePeer] == true,
+                            enabled = activePeer != null && peerVerified[activePeer] == true,
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                             keyboardActions = KeyboardActions(onSend = {
                                 sendCurrentMessage()
@@ -630,7 +661,7 @@ fun ChatScreen() {
                         Spacer(modifier = Modifier.width(8.dp))
                         FilledIconButton(
                             onClick = { sendCurrentMessage() },
-                            enabled = activePeer != null && connectedPeer == activePeer && peerVerified[activePeer] == true,
+                            enabled = activePeer != null && peerVerified[activePeer] == true,
                         ) {
                             Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
                         }
@@ -777,11 +808,13 @@ fun ChatScreen() {
             peerId = sasPeerId ?: "",
             onConfirm = {
                 sasPeerId?.let { peerId ->
-                    SrltcpEngineHolder.getOrCreate().confirmPeerTrusted(peerId)
+                    val engine = SrltcpEngineHolder.getOrCreate()
+                    engine.confirmPeerTrusted(peerId)
                     peerVerified[peerId] = true
                     connectedPeer = peerId
                     val savedQr = savedContacts.find { it.peerId == peerId }?.qrPayload
                         ?: remoteQrInput.trim()
+                    if (savedQr.isNotBlank()) engine.registerSavedPeer(peerId, savedQr)
                     val contact = SavedContact(
                         peerId = peerId,
                         displayName = displayName.ifBlank { peerId.take(20) },
@@ -806,7 +839,7 @@ fun ChatScreen() {
 
     if (showSettingsSheet) {
         SettingsSheet(
-            version = "0.2.15",
+            version = "0.2.16",
             displayName = displayName,
             onDisplayNameChange = { name ->
                 displayName = name
@@ -1049,10 +1082,19 @@ fun CallStatusBar(call: CallState, onEndCall: () -> Unit) {
 }
 
 @Composable
-fun TransferProgressBar(transfer: TransferState) {
+fun TransferProgressBar(transfer: TransferState, onCancel: (() -> Unit)? = null) {
     val label = if (transfer.isOutgoing) "Sending" else "Receiving"
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
-        Text("$label: ${transfer.filename} (${(transfer.progress * 100).toInt()}%)", fontSize = 12.sp)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "$label: ${transfer.filename} (${(transfer.progress * 100).toInt()}%)",
+                fontSize = 12.sp,
+                modifier = Modifier.weight(1f),
+            )
+            if (transfer.isOutgoing && onCancel != null) {
+                TextButton(onClick = onCancel) { Text("Cancel") }
+            }
+        }
         LinearProgressIndicator(
             progress = { transfer.progress },
             modifier = Modifier.fillMaxWidth(),

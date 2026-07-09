@@ -1,6 +1,6 @@
-// SRLTCP v0.2.15 Desktop Frontend
+// SRLTCP v0.2.16 Desktop Frontend
 
-const STORAGE_KEY = 'srltcp_v0.2.15';
+const STORAGE_KEY = 'srltcp_v0.2.16';
 
 function loadState() {
   try {
@@ -36,8 +36,10 @@ let connectedPeer = null;
 let peers = [];
 const peerVerified = new Map();
 let activeCall = null;
+const activeCallRef = { current: null };
 let pendingSas = null;
 const transfers = new Map();
+let receiveDir = '';
 
 const IMAGE_EXT = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp']);
 const VIDEO_EXT = new Set(['mp4', 'webm', 'mkv', 'mov', '3gp']);
@@ -194,6 +196,10 @@ async function init() {
     document.getElementById('display-name').value = displayName;
     restoreContacts();
     await syncTrustedPubkeys();
+    for (const c of savedContacts.filter(x => x.verified && x.qr)) {
+      try { await invoke('register_saved_peer', { peerId: c.id, qr: c.qr }); } catch (_) {}
+    }
+    try { receiveDir = await invoke('get_receive_dir'); } catch (_) {}
 
     const existingPeers = await invoke('get_peers');
     existingPeers.forEach(id => { if (id.startsWith('peer:')) addPeerUnique(id); });
@@ -230,18 +236,22 @@ function handleEvent(p) {
     }
     case 'peer_disconnected': {
       const id = pick(p, 'peer_id', 'peerId');
-      peers = peers.filter(p => p !== id);
       if (connectedPeer === id) connectedPeer = null;
       renderPeers();
       renderPeerChips();
-      if (activePeer === id) {
-        document.getElementById('messages')?.replaceChildren();
-        loadChatForPeer(id).forEach(m => appendMessage(m.content, m.direction, m.sender, m.opts || {}, false));
-        updateChatHeader();
-        updateInputState();
-      }
+      renderContactsList();
+      updateChatHeader();
+      updateInputState();
+      const contact = savedContacts.find(c => c.id === id && c.verified && c.qr);
+      if (contact) reconnectContact(contact);
       break;
     }
+    case 'message_queued':
+      toast(`Queued for ${shortPeer(pick(p, 'peer_id', 'peerId'))} — will send on reconnect`);
+      break;
+    case 'reconnecting':
+      toast(`Reconnecting to ${shortPeer(pick(p, 'peer_id', 'peerId'))}…`);
+      break;
     case 'sas_ready': {
       const id = pick(p, 'peer_id', 'peerId');
       const sas = pick(p, 'sas', 'Sas');
@@ -270,21 +280,35 @@ function handleEvent(p) {
     case 'transfer_progress':
       updateTransfer(pick(p, 'id', 'Id'), p.filename, p.progress, false);
       break;
-    case 'transfer_complete':
-      updateTransfer(pick(p, 'id', 'Id'), p.filename, 1, false);
-      setTimeout(() => removeTransfer(pick(p, 'id', 'Id')), 2000);
-      appendMessage(`📁 ${p.filename}`, 'system', 'Transfer complete');
+    case 'transfer_complete': {
+      const tid = pick(p, 'id', 'Id');
+      const fname = p.filename || 'file';
+      const fpath = p.path || p.message || (receiveDir ? `${receiveDir}/${fname}` : '');
+      updateTransfer(tid, fname, 1, false);
+      setTimeout(() => removeTransfer(tid), 2000);
+      const kind = mediaKind(fname);
+      if ((kind === 'image' || kind === 'video') && fpath) {
+        appendMessage(fname, 'received', shortPeer(pick(p, 'peer_id', 'peerId')), { kind, path: fpath });
+      } else {
+        appendMessage(`📁 ${fname}`, 'received', shortPeer(pick(p, 'peer_id', 'peerId')));
+      }
       break;
-    case 'call_started':
-      activeCall = {
-        id: pick(p, 'call_id', 'callId'),
-        peer: pick(p, 'peer_id', 'peerId'),
-        video: p.is_video ?? p.isVideo ?? false,
-      };
-      updateCallUI();
+    }
+    case 'transfer_cancelled':
+      removeTransfer(pick(p, 'id', 'Id'));
+      toast('Transfer cancelled');
+      break;
+    case 'call_offer':
+    case 'call_answer':
+    case 'call_ice':
+      window.SrltcpWebRTC?.handleIncomingCallSignal(p, invoke, activeCallRef).then((c) => {
+        if (c) { activeCall = c; updateCallUI(); }
+      }).catch((e) => toast(`Call error: ${e}`, true));
       break;
     case 'call_ended':
       activeCall = null;
+      activeCallRef.current = null;
+      window.SrltcpWebRTC?.cleanupCall();
       updateCallUI();
       break;
     case 'started': setStatus('Online', true); break;
@@ -519,12 +543,12 @@ function updateInputState() {
   const online = activePeer && connectedPeer === activePeer;
   const verified = activePeer && peerVerified.get(activePeer);
   const inCall = !!activeCall;
-  const canChat = hasPeer && online && verified && !inCall;
+  const canChat = hasPeer && verified && !inCall;
   ['message-input', 'send-btn', 'send-file-btn'].forEach(id => {
     document.getElementById(id).disabled = !canChat;
   });
-  document.getElementById('voice-call-btn').disabled = !hasPeer || !verified || inCall;
-  document.getElementById('video-call-btn').disabled = !hasPeer || !verified || inCall;
+  document.getElementById('voice-call-btn').disabled = !hasPeer || !verified || inCall || !online;
+  document.getElementById('video-call-btn').disabled = !hasPeer || !verified || inCall || !online;
   document.getElementById('disconnect-btn').disabled = !hasPeer;
 }
 
@@ -624,10 +648,19 @@ function renderTransfers() {
   if (transfers.size === 0) { panel.classList.add('hidden'); return; }
   panel.classList.remove('hidden');
   panel.innerHTML = [...transfers.entries()].map(([id, t]) => `
-    <div class="transfer-item">
+    <div class="transfer-item" data-transfer="${escapeHtml(id)}">
       <span>${t.outgoing ? '↑' : '↓'} ${escapeHtml(t.filename)} — ${Math.round(t.progress * 100)}%</span>
       <div class="progress-track"><div class="progress-fill" style="width:${Math.round(t.progress * 100)}%"></div></div>
+      ${t.outgoing ? `<button class="btn-sm transfer-cancel" data-cancel="${escapeHtml(id)}">Cancel</button>` : ''}
     </div>`).join('');
+  panel.querySelectorAll('.transfer-cancel').forEach(btn => {
+    btn.onclick = async () => {
+      try {
+        await invoke('cancel_transfer', { transferId: btn.dataset.cancel });
+        removeTransfer(btn.dataset.cancel);
+      } catch (e) { toast(`Cancel failed: ${e}`, true); }
+    };
+  });
 }
 
 async function runVerification() {
@@ -671,6 +704,7 @@ async function runVerification() {
       else savedContacts.push(entry);
       persistContacts();
       await syncTrustedPubkeys();
+      if (qr) await invoke('register_saved_peer', { peerId, qr });
       updateChatHeader();
       updateInputState();
       updateVerifyBanner();
@@ -729,6 +763,7 @@ document.getElementById('sas-confirm').onclick = async () => {
     else savedContacts.push(entry);
     persistContacts();
     await syncTrustedPubkeys();
+    if (qr) await invoke('register_saved_peer', { peerId: pendingSas.peerId, qr });
     selectPeer(pendingSas.peerId);
     toast('Peer verified — secure channel established');
     hideSasModal();
@@ -779,41 +814,55 @@ document.getElementById('disconnect-btn').onclick = async () => {
 };
 
 document.getElementById('voice-call-btn').onclick = async () => {
-  toast('Voice calls require platform WebRTC (coming soon)', true);
+  if (!activePeer || connectedPeer !== activePeer) return;
+  try {
+    activeCall = await window.SrltcpWebRTC.startOutgoingCall(activePeer, false, invoke);
+    activeCallRef.current = activeCall;
+    updateCallUI();
+    toast('Voice call started');
+  } catch (e) { toast(`Voice call failed: ${e}`, true); }
 };
 
 document.getElementById('video-call-btn').onclick = async () => {
-  toast('Video calls require platform WebRTC (coming soon)', true);
+  if (!activePeer || connectedPeer !== activePeer) return;
+  try {
+    activeCall = await window.SrltcpWebRTC.startOutgoingCall(activePeer, true, invoke);
+    activeCallRef.current = activeCall;
+    updateCallUI();
+    toast('Video call started');
+  } catch (e) { toast(`Video call failed: ${e}`, true); }
 };
 
 document.getElementById('end-call-btn').onclick = async () => {
   if (!activeCall) return;
   try {
-    await invoke('end_call', { callId: activeCall.id });
+    await invoke('end_call', { peerId: activeCall.peer, callId: activeCall.id });
+    await window.SrltcpWebRTC.cleanupCall();
     activeCall = null;
+    activeCallRef.current = null;
     updateCallUI();
     toast('Call ended');
   } catch (e) { toast(`End call error: ${e}`, true); }
 };
 
 document.getElementById('send-file-btn').onclick = async () => {
-  if (!activePeer) return;
-  if (connectedPeer !== activePeer) {
-    toast('Peer offline — reconnect from Contacts', true);
-    return;
-  }
+  if (!activePeer || !peerVerified.get(activePeer)) return;
+  const offline = connectedPeer !== activePeer;
   let filePath;
   try { filePath = await openFileDialog({ multiple: false }); } catch (_) {}
   if (!filePath) return;
   try {
     const result = await invoke('send_file', { peerId: activePeer, filePath });
     const kind = mediaKind(result.filename);
-    updateTransfer(result.transfer_id, result.filename, result.progress || 0, true);
+    if (result.transfer_id) updateTransfer(result.transfer_id, result.filename, result.progress || 0, true);
     if (kind === 'image' || kind === 'video') {
       appendMessage(result.filename, 'sent', 'You', { kind, path: filePath });
+    } else if (result.filename?.startsWith('queued:')) {
+      toast('File queued — reconnecting…');
     } else {
       appendMessage(`Sending: ${result.filename}`, 'sent', 'You');
     }
+    if (offline) toast('File queued — reconnecting…');
   } catch (e) { toast(`File error: ${e}`, true); }
 };
 
@@ -826,18 +875,16 @@ async function sendMessage() {
   const input = document.getElementById('message-input');
   const content = input.value.trim();
   if (!content || !activePeer) return;
-  if (connectedPeer !== activePeer) {
-    toast('Peer offline — reconnect from Contacts', true);
-    return;
-  }
   if (!peerVerified.get(activePeer)) {
     toast('Verify peer with SAS before messaging', true);
     return;
   }
+  const offline = connectedPeer !== activePeer;
   try {
     await invoke('send_message', { peerId: activePeer, content });
     appendMessage(content, 'sent', 'You');
     input.value = '';
+    if (offline) toast('Message queued — reconnecting…');
   } catch (e) { toast(`Send error: ${e}`, true); }
 }
 

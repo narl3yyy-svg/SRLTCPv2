@@ -59,9 +59,12 @@ interface SrltcpEngine {
     void send_message(string peer_id, string content);
 
     TransferInfo send_file(string peer_id, string file_path);
+    void cancel_transfer(string transfer_id);
+    void send_call_signal(string peer_id, string call_id, string signal, string payload, boolean is_video);
     string start_voice_call(string peer_id);
     string start_video_call(string peer_id);
-    void end_call(string call_id);
+    void end_call(string peer_id, string call_id);
+    void register_saved_peer(string peer_id, string qr);
 
     SrltcpEvent? poll_event();
     sequence<SrltcpEvent> drain_events();

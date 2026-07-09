@@ -12,8 +12,8 @@ android {
         applicationId = "com.srltcp.v2"
         minSdk = 26
         targetSdk = 35
-        versionCode = 215
-        versionName = "0.2.15"
+        versionCode = 216
+        versionName = "0.2.16"
     }
 
     buildTypes {
@@ -55,6 +55,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation("io.getstream:stream-webrtc-android:1.1.3")
 
     // UniFFI Kotlin bindings: android/app/src/main/java/uniffi/srltcp_core/
     // Native libs: android/app/src/main/jniLibs/ (built via scripts/build-android.sh)

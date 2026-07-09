@@ -1,4 +1,4 @@
-//! SRLTCP v0.2.15 Desktop — Tauri v2 backend with graceful shutdown.
+//! SRLTCP v0.2.16 Desktop — Tauri v2 backend with graceful shutdown.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -176,8 +176,56 @@ async fn start_video_call(state: State<'_, AppState>, peer_id: String) -> Result
 }
 
 #[tauri::command]
-async fn end_call(state: State<'_, AppState>, call_id: String) -> Result<(), String> {
-    state.engine.lock().await.end_call(&call_id).await
+async fn send_call_signal(
+    state: State<'_, AppState>,
+    peer_id: String,
+    call_id: String,
+    signal: String,
+    payload: String,
+    is_video: bool,
+) -> Result<(), String> {
+    state
+        .engine
+        .lock()
+        .await
+        .send_call_signal(&peer_id, &call_id, &signal, &payload, is_video)
+        .await
+}
+
+#[tauri::command]
+async fn end_call(
+    state: State<'_, AppState>,
+    peer_id: String,
+    call_id: String,
+) -> Result<(), String> {
+    state.engine.lock().await.end_call(&peer_id, &call_id).await
+}
+
+#[tauri::command]
+async fn cancel_transfer(state: State<'_, AppState>, transfer_id: String) -> Result<(), String> {
+    state.engine.lock().await.cancel_transfer(&transfer_id).await
+}
+
+#[tauri::command]
+async fn register_saved_peer(
+    state: State<'_, AppState>,
+    peer_id: String,
+    qr: String,
+) -> Result<(), String> {
+    state.engine.lock().await.register_saved_peer(&peer_id, &qr).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_receive_dir(state: State<'_, AppState>) -> Result<String, String> {
+    Ok(state
+        .engine
+        .lock()
+        .await
+        .receive_dir()
+        .await
+        .to_string_lossy()
+        .to_string())
 }
 
 #[tauri::command]
@@ -242,7 +290,11 @@ fn main() {
             get_peers,
             start_voice_call,
             start_video_call,
+            send_call_signal,
             end_call,
+            cancel_transfer,
+            register_saved_peer,
+            get_receive_dir,
             shutdown_engine,
         ])
         .manage(AppState {
@@ -253,8 +305,13 @@ fn main() {
             let handle = app.handle().clone();
             let eng = engine.clone();
 
+            let recv_dir = app.path().app_data_dir().ok().map(|d| d.join("received"));
             tauri::async_runtime::spawn(async move {
                 let eng = eng.clone();
+                if let Some(recv) = recv_dir {
+                    let _ = std::fs::create_dir_all(&recv);
+                    eng.lock().await.set_receive_dir(recv).await;
+                }
                 let start_err = {
                     let e = eng.lock().await;
                     e.start(9473).await.err()
@@ -313,31 +370,76 @@ fn main() {
                                 "new_id": new_id,
                             })
                         }
-                        EngineEvent::TransferProgress { id, filename, progress } => {
+                        EngineEvent::TransferProgress {
+                            id,
+                            filename,
+                            progress,
+                            peer_id,
+                        } => {
                             serde_json::json!({
                                 "type": "transfer_progress",
                                 "id": id,
                                 "filename": filename,
                                 "progress": progress,
+                                "peer_id": peer_id,
                             })
                         }
-                        EngineEvent::TransferComplete { id, filename } => {
+                        EngineEvent::TransferComplete {
+                            id,
+                            filename,
+                            peer_id,
+                            path,
+                        } => {
                             serde_json::json!({
                                 "type": "transfer_complete",
                                 "id": id,
                                 "filename": filename,
+                                "peer_id": peer_id,
+                                "path": path,
                             })
                         }
-                        EngineEvent::CallStarted { call_id, peer_id, is_video } => {
+                        EngineEvent::TransferCancelled {
+                            id,
+                            filename,
+                            peer_id,
+                        } => {
                             serde_json::json!({
-                                "type": "call_started",
+                                "type": "transfer_cancelled",
+                                "id": id,
+                                "filename": filename,
+                                "peer_id": peer_id,
+                            })
+                        }
+                        EngineEvent::CallSignaling {
+                            call_id,
+                            peer_id,
+                            signal,
+                            payload,
+                            is_video,
+                        } => {
+                            serde_json::json!({
+                                "type": format!("call_{signal}"),
                                 "call_id": call_id,
                                 "peer_id": peer_id,
+                                "payload": payload,
                                 "is_video": is_video,
                             })
                         }
                         EngineEvent::CallEnded { call_id } => {
                             serde_json::json!({ "type": "call_ended", "call_id": call_id })
+                        }
+                        EngineEvent::MessageQueued { peer_id, queue_size } => {
+                            serde_json::json!({
+                                "type": "message_queued",
+                                "peer_id": peer_id,
+                                "queue_size": queue_size,
+                            })
+                        }
+                        EngineEvent::Reconnecting { peer_id } => {
+                            serde_json::json!({
+                                "type": "reconnecting",
+                                "peer_id": peer_id,
+                            })
                         }
                         EngineEvent::Started => serde_json::json!({ "type": "started" }),
                         EngineEvent::Stopped => serde_json::json!({ "type": "stopped" }),

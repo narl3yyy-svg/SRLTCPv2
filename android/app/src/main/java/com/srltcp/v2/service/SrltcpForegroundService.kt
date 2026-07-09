@@ -85,7 +85,7 @@ class SrltcpForegroundService : Service() {
                 when (event.eventType) {
                     "peer_connected" -> updateNotification("Connected: ${event.peerId}")
                     "message" -> updateNotification("Message from ${event.peerId}")
-                    "started" -> updateNotification("Listening on port 9473")
+                    "started" -> updateNotification("Online — iroh NAT traversal")
                     "stopped" -> updateNotification("Stopped")
                     "error" -> updateNotification("Error: ${event.error}")
                 }

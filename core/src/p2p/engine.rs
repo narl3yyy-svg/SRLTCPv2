@@ -1,6 +1,6 @@
 //! Central P2P engine coordinating transports, crypto sessions, and messaging.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,7 +17,7 @@ use crate::network::TransportKind;
 use crate::network::IrohTransport;
 use crate::protocol::{ChatMessage, MessageType};
 use crate::serial::{list_ports, SerialConfig, SerialTransport};
-use crate::transfer::{ChunkedReceiver, ChunkedSender, TransferManifest};
+use crate::transfer::{ChunkAck, ChunkedReceiver, ChunkedSender, TransferManifest};
 use crate::webrtc::CallSession;
 
 fn peer_id_from_pubkey(pk: &[u8; 32]) -> String {
@@ -66,11 +66,42 @@ pub enum EngineEvent {
         auto_trusted: bool,
     },
     PeerIdUpdated { old_id: String, new_id: String },
-    TransferProgress { id: String, filename: String, progress: f64 },
-    TransferComplete { id: String, filename: String },
-    CallStarted { call_id: String, peer_id: String, is_video: bool },
+    TransferProgress {
+        id: String,
+        filename: String,
+        progress: f64,
+        peer_id: String,
+    },
+    TransferComplete {
+        id: String,
+        filename: String,
+        peer_id: String,
+        path: String,
+    },
+    TransferCancelled {
+        id: String,
+        filename: String,
+        peer_id: String,
+    },
+    CallSignaling {
+        call_id: String,
+        peer_id: String,
+        signal: String,
+        payload: String,
+        is_video: bool,
+    },
     CallEnded { call_id: String },
+    MessageQueued { peer_id: String, queue_size: usize },
+    Reconnecting { peer_id: String },
     Error(String),
+}
+
+const MAX_PENDING_PER_PEER: usize = 500;
+
+#[derive(Debug, Clone)]
+enum PendingOutbound {
+    Text(String),
+    File(PathBuf),
 }
 
 struct PeerSession {
@@ -107,6 +138,11 @@ pub struct P2pEngine {
     trusted_pubkeys: Arc<RwLock<HashSet<String>>>,
     incoming_transfers: Arc<RwLock<HashMap<String, ChunkedReceiver>>>,
     receive_dir: Arc<RwLock<PathBuf>>,
+    /// Outbound messages/files waiting for reconnect.
+    pending_outbound: Arc<RwLock<HashMap<String, VecDeque<PendingOutbound>>>>,
+    /// Saved peer QR payloads for seamless auto-reconnect.
+    saved_peer_qr: Arc<RwLock<HashMap<String, String>>>,
+    cancelled_transfers: Arc<RwLock<HashSet<String>>>,
 }
 
 impl P2pEngine {
@@ -130,6 +166,9 @@ impl P2pEngine {
             receive_dir: Arc::new(RwLock::new(
                 std::env::temp_dir().join("srltcp_received"),
             )),
+            pending_outbound: Arc::new(RwLock::new(HashMap::new())),
+            saved_peer_qr: Arc::new(RwLock::new(HashMap::new())),
+            cancelled_transfers: Arc::new(RwLock::new(HashSet::new())),
         };
 
         (engine, event_rx)
@@ -137,6 +176,10 @@ impl P2pEngine {
 
     pub async fn set_receive_dir(&self, path: PathBuf) {
         *self.receive_dir.write().await = path;
+    }
+
+    pub async fn receive_dir(&self) -> PathBuf {
+        self.receive_dir.read().await.clone()
     }
 
     pub async fn load_trusted_pubkeys(&self, pubkeys: Vec<String>) {
@@ -161,6 +204,120 @@ impl P2pEngine {
                 .await
                 .insert(old_id.to_string(), canonical.to_string());
         }
+    }
+
+    fn pubkey_hex_from_peer_id(peer_id: &str) -> Option<String> {
+        peer_id
+            .strip_prefix("peer:")
+            .map(|h| h.to_lowercase())
+            .filter(|h| !h.is_empty())
+    }
+
+    pub async fn register_saved_peer(&self, peer_id: &str, qr: &str) {
+        if let Ok(canonical) = self.resolve_peer_id(peer_id).await {
+            self.saved_peer_qr
+                .write()
+                .await
+                .insert(canonical, qr.trim().to_string());
+        } else if peer_id.starts_with("peer:") {
+            self.saved_peer_qr
+                .write()
+                .await
+                .insert(peer_id.to_string(), qr.trim().to_string());
+        }
+    }
+
+    async fn can_queue_for_peer(&self, peer_id: &str) -> bool {
+        if let Some(hex) = Self::pubkey_hex_from_peer_id(peer_id) {
+            return self.trusted_pubkeys.read().await.contains(&hex);
+        }
+        false
+    }
+
+    async fn enqueue_pending(&self, peer_id: &str, item: PendingOutbound) -> Result<usize, String> {
+        let mut map = self.pending_outbound.write().await;
+        let q = map.entry(peer_id.to_string()).or_default();
+        if q.len() >= MAX_PENDING_PER_PEER {
+            return Err("outbound queue full — wait for reconnect".into());
+        }
+        q.push_back(item);
+        Ok(q.len())
+    }
+
+    async fn flush_pending_for_peer(&self, peer_id: &str) {
+        let items: Vec<PendingOutbound> = {
+            let mut map = self.pending_outbound.write().await;
+            map.remove(peer_id)
+                .map(|q| q.into_iter().collect())
+                .unwrap_or_default()
+        };
+        for item in items {
+            match item {
+                PendingOutbound::Text(content) => {
+                    let _ = self.try_send_message_now(peer_id, &content).await;
+                }
+                PendingOutbound::File(path) => {
+                    let path_str = path.to_string_lossy().to_string();
+                    let _ = self.try_send_file_now(peer_id, &path_str).await;
+                }
+            }
+        }
+    }
+
+    fn schedule_auto_reconnect(&self, peer_id: String) {
+        let engine = self.clone_engine();
+        tokio::spawn(async move {
+            let qr = engine.saved_peer_qr.read().await.get(&peer_id).cloned();
+            let Some(qr) = qr else { return };
+            if !engine.can_queue_for_peer(&peer_id).await {
+                return;
+            }
+            for attempt in 0..6u32 {
+                let delay = Duration::from_secs(2u64.pow(attempt.min(4)));
+                tokio::time::sleep(delay).await;
+                let _ = engine
+                    .event_tx
+                    .send(EngineEvent::Reconnecting {
+                        peer_id: peer_id.clone(),
+                    })
+                    .await;
+                match engine.connect_and_verify(&qr).await {
+                    Ok((id, _, auto_trusted)) => {
+                        if auto_trusted {
+                            engine.flush_pending_for_peer(&id).await;
+                        }
+                        return;
+                    }
+                    Err(_) => continue,
+                }
+            }
+        });
+    }
+
+    fn clone_engine(&self) -> Self {
+        Self {
+            identity: self.identity.clone(),
+            running: self.running.clone(),
+            iroh: self.iroh.clone(),
+            serial: self.serial.clone(),
+            peers: self.peers.clone(),
+            transfers: self.transfers.clone(),
+            calls: self.calls.clone(),
+            event_tx: self.event_tx.clone(),
+            handshake_wait: self.handshake_wait.clone(),
+            peer_aliases: self.peer_aliases.clone(),
+            trusted_pubkeys: self.trusted_pubkeys.clone(),
+            incoming_transfers: self.incoming_transfers.clone(),
+            receive_dir: self.receive_dir.clone(),
+            pending_outbound: self.pending_outbound.clone(),
+            saved_peer_qr: self.saved_peer_qr.clone(),
+            cancelled_transfers: self.cancelled_transfers.clone(),
+        }
+    }
+
+    fn transfer_storage_name(transfer_id: &str, filename: &str) -> String {
+        let prefix = transfer_id.get(..8).unwrap_or(transfer_id);
+        format!("{prefix}_{filename}")
     }
 
     async fn canonicalize_peer(&self, conn_peer_id: &str) -> Result<String, String> {
@@ -415,6 +572,8 @@ impl P2pEngine {
             incoming_transfers: self.incoming_transfers.clone(),
             receive_dir: self.receive_dir.clone(),
             transfers: self.transfers.clone(),
+            pending_outbound: self.pending_outbound.clone(),
+            cancelled_transfers: self.cancelled_transfers.clone(),
         }
     }
 
@@ -578,6 +737,7 @@ impl P2pEngine {
 
         self.peers.write().await.remove(&resolved);
         self.handshake_wait.write().await.remove(&resolved);
+        let peer_for_reconnect = resolved.clone();
         let _ = self
             .event_tx
             .send(EngineEvent::PeerDisconnected {
@@ -585,6 +745,7 @@ impl P2pEngine {
                 reason: "user disconnected".to_string(),
             })
             .await;
+        self.schedule_auto_reconnect(peer_for_reconnect);
         Ok(())
     }
 
@@ -599,6 +760,7 @@ impl P2pEngine {
 
         let canonical = peer_id_from_pubkey(&parsed.public_key);
         if self.is_peer_connected(&canonical).await && self.is_peer_trusted(&canonical).await {
+            self.flush_pending_for_peer(&canonical).await;
             return Ok((canonical, String::new(), true));
         }
 
@@ -717,6 +879,10 @@ impl P2pEngine {
             })
             .await;
 
+        if auto_trusted {
+            self.flush_pending_for_peer(&canonical).await;
+        }
+
         Ok((canonical, sas, auto_trusted))
     }
 
@@ -754,6 +920,38 @@ impl P2pEngine {
     }
 
     pub async fn send_message(&self, peer_id: &str, content: &str) -> Result<(), String> {
+        let resolved = self
+            .resolve_peer_id(peer_id)
+            .await
+            .unwrap_or_else(|_| peer_id.to_string());
+        match self.try_send_message_now(&resolved, content).await {
+            Ok(()) => Ok(()),
+            Err(e)
+                if (e.contains("not connected") || e.contains("reconnect"))
+                    && self.can_queue_for_peer(&resolved).await =>
+            {
+                let size = self
+                    .enqueue_pending(&resolved, PendingOutbound::Text(content.to_string()))
+                    .await?;
+                let _ = self
+                    .event_tx
+                    .send(EngineEvent::MessageQueued {
+                        peer_id: resolved,
+                        queue_size: size,
+                    })
+                    .await;
+                self.schedule_auto_reconnect(
+                    self.resolve_peer_id(peer_id)
+                        .await
+                        .unwrap_or_else(|_| peer_id.to_string()),
+                );
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn try_send_message_now(&self, peer_id: &str, content: &str) -> Result<(), String> {
         self.send_wire_message(
             peer_id,
             ChatMessage::text(&self.public_key_hex(), peer_id, content),
@@ -762,6 +960,38 @@ impl P2pEngine {
     }
 
     pub async fn send_file(
+        &self,
+        peer_id: &str,
+        file_path: &str,
+    ) -> Result<(String, String, f64), String> {
+        let resolved = self
+            .resolve_peer_id(peer_id)
+            .await
+            .unwrap_or_else(|_| peer_id.to_string());
+        match self.try_send_file_now(&resolved, file_path).await {
+            Ok(v) => return Ok(v),
+            Err(e)
+                if (e.contains("not connected") || e.contains("reconnect"))
+                    && self.can_queue_for_peer(&resolved).await =>
+            {
+                let size = self
+                    .enqueue_pending(&resolved, PendingOutbound::File(PathBuf::from(file_path)))
+                    .await?;
+                let _ = self
+                    .event_tx
+                    .send(EngineEvent::MessageQueued {
+                        peer_id: resolved.clone(),
+                        queue_size: size,
+                    })
+                    .await;
+                self.schedule_auto_reconnect(resolved.clone());
+                return Ok((String::new(), format!("queued:{file_path}"), 0.0));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    async fn try_send_file_now(
         &self,
         peer_id: &str,
         file_path: &str,
@@ -811,12 +1041,59 @@ impl P2pEngine {
                 id: transfer_id.clone(),
                 filename: filename.clone(),
                 progress,
+                peer_id: resolved.clone(),
             })
             .await;
 
         self.spawn_transfer_send(resolved, transfer_id.clone());
 
         Ok((transfer_id, filename, progress))
+    }
+
+    pub async fn cancel_transfer(&self, transfer_id: &str) -> Result<(), String> {
+        self.cancelled_transfers
+            .write()
+            .await
+            .insert(transfer_id.to_string());
+
+        let (peer_id, filename) = {
+            let mut outgoing = self.transfers.write().await;
+            if let Some(active) = outgoing.remove(transfer_id) {
+                (
+                    Some(active.peer_id),
+                    Some(active.sender.manifest.filename.clone()),
+                )
+            } else {
+                (None, None)
+            }
+        };
+
+        self.incoming_transfers.write().await.remove(transfer_id);
+
+        if let (Some(peer_id), Some(filename)) = (peer_id, filename) {
+            let msg = ChatMessage {
+                id: uuid::Uuid::new_v4(),
+                sender_id: self.public_key_hex(),
+                recipient_id: peer_id.clone(),
+                msg_type: MessageType::File,
+                content: String::new(),
+                timestamp: chrono::Utc::now(),
+                metadata: Some(serde_json::json!({
+                    "transfer_id": transfer_id,
+                    "action": "cancel",
+                })),
+            };
+            let _ = self.send_wire_message(&peer_id, msg).await;
+            let _ = self
+                .event_tx
+                .send(EngineEvent::TransferCancelled {
+                    id: transfer_id.to_string(),
+                    filename,
+                    peer_id,
+                })
+                .await;
+        }
+        Ok(())
     }
 
     fn spawn_transfer_send(&self, peer_id: String, transfer_id: String) {
@@ -826,46 +1103,24 @@ impl P2pEngine {
         });
     }
 
-    pub async fn start_call(&self, peer_id: &str, is_video: bool) -> Result<String, String> {
+    /// Relay WebRTC signaling (offer/answer/ice/end) over the encrypted channel.
+    pub async fn send_call_signal(
+        &self,
+        peer_id: &str,
+        call_id: &str,
+        signal: &str,
+        payload: &str,
+        is_video: bool,
+    ) -> Result<(), String> {
         let resolved = self.resolve_peer_id(peer_id).await?;
-        let mut session = CallSession::new(&resolved, is_video);
-        let sdp = session.create_offer().map_err(|e| e.to_string())?;
-        let call_id = session.id.clone();
-
-        let msg = ChatMessage {
-            id: uuid::Uuid::new_v4(),
-            sender_id: self.public_key_hex(),
-            recipient_id: resolved.clone(),
-            msg_type: MessageType::CallOffer,
-            content: sdp,
-            timestamp: chrono::Utc::now(),
-            metadata: Some(serde_json::json!({
-                "call_id": call_id,
-                "is_video": is_video,
-            })),
+        let msg_type = match signal {
+            "offer" => MessageType::CallOffer,
+            "answer" => MessageType::CallAnswer,
+            "ice" => MessageType::CallIce,
+            "end" => MessageType::CallAnswer,
+            _ => return Err(format!("unknown call signal: {signal}")),
         };
-        self.send_wire_message(&resolved, msg).await?;
-
-        self.calls.write().await.insert(
-            call_id.clone(),
-            ActiveCall { session },
-        );
-
-        let _ = self
-            .event_tx
-            .send(EngineEvent::CallStarted {
-                call_id: call_id.clone(),
-                peer_id: resolved,
-                is_video,
-            })
-            .await;
-
-        Ok(call_id)
-    }
-
-    pub async fn end_call(&self, call_id: &str) -> Result<(), String> {
-        if let Some(mut active) = self.calls.write().await.remove(call_id) {
-            active.session.end();
+        if signal == "end" {
             let _ = self
                 .event_tx
                 .send(EngineEvent::CallEnded {
@@ -873,6 +1128,34 @@ impl P2pEngine {
                 })
                 .await;
         }
+        let msg = ChatMessage {
+            id: uuid::Uuid::new_v4(),
+            sender_id: self.public_key_hex(),
+            recipient_id: resolved.clone(),
+            msg_type,
+            content: payload.to_string(),
+            timestamp: chrono::Utc::now(),
+            metadata: Some(serde_json::json!({
+                "call_id": call_id,
+                "signal": signal,
+                "is_video": is_video,
+            })),
+        };
+        self.send_wire_message(&resolved, msg).await
+    }
+
+    /// Deprecated — use `send_call_signal` from platform WebRTC.
+    pub async fn start_call(&self, peer_id: &str, is_video: bool) -> Result<String, String> {
+        let call_id = uuid::Uuid::new_v4().to_string();
+        self.send_call_signal(peer_id, &call_id, "offer", "", is_video)
+            .await?;
+        Ok(call_id)
+    }
+
+    pub async fn end_call(&self, peer_id: &str, call_id: &str) -> Result<(), String> {
+        self.send_call_signal(peer_id, call_id, "end", "", false)
+            .await?;
+        self.calls.write().await.remove(call_id);
         Ok(())
     }
 
@@ -1010,9 +1293,30 @@ struct EngineInbound {
     incoming_transfers: Arc<RwLock<HashMap<String, ChunkedReceiver>>>,
     receive_dir: Arc<RwLock<PathBuf>>,
     transfers: Arc<RwLock<HashMap<String, ActiveTransfer>>>,
+    pending_outbound: Arc<RwLock<HashMap<String, VecDeque<PendingOutbound>>>>,
+    cancelled_transfers: Arc<RwLock<HashSet<String>>>,
 }
 
 impl EngineInbound {
+    async fn flush_pending_inbound(&self, peer_id: &str) {
+        let items: Vec<PendingOutbound> = {
+            let mut map = self.pending_outbound.write().await;
+            map.remove(peer_id)
+                .map(|q| q.into_iter().collect())
+                .unwrap_or_default()
+        };
+        for item in items {
+            match item {
+                PendingOutbound::Text(content) => {
+                    let msg =
+                        ChatMessage::text(&self.identity.public_key_hex(), peer_id, &content);
+                    let _ = self.send_app_message(peer_id, msg).await;
+                }
+                PendingOutbound::File(_) => {}
+            }
+        }
+    }
+
     fn spawn_iroh_read_loop(&self, peer_id: String, conn: Connection) {
         let inbound = self.clone();
         tokio::spawn(async move {
@@ -1126,16 +1430,19 @@ impl EngineInbound {
                 let auto_trusted = if remote_pk != [0u8; 32] {
                     let pk_hex = hex::encode(remote_pk).to_lowercase();
                     if self.trusted_pubkeys.read().await.contains(&pk_hex) {
-                        self.peers.write().await.get_mut(&canonical).and_then(|s| {
-                            s.crypto.confirm_trusted().ok();
-                            Some(true)
-                        }).unwrap_or(false)
+                        if let Some(s) = self.peers.write().await.get_mut(&canonical) {
+                            let _ = s.crypto.confirm_trusted();
+                        }
+                        true
                     } else {
                         false
                     }
                 } else {
                     false
                 };
+                if auto_trusted {
+                    self.flush_pending_inbound(&canonical).await;
+                }
                 let _ = self
                     .event_tx
                     .send(EngineEvent::SasReady {
@@ -1220,6 +1527,7 @@ impl EngineInbound {
                                     id: transfer_id,
                                     filename,
                                     progress: 0.0,
+                                    peer_id: peer_id.to_string(),
                                 })
                                 .await;
                         }
@@ -1242,11 +1550,15 @@ impl EngineInbound {
                             &base64::engine::general_purpose::STANDARD,
                             data_b64,
                         ) {
-                            let mut incoming = self.incoming_transfers.write().await;
-                            if let Some(receiver) = incoming.get_mut(transfer_id) {
+                            let (ack, complete_info) = {
+                                let mut incoming = self.incoming_transfers.write().await;
+                                let Some(receiver) = incoming.get_mut(transfer_id) else {
+                                    return;
+                                };
                                 let filename = receiver.manifest.filename.clone();
                                 let id = receiver.manifest.id.to_string();
-                                let _ = receiver.receive_chunk(chunk_id, bytes::Bytes::from(data));
+                                let _ =
+                                    receiver.receive_chunk(chunk_id, bytes::Bytes::from(data));
                                 let progress = receiver.progress();
                                 let _ = self
                                     .event_tx
@@ -1254,24 +1566,90 @@ impl EngineInbound {
                                         id: id.clone(),
                                         filename: filename.clone(),
                                         progress,
+                                        peer_id: peer_id.to_string(),
                                     })
                                     .await;
-                                if receiver.is_complete() {
+                                let ack = receiver.selective_ack();
+                                let done = if receiver.is_complete() {
                                     if let Ok(data) = receiver.assemble() {
                                         let dir = self.receive_dir.read().await.clone();
                                         let _ = std::fs::create_dir_all(&dir);
-                                        let path = dir.join(&filename);
+                                        let storage_name =
+                                            P2pEngine::transfer_storage_name(transfer_id, &filename);
+                                        let path = dir.join(&storage_name);
                                         if std::fs::write(&path, &data).is_ok() {
-                                            let _ = self.event_tx.send(EngineEvent::TransferComplete {
-                                                id,
-                                                filename,
-                                            }).await;
+                                            Some((id, filename, path.to_string_lossy().to_string()))
+                                        } else {
+                                            None
                                         }
+                                    } else {
+                                        None
                                     }
+                                } else {
+                                    None
+                                };
+                                if done.is_some() {
                                     incoming.remove(transfer_id);
                                 }
+                                (ack, done)
+                            };
+                            let ack_msg = ChatMessage {
+                                id: uuid::Uuid::new_v4(),
+                                sender_id: self.identity.public_key_hex(),
+                                recipient_id: peer_id.to_string(),
+                                msg_type: MessageType::File,
+                                content: String::new(),
+                                timestamp: chrono::Utc::now(),
+                                metadata: Some(serde_json::json!({
+                                    "transfer_id": transfer_id,
+                                    "action": "ack",
+                                    "ack": ack,
+                                })),
+                            };
+                            let _ = self.send_app_message(peer_id, ack_msg).await;
+                            if let Some((id, filename, path)) = complete_info {
+                                let _ = self
+                                    .event_tx
+                                    .send(EngineEvent::TransferComplete {
+                                        id,
+                                        filename,
+                                        peer_id: peer_id.to_string(),
+                                        path,
+                                    })
+                                    .await;
                             }
                         }
+                        return;
+                    }
+                    Some("ack") => {
+                        let tid = meta
+                            .get("transfer_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        if let Some(ack) = meta.get("ack").and_then(|v| {
+                            serde_json::from_value::<ChunkAck>(v.clone()).ok()
+                        }) {
+                            let mut transfers = self.transfers.write().await;
+                            if let Some(active) = transfers.get_mut(tid) {
+                                active.sender.on_ack(&ack);
+                            }
+                        }
+                        return;
+                    }
+                    Some("cancel") => {
+                        let tid = meta
+                            .get("transfer_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        self.incoming_transfers.write().await.remove(tid);
+                        let _ = self
+                            .event_tx
+                            .send(EngineEvent::TransferCancelled {
+                                id: tid.to_string(),
+                                filename: String::new(),
+                                peer_id: peer_id.to_string(),
+                            })
+                            .await;
                         return;
                     }
                     _ => {}
@@ -1279,26 +1657,47 @@ impl EngineInbound {
             }
         }
 
-        if msg.msg_type == MessageType::CallOffer {
+        if matches!(
+            msg.msg_type,
+            MessageType::CallOffer | MessageType::CallAnswer | MessageType::CallIce
+        ) {
             if let Some(meta) = &msg.metadata {
                 let call_id = meta
                     .get("call_id")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
+                let signal = meta
+                    .get("signal")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_else(|| match msg.msg_type {
+                        MessageType::CallOffer => "offer",
+                        MessageType::CallAnswer => "answer",
+                        MessageType::CallIce => "ice",
+                        _ => "unknown",
+                    });
                 let is_video = meta
                     .get("is_video")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
                 if !call_id.is_empty() {
-                    let _ = self
-                        .event_tx
-                        .send(EngineEvent::CallStarted {
-                            call_id,
-                            peer_id: peer_id.to_string(),
-                            is_video,
-                        })
-                        .await;
+                    if signal == "end" {
+                        let _ = self
+                            .event_tx
+                            .send(EngineEvent::CallEnded { call_id })
+                            .await;
+                    } else {
+                        let _ = self
+                            .event_tx
+                            .send(EngineEvent::CallSignaling {
+                                call_id,
+                                peer_id: peer_id.to_string(),
+                                signal: signal.to_string(),
+                                payload: msg.content.clone(),
+                                is_video,
+                            })
+                            .await;
+                    }
                     return;
                 }
             }
@@ -1358,6 +1757,10 @@ impl EngineInbound {
 
     async fn run_transfer_send(&self, peer_id: String, transfer_id: String) {
         loop {
+            if self.cancelled_transfers.read().await.contains(&transfer_id) {
+                self.transfers.write().await.remove(&transfer_id);
+                return;
+            }
             let batch = {
                 let mut transfers = self.transfers.write().await;
                 let Some(active) = transfers.get_mut(&transfer_id) else {
@@ -1371,11 +1774,13 @@ impl EngineInbound {
                         .send(EngineEvent::TransferComplete {
                             id: transfer_id.clone(),
                             filename,
+                            peer_id: peer_id.clone(),
+                            path: String::new(),
                         })
                         .await;
                     return;
                 }
-                let chunks = active.sender.next_chunks(4);
+                let chunks = active.sender.next_chunks(8);
                 let filename = active.sender.manifest.filename.clone();
                 let progress = active.sender.progress();
                 let _ = self
@@ -1384,12 +1789,21 @@ impl EngineInbound {
                         id: transfer_id.clone(),
                         filename: filename.clone(),
                         progress,
+                        peer_id: peer_id.clone(),
                     })
                     .await;
                 chunks
             };
 
+            if batch.is_empty() {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                continue;
+            }
+
             for (chunk_id, data) in batch {
+                if self.cancelled_transfers.read().await.contains(&transfer_id) {
+                    return;
+                }
                 let msg = ChatMessage {
                     id: uuid::Uuid::new_v4(),
                     sender_id: self.identity.public_key_hex(),
@@ -1408,11 +1822,11 @@ impl EngineInbound {
                     })),
                 };
                 if self.send_app_message(&peer_id, msg).await.is_err() {
-                    warn!(transfer_id = %transfer_id, "chunk send failed");
-                    return;
+                    warn!(transfer_id = %transfer_id, "chunk send failed — will retry");
+                    tokio::time::sleep(Duration::from_millis(200)).await;
                 }
             }
-            tokio::time::sleep(Duration::from_millis(5)).await;
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }
 

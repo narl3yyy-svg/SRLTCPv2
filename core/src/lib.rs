@@ -186,9 +186,14 @@ fn engine_event_to_uniffi(event: EngineEvent) -> SrltcpEvent {
             error: None,
             auto_trusted: None,
         },
-        EngineEvent::TransferProgress { id, filename, progress } => SrltcpEvent {
+        EngineEvent::TransferProgress {
+            id,
+            filename,
+            progress,
+            peer_id,
+        } => SrltcpEvent {
             event_type: "transfer_progress".into(),
-            peer_id: None,
+            peer_id: Some(peer_id),
             message: None,
             content: None,
             sas: None,
@@ -200,10 +205,15 @@ fn engine_event_to_uniffi(event: EngineEvent) -> SrltcpEvent {
             error: None,
             auto_trusted: None,
         },
-        EngineEvent::TransferComplete { id, filename } => SrltcpEvent {
+        EngineEvent::TransferComplete {
+            id,
+            filename,
+            peer_id,
+            path,
+        } => SrltcpEvent {
             event_type: "transfer_complete".into(),
-            peer_id: None,
-            message: None,
+            peer_id: Some(peer_id),
+            message: Some(path),
             content: None,
             sas: None,
             transfer_id: Some(id),
@@ -214,12 +224,60 @@ fn engine_event_to_uniffi(event: EngineEvent) -> SrltcpEvent {
             error: None,
             auto_trusted: None,
         },
-        EngineEvent::CallStarted { call_id, peer_id, is_video } => SrltcpEvent {
-            event_type: if is_video {
-                "video_call_started".into()
-            } else {
-                "voice_call_started".into()
-            },
+        EngineEvent::TransferCancelled {
+            id,
+            filename,
+            peer_id,
+        } => SrltcpEvent {
+            event_type: "transfer_cancelled".into(),
+            peer_id: Some(peer_id),
+            message: None,
+            content: None,
+            sas: None,
+            transfer_id: Some(id),
+            filename: Some(filename),
+            progress: None,
+            transport: None,
+            call_id: None,
+            error: None,
+            auto_trusted: None,
+        },
+        EngineEvent::CallSignaling {
+            call_id,
+            peer_id,
+            signal,
+            payload,
+            is_video,
+        } => SrltcpEvent {
+            event_type: format!("call_{signal}"),
+            peer_id: Some(peer_id),
+            message: Some(payload),
+            content: None,
+            sas: None,
+            transfer_id: None,
+            filename: None,
+            progress: None,
+            transport: None,
+            call_id: Some(call_id),
+            error: None,
+            auto_trusted: Some(is_video),
+        },
+        EngineEvent::MessageQueued { peer_id, queue_size } => SrltcpEvent {
+            event_type: "message_queued".into(),
+            peer_id: Some(peer_id),
+            message: Some(queue_size.to_string()),
+            content: None,
+            sas: None,
+            transfer_id: None,
+            filename: None,
+            progress: None,
+            transport: None,
+            call_id: None,
+            error: None,
+            auto_trusted: None,
+        },
+        EngineEvent::Reconnecting { peer_id } => SrltcpEvent {
+            event_type: "reconnecting".into(),
             peer_id: Some(peer_id),
             message: None,
             content: None,
@@ -228,7 +286,7 @@ fn engine_event_to_uniffi(event: EngineEvent) -> SrltcpEvent {
             filename: None,
             progress: None,
             transport: None,
-            call_id: Some(call_id),
+            call_id: None,
             error: None,
             auto_trusted: None,
         },
@@ -557,12 +615,49 @@ impl SrltcpEngine {
         })
     }
 
-    pub fn end_call(&self, call_id: String) {
+    pub fn end_call(&self, peer_id: String, call_id: String) {
         let inner = self.inner.clone();
         self.runtime.spawn(async move {
-            if let Err(e) = inner.lock().await.end_call(&call_id).await {
+            if let Err(e) = inner.lock().await.end_call(&peer_id, &call_id).await {
                 tracing::error!(error = %e, "end call failed");
             }
+        });
+    }
+
+    pub fn send_call_signal(
+        &self,
+        peer_id: String,
+        call_id: String,
+        signal: String,
+        payload: String,
+        is_video: bool,
+    ) {
+        let inner = self.inner.clone();
+        self.runtime.spawn(async move {
+            if let Err(e) = inner
+                .lock()
+                .await
+                .send_call_signal(&peer_id, &call_id, &signal, &payload, is_video)
+                .await
+            {
+                tracing::error!(error = %e, "call signal failed");
+            }
+        });
+    }
+
+    pub fn cancel_transfer(&self, transfer_id: String) {
+        let inner = self.inner.clone();
+        self.runtime.spawn(async move {
+            if let Err(e) = inner.lock().await.cancel_transfer(&transfer_id).await {
+                tracing::error!(error = %e, "cancel transfer failed");
+            }
+        });
+    }
+
+    pub fn register_saved_peer(&self, peer_id: String, qr: String) {
+        let inner = self.inner.clone();
+        self.runtime.block_on(async move {
+            inner.lock().await.register_saved_peer(&peer_id, &qr).await;
         });
     }
 

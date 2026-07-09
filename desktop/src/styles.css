@@ -796,6 +796,28 @@ input:focus, select:focus { border-color: var(--accent); }
   margin-bottom: 4px;
 }
 
+.call-media {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.call-media.hidden { display: none; }
+
+.call-video {
+  width: 160px;
+  height: 120px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: #000;
+}
+
+.call-video.remote { width: 240px; height: 180px; }
+
+.transfer-cancel { margin-left: auto; }
+
 .composer {
   padding: 12px 20px;
   border-top: 1px solid var(--border);

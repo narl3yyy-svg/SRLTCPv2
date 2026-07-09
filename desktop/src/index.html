@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SRLTCP v0.2.15</title>
+  <title>SRLTCP v0.2.16</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -13,7 +13,7 @@
         <div class="brand-icon">S</div>
         <div>
           <h1>SRLTCP</h1>
-          <span class="version">v0.2.15</span>
+          <span class="version">v0.2.16</span>
         </div>
       </header>
 
@@ -92,7 +92,7 @@
             <code class="update-cmd">git pull && ./run.sh</code>
             <button class="btn secondary" id="check-updates">How to update</button>
           </div>
-          <p class="hint settings-note">Voice/video calls are experimental on some platforms.</p>
+          <p class="hint settings-note">Voice/video use WebRTC (STUN) over encrypted signaling.</p>
         </section>
       </div>
     </aside>
@@ -175,6 +175,7 @@
   </div>
 
   <div id="toast-container"></div>
+  <script src="webrtc.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

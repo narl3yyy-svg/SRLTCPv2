@@ -1,4 +1,4 @@
-# Security — SRLTCP v0.2.15
+# Security — SRLTCP v0.2.16
 
 ## Goals
 
@@ -32,7 +32,9 @@
 - Compromised endpoint (malware on device)
 - User skipping SAS verification
 - DDoS on iroh relay path
-- WebRTC media path hardening (experimental)
+- WebRTC media uses STUN/DTLS-SRTP (signaling is E2EE; media not double-ratchet wrapped)
+- `ml-kem` crate: Wycheproof-tested, **not independently audited**
+- `double-ratchet-2` pre-release crate — evaluate before high-threat deployment
 
 ## Reporting
 

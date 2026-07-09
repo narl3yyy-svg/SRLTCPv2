@@ -4,13 +4,13 @@
 
 SRLTCP is privacy-first communication software: no accounts, no central servers, and end-to-end encryption with a human-verifiable SAS step before you trust a peer. A single Rust core powers the desktop (Tauri) and Android (Kotlin/Compose) clients, so crypto and protocol behavior stay consistent everywhere.
 
-**Current release: [v0.2.15](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.15)**
+**Current release: [v0.2.16](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.16)**
 
 ---
 
 ## Security status (read this)
 
-v0.2.15 fixes **chat messaging** after connect (peer alias resolution for iroh transport). v0.2.14 fixed QR paste/connect. v0.2.13 added **iroh** NAT traversal and **double-ratchet-2** (Signal-spec) with QR v4. SAS codes use a **canonical transcript** both peers build identically.
+v0.2.16 adds **voice/video calls** (WebRTC + encrypted signaling), **reliable file transfer** (chunk ACKs), **offline message queue**, and seamless trusted reconnect. v0.2.15 fixed chat after connect; v0.2.13+ uses **iroh** NAT traversal (no port forwarding) and **double-ratchet-2** E2EE with QR v4.
 
 **What works today**
 
@@ -22,7 +22,8 @@ v0.2.15 fixes **chat messaging** after connect (peer alias resolution for iroh t
 **Caveats**
 
 - iroh transport is encrypted separately from app-layer E2EE (defense in depth)
-- WebRTC calls and folder-transfer UI are not yet fully E2EE-wrapped
+- WebRTC media uses STUN/DTLS-SRTP; call signaling is E2EE over iroh
+- `ml-kem` hybrid KEX is not independently audited — see [docs/CRYPTO.md](docs/CRYPTO.md)
 
 Do not treat this as production-grade secure messaging until you have reviewed [docs/SECURITY.md](docs/SECURITY.md) and [docs/CRYPTO.md](docs/CRYPTO.md) yourself.
 
@@ -76,7 +77,7 @@ run.bat
 Install the APK from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest):
 
 ```bash
-adb install dist/SRLTCPv2-0.2.10.apk
+adb install dist/SRLTCPv2-0.2.16.apk
 ```
 
 Or build locally (JDK 17, Android SDK/NDK):
@@ -94,9 +95,9 @@ Or build locally (JDK 17, Android SDK/NDK):
 3. **Compare** the 6-digit SAS code out-of-band (voice, in person, etc.).
 4. **Trust** only when both sides show the **same** code — then messaging is E2EE.
 
-**WAN**: If you are not on the same LAN, set a WAN endpoint (`public.host:9473`) in Settings on both sides. Connect & Verify tries the LAN address from the QR first, then falls back to your WAN endpoint. Forward port 9473 on your router.
+**Cross-network**: QR v4 includes an **iroh ticket** — peers connect through NAT relay/hole-punching with no router configuration.
 
-Saved contacts persist across restarts. Remove a contact on any platform to revoke trust and disconnect.
+Saved verified contacts reconnect automatically (fresh handshake, no SAS re-prompt unless identity changes). Messages sent while offline queue until reconnect.
 
 ---
 
@@ -105,28 +106,21 @@ Saved contacts persist across restarts. Remove a contact on any platform to revo
 | Feature | Desktop | Android |
 |---------|:-------:|:-------:|
 | E2EE messaging | ✓ | ✓ |
-| QUIC P2P (QR discovery) | ✓ | ✓ |
-| WAN fallback connect | ✓ | ✓ |
+| iroh P2P (QR v4 + NAT) | ✓ | ✓ |
+| Offline message queue | ✓ | ✓ |
 | USB / serial transport | ✓ | — |
 | File transfer + progress | ✓ | ✓ |
 | Saved contacts & settings | ✓ | ✓ |
 | Display name after auth | ✓ | ✓ |
-| Voice / video calls | ✓* | ✓* |
+| Voice / video calls (WebRTC) | ✓ | ✓ |
 | Foreground background service | — | ✓ |
 
-\*Voice and video are experimental on some platforms.
+### v0.2.16 highlights
 
-### v0.2.10 highlights
-
-- **SAS codes match** — canonical handshake transcript fix
-- **WAN endpoint** in Settings (desktop + Android)
-- Honest security documentation
-
-### v0.2.9 highlights
-
-- Wire handshake + Double Ratchet E2EE on the message path
-- Visual QR codes on desktop and Android
-- Prebuilt-first `run.sh`
+- Voice/video calls via WebRTC (encrypted SDP/ICE signaling)
+- File transfer ACK protocol — screenshots/images complete reliably
+- Cancel in-flight transfers; images preview in chat
+- Trusted peer auto-reconnect + outbound message queue
 
 See [CHANGELOG.md](CHANGELOG.md) and [docs/CRYPTO.md](docs/CRYPTO.md).
 
@@ -142,7 +136,7 @@ SRLTCPv2/
 │   ├── build-desktop.sh
 │   ├── build-android.sh
 │   └── lib/version.sh            # Version from Cargo.toml
-├── core/                         # Rust: crypto, QUIC, serial, UniFFI
+├── core/                         # Rust: crypto, iroh, serial, UniFFI
 ├── desktop/                      # Tauri v2 UI
 ├── android/                      # Kotlin + Compose
 │   └── app/src/main/java/com/srltcp/v2/
@@ -176,9 +170,9 @@ SRLTCP uses hybrid post-quantum key exchange, a double ratchet for forward secre
 Pushing a version tag triggers CI to publish desktop prebuilts and the Android APK:
 
 ```bash
-git tag -a v0.2.10 -m "SRLTCP v0.2.10"
+git tag -a v0.2.16 -m "SRLTCP v0.2.16"
 git push origin main
-git push origin v0.2.10
+git push origin v0.2.16
 ```
 
 ---

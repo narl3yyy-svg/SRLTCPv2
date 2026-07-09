@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.2.16 — Calls, transfers, queue, docs (2026-07-09)
+
+### Features
+
+- **Voice/video calls** — WebRTC on desktop (webview) and Android (Stream WebRTC); SDP/ICE signaling over encrypted iroh channel.
+- **Reliable file transfer** — selective ACK wired; screenshots and images complete; unique receive filenames.
+- **Cancel transfers** — UI cancel button; `cancel_transfer` API.
+- **Image preview** — received images/videos shown inline in chat (desktop + Android).
+- **Offline queue** — messages/files to trusted saved peers queue until auto-reconnect.
+- **Seamless reconnect** — verified contacts skip SAS; engine auto-reconnect with backoff.
+
+### Documentation
+
+- README, ARCHITECTURE, USER_GUIDE updated for iroh (removed port-forwarding/quinn references).
+- SECURITY/CRYPTO: honest ml-kem audit status and double-ratchet-2 notes.
+
 ## v0.2.15 — Messaging fix, security cleanup (2026-07-09)
 
 ### Fixes (critical)
