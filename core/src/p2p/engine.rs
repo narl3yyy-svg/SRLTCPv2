@@ -469,8 +469,13 @@ impl P2pEngine {
 
     /// Block until iroh endpoint is bound (for QR v4 generation).
     pub async fn wait_until_ready(&self, timeout_secs: u64) -> Result<(), String> {
-        self.ensure_started().await?;
         let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
+        if !*self.running.read().await {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            tokio::time::timeout(remaining, self.start(crate::DEFAULT_QUIC_PORT))
+                .await
+                .map_err(|_| "engine start timed out — check network and retry".to_string())??;
+        }
         while std::time::Instant::now() < deadline {
             if self.iroh.read().await.is_bound() {
                 return Ok(());

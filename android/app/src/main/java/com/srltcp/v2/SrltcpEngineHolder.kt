@@ -82,14 +82,22 @@ object SrltcpEngineHolder {
         Log.i(TAG, "Creating Rust SrltcpEngine via UniFFI")
         initCrypto()
         val eng = SrltcpEngine()
-        eng.start(QUIC_PORT)
-        eng.waitUntilReady(30u)
         engine = eng
         starting = false
         polling = false
         startEventPolling(eng)
         if (!ready.isCompleted) ready.complete(eng)
-        Log.i(TAG, "Engine started on QUIC port $QUIC_PORT")
+        // iroh bind + online() can take 30–60s on mobile (or hang on SELinux).
+        // Never block UI on this — wait in background.
+        scope.launch {
+            try {
+                eng.waitUntilReady(60u)
+                Log.i(TAG, "iroh endpoint ready")
+            } catch (e: Exception) {
+                Log.e(TAG, "iroh ready wait failed", e)
+            }
+        }
+        Log.i(TAG, "Engine instance ready (iroh connecting in background)")
         return eng
     }
 

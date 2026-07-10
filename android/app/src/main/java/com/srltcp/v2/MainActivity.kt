@@ -265,9 +265,9 @@ fun ChatScreen() {
         }
     }
 
-    fun refreshConnectedPeer() {
-        val engine = SrltcpEngineHolder.getOrCreate()
-        val list = engine.connectedPeers()
+    fun refreshConnectedPeer(engine: uniffi.srltcp_core.SrltcpEngine? = SrltcpEngineHolder.engineOrNull()) {
+        val eng = engine ?: SrltcpEngineHolder.engineOrNull() ?: return
+        val list = eng.connectedPeers()
         connectedPeer = list.firstOrNull { it.startsWith("peer:") } ?: list.firstOrNull()
     }
 
@@ -414,26 +414,30 @@ fun ChatScreen() {
         val recvDir = File(context.filesDir, "received").apply { mkdirs() }
         receiveDirPath = recvDir.absolutePath
         try {
-            val engine = SrltcpEngineHolder.awaitEngine()
+            val engine = withContext(Dispatchers.IO) {
+                SrltcpEngineHolder.awaitEngine()
+            }
             engine.setReceiveDir(recvDir.absolutePath)
             engineOnline = engine.isRunning()
-            qrPayload = engine.qrPayload()
-            qrImageDataUrl = engine.qrImageDataUrl()
             savedContacts.clear()
             savedContacts.addAll(prefs.loadContacts())
             prefs.loadContacts().forEach { c ->
                 if (!peers.contains(c.peerId)) peers.add(c.peerId)
                 peerVerified[c.peerId] = c.verified
             }
-            syncTrustedPubkeys(engine)
-            savedContacts.filter { it.verified && it.qrPayload.isNotBlank() }.forEach { c ->
-                engine.registerSavedPeer(c.peerId, c.qrPayload)
-            }
-            syncDisplayName(null)
-            reconcilePeers()
-            refreshConnectedPeer()
-            connectedPeer?.let { peerStatus[it] = "online" }
             engineReady = true
+            withContext(Dispatchers.IO) {
+                qrPayload = engine.qrPayload()
+                qrImageDataUrl = engine.qrImageDataUrl()
+                syncTrustedPubkeys(engine)
+                savedContacts.filter { it.verified && it.qrPayload.isNotBlank() }.forEach { c ->
+                    engine.registerSavedPeer(c.peerId, c.qrPayload)
+                }
+                syncDisplayName(null)
+                reconcilePeers()
+                refreshConnectedPeer(engine)
+            }
+            connectedPeer?.let { peerStatus[it] = "online" }
         } catch (e: Exception) {
             showSnackbar("Engine failed to start: ${e.message ?: e}")
         }

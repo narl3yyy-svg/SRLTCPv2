@@ -59,8 +59,10 @@ impl IrohTransport {
             .await
             .map_err(|e| IrohError::Endpoint(e.to_string()))?;
 
-        ep.online().await;
-        info!("iroh endpoint online (NAT traversal active)");
+        match tokio::time::timeout(Duration::from_secs(45), ep.online()).await {
+            Ok(()) => info!("iroh endpoint online (NAT traversal active)"),
+            Err(_) => warn!("iroh online() timed out after 45s — relay may connect later"),
+        }
         self.online = true;
         self.endpoint = Some(ep);
         Ok(())
