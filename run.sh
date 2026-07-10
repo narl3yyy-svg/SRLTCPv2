@@ -87,7 +87,7 @@ cleanup() {
         fi
         rm -f "$PID_FILE"
     fi
-    if command -v fuser &>/dev/null; then
+    if [[ "$(uname -s)" == "Linux" ]] && command -v fuser &>/dev/null; then
         fuser -k "${QUIC_PORT}/udp" 2>/dev/null || true
         fuser -k "${QUIC_PORT}/tcp" 2>/dev/null || true
     fi

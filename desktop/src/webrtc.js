@@ -35,7 +35,8 @@ async function getMedia(isVideo) {
     : false;
   let video = false;
   if (isVideo && callSettings.camera) {
-    video = { width: { ideal: 640, max: 1280 }, height: { ideal: 480, max: 720 } };
+    // WebKit/GStreamer rejects ideal+max ranges (GstIntRange start >= end). Keep simple.
+    video = { width: 640, height: 480, frameRate: { ideal: 24, max: 30 } };
   }
   try {
     return await navigator.mediaDevices.getUserMedia({ audio, video });

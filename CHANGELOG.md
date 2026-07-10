@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.19 — macOS DNS & WebKit video fixes (2026-07-10)
+
+### Fixes
+
+- **macOS iroh connectivity** — Parse `scutil --dns` / `/etc/resolv.conf` for relay DNS instead of broken system reader + Google fallback (fixes router DNS hijack on networks like `10.0.50.1`). Override with `SRLTCP_DNS=10.0.50.1`.
+- **Linux GStreamer GstIntRange** — Simpler WebRTC video constraints (no ideal+max ranges that WebKit rejects).
+- **macOS launcher** — Skip Linux-only `fuser` port cleanup that printed errors on exit.
+
 ## v0.2.18 — Video playback & call reliability (2026-07-09)
 
 ### Fixes

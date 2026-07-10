@@ -4,6 +4,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+use iroh::dns::{DnsProtocol, DnsResolver};
 use iroh::endpoint::Connection;
 use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 use iroh_tickets::Ticket;
@@ -11,7 +14,7 @@ use iroh_tickets::endpoint::EndpointTicket;
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::RwLock;
-use tracing::info;
+use tracing::{info, warn};
 
 /// ALPN for SRLTCP application protocol over iroh.
 pub const SRLTCP_ALPN: &[u8] = b"srltcp/1";
@@ -48,8 +51,10 @@ impl IrohTransport {
 
     /// Bind iroh endpoint with N0 relay preset and bring online for NAT traversal.
     pub async fn bind(&mut self) -> Result<(), IrohError> {
+        let dns = build_dns_resolver();
         let ep = Endpoint::builder(presets::N0)
             .alpns(vec![SRLTCP_ALPN.to_vec()])
+            .dns_resolver(dns)
             .bind()
             .await
             .map_err(|e| IrohError::Endpoint(e.to_string()))?;
@@ -177,6 +182,100 @@ impl IrohTransport {
         }
         self.online = false;
     }
+}
+
+/// DNS for iroh relay hostnames. iroh's default macOS reader often fails on some networks;
+/// routers that hijack DNS (reply from 10.x instead of 8.8.8.8) break the Google fallback.
+fn build_dns_resolver() -> DnsResolver {
+    if let Ok(raw) = std::env::var("SRLTCP_DNS") {
+        let servers = parse_dns_list(&raw);
+        if !servers.is_empty() {
+            info!(dns = ?servers, "iroh DNS from SRLTCP_DNS");
+            return dns_from_ips(&servers);
+        }
+    }
+
+    let mut servers = Vec::new();
+    #[cfg(target_os = "macos")]
+    {
+        servers.extend(macos_scutil_nameservers());
+    }
+    servers.extend(resolv_conf_nameservers());
+
+    if servers.is_empty() {
+        warn!(
+            "iroh DNS: no system servers found — using 1.1.1.1 and 8.8.8.8. \
+             On macOS with router DNS hijacking, set: export SRLTCP_DNS=10.0.50.1"
+        );
+        servers.extend([
+            IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+            IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
+        ]);
+    } else {
+        info!(dns = ?servers, "iroh DNS from system config");
+    }
+
+    dns_from_ips(&servers)
+}
+
+fn parse_dns_list(raw: &str) -> Vec<IpAddr> {
+    raw.split([',', ' '])
+        .filter_map(|part| part.trim().parse::<IpAddr>().ok())
+        .collect()
+}
+
+fn dns_from_ips(servers: &[IpAddr]) -> DnsResolver {
+    let mut builder = DnsResolver::builder();
+    for ip in servers {
+        builder = builder.with_nameserver(SocketAddr::new(*ip, 53), DnsProtocol::Udp);
+    }
+    builder.build()
+}
+
+fn resolv_conf_nameservers() -> Vec<IpAddr> {
+    let Ok(content) = std::fs::read_to_string("/etc/resolv.conf") else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        let Some(ip_str) = line.strip_prefix("nameserver") else {
+            continue;
+        };
+        let ip_str = ip_str.trim();
+        if let Ok(ip) = ip_str.parse::<IpAddr>() {
+            if !out.contains(&ip) {
+                out.push(ip);
+            }
+        }
+    }
+    out
+}
+
+#[cfg(target_os = "macos")]
+fn macos_scutil_nameservers() -> Vec<IpAddr> {
+    use std::process::Command;
+    let output = match Command::new("scutil").arg("--dns").output() {
+        Ok(o) if o.status.success() => o,
+        _ => return Vec::new(),
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if !line.contains("nameserver[") {
+            continue;
+        }
+        let Some(ip_str) = line.split(':').nth(1).map(str::trim) else {
+            continue;
+        };
+        if let Ok(ip) = ip_str.parse::<IpAddr>() {
+            if !out.contains(&ip) {
+                out.push(ip);
+            }
+        }
+    }
+    out
 }
 
 /// Read loop helper: accept bi streams and deliver bytes to callback.

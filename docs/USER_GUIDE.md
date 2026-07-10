@@ -129,6 +129,8 @@ Settings → Apps → SRLTCP → Force Stop
 | `run.sh` says no prebuilt | Install from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases) or use `--rebuild` |
 | No peers in Peers Online | Only connected peers appear there; check **Saved Contacts** and tap **Reconnect** |
 | Peer shows offline but is up | They may have disconnected from you; reconnect from Saved Contacts |
+| macOS relay/DNS errors in terminal | Router DNS hijack: run `export SRLTCP_DNS=10.0.50.1` (your router IP from `scutil --dns`) then `./run.sh`. Or set Wi-Fi DNS to 1.1.1.1 in System Settings |
+| GStreamer GstIntRange warnings (Linux) | Harmless WebKit noise during video calls; fixed in v0.2.19+ |
 | Voice call permission denied | Linux: grant portal mic access; answer incoming calls with **Answer** (not auto) |
 | Video won't play | Use the Play button or native controls; on desktop try **Open** to play in your system player |
 | Transfer stuck | Wait for ACK progress; cancel and retry; both peers on v0.2.18+ |
