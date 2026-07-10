@@ -18,6 +18,7 @@ fun SettingsSheet(
     displayName: String,
     onCopyReceiveDir: () -> Unit,
     onRequestCallPermissions: () -> Unit,
+    onRequestNotificationPermission: () -> Unit,
     onDisplayNameChange: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -77,6 +78,19 @@ fun SettingsSheet(
             Spacer(modifier = Modifier.height(6.dp))
             OutlinedButton(onClick = onRequestCallPermissions, modifier = Modifier.fillMaxWidth()) {
                 Text("Grant mic & camera permissions")
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+
+            Text("Notifications", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Allow alerts for background messages and incoming calls.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            OutlinedButton(onClick = onRequestNotificationPermission, modifier = Modifier.fillMaxWidth()) {
+                Text("Enable notification alerts")
             }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))

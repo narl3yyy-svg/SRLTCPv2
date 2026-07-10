@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.26 — Android startup ANR fix (2026-07-10)
+
+### Fixes
+
+- **Android freeze / ANR on launch** — Show UI immediately; never update Compose state from IO thread; decode QR bitmap off main thread; notification permission moved to Settings.
+
 ## v0.2.25 — Call stability & Android notifications (2026-07-10)
 
 ### Fixes

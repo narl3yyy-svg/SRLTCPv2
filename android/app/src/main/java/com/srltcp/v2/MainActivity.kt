@@ -60,6 +60,7 @@ import com.srltcp.v2.ui.theme.SRLTCPTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import uniffi.srltcp_core.SrltcpEvent
 import org.json.JSONArray
 import org.json.JSONObject
@@ -181,7 +182,9 @@ fun ChatScreen() {
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { /* optional — alerts work once granted */ }
+    ) { granted ->
+        showSnackbar(if (granted) "Notifications enabled" else "Notifications denied — enable in system settings")
+    }
 
     val callPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -432,41 +435,39 @@ fun ChatScreen() {
     }
 
     LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
-                != PackageManager.PERMISSION_GRANTED
-            ) {
-                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        }
         displayName = prefs.displayName
         val recvDir = File(context.filesDir, "received").apply { mkdirs() }
         receiveDirPath = recvDir.absolutePath
+        savedContacts.clear()
+        savedContacts.addAll(prefs.loadContacts())
+        savedContacts.forEach { c ->
+            if (!peers.contains(c.peerId)) peers.add(c.peerId)
+            peerVerified[c.peerId] = c.verified
+        }
+        // Never block the whole UI on engine/native init — avoids ANR on cold start.
+        engineReady = true
         try {
             val engine = withContext(Dispatchers.IO) {
-                SrltcpEngineHolder.awaitEngine()
+                withTimeout(45_000) { SrltcpEngineHolder.awaitEngine() }
             }
-            engine.setReceiveDir(recvDir.absolutePath)
-            engineOnline = engine.isRunning()
-            savedContacts.clear()
-            savedContacts.addAll(prefs.loadContacts())
-            prefs.loadContacts().forEach { c ->
-                if (!peers.contains(c.peerId)) peers.add(c.peerId)
-                peerVerified[c.peerId] = c.verified
-            }
-            engineReady = true
-            withContext(Dispatchers.IO) {
-                qrPayload = engine.qrPayload()
-                qrImageDataUrl = engine.qrImageDataUrl()
+            val (payload, img) = withContext(Dispatchers.IO) {
+                engine.setReceiveDir(recvDir.absolutePath)
                 syncTrustedPubkeys(engine)
                 savedContacts.filter { it.verified && it.qrPayload.isNotBlank() }.forEach { c ->
                     engine.registerSavedPeer(c.peerId, c.qrPayload)
                 }
-                syncDisplayName(null)
-                reconcilePeers()
-                refreshConnectedPeer(engine)
+                if (displayName.isNotBlank()) {
+                    engine.setDisplayName(displayName)
+                }
+                engine.qrPayload() to engine.qrImageDataUrl()
             }
+            qrPayload = payload
+            qrImageDataUrl = img
+            engineOnline = engine.isRunning()
+            reconcilePeers()
+            refreshConnectedPeer(engine)
             connectedPeer?.let { peerStatus[it] = "online" }
+            syncDisplayName(null)
         } catch (e: Exception) {
             showSnackbar("Engine failed to start: ${e.message ?: e}")
         }
@@ -496,6 +497,7 @@ fun ChatScreen() {
     }
 
     val eventListener: (SrltcpEvent) -> Unit = { event ->
+        scope.launch(Dispatchers.Main) {
         when (event.eventType) {
             "started" -> {
                 engineOnline = true
@@ -683,6 +685,7 @@ fun ChatScreen() {
                 showSnackbar("Call ended")
             }
             "error" -> showSnackbar(event.error ?: "Unknown error")
+        }
         }
     }
 
@@ -963,7 +966,7 @@ fun ChatScreen() {
                     val engine = SrltcpEngineHolder.getOrCreate()
                     val qr = remoteQrInput.trim()
                     if (qr.isEmpty()) {
-                        showSnackbar("Paste peer QR code first")
+                        withContext(Dispatchers.Main) { showSnackbar("Paste peer QR code first") }
                         return@launch
                     }
                     engine.waitUntilReady(30u)
@@ -1049,7 +1052,7 @@ fun ChatScreen() {
 
     if (showSettingsSheet) {
         SettingsSheet(
-            version = "0.2.23",
+            version = "0.2.26",
             receiveDir = receiveDirPath,
             displayName = displayName,
             onCopyReceiveDir = {
@@ -1058,6 +1061,13 @@ fun ChatScreen() {
             },
             onRequestCallPermissions = {
                 ensureCallPermissions(true) { showSnackbar("Mic/camera permissions granted") }
+            },
+            onRequestNotificationPermission = {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                } else {
+                    showSnackbar("Notifications enabled on this Android version")
+                }
             },
             onDisplayNameChange = { name ->
                 displayName = name
@@ -1189,8 +1199,9 @@ fun QrShareCard(
                     Icon(Icons.Default.ContentCopy, contentDescription = "Copy QR")
                 }
             }
-            val bitmap = remember(qrImageDataUrl) {
-                decodeQrDataUrl(qrImageDataUrl)
+            var bitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+            LaunchedEffect(qrImageDataUrl) {
+                bitmap = withContext(Dispatchers.Default) { decodeQrDataUrl(qrImageDataUrl) }
             }
             bitmap?.let { bmp ->
                 Image(

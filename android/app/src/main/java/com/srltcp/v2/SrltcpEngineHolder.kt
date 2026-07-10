@@ -26,7 +26,7 @@ object SrltcpEngineHolder {
     @Volatile
     private var engine: SrltcpEngine? = null
 
-    private val ready = CompletableDeferred<SrltcpEngine>()
+    private var ready = CompletableDeferred<SrltcpEngine>()
     @Volatile
     private var starting = false
 
@@ -145,6 +145,7 @@ object SrltcpEngineHolder {
         engine = null
         starting = false
         polling = false
+        ready = CompletableDeferred()
         scope.cancel()
     }
 }
