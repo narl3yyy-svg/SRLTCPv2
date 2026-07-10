@@ -7,6 +7,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.webkit.MimeTypeMap
 import android.widget.MediaController
@@ -51,6 +52,7 @@ import coil.compose.AsyncImage
 import org.webrtc.SurfaceViewRenderer
 import com.srltcp.v2.data.AppPreferences
 import com.srltcp.v2.data.SavedContact
+import com.srltcp.v2.service.SrltcpAlertNotifier
 import com.srltcp.v2.service.SrltcpForegroundService
 import com.srltcp.v2.ui.PeersSheet
 import com.srltcp.v2.ui.SettingsSheet
@@ -69,12 +71,24 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        SrltcpAlertNotifier.ensureChannels(this)
         startP2pService()
         setContent {
             SRLTCPTheme {
                 ChatScreen()
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        AppVisibility.isInForeground = true
+        SrltcpAlertNotifier.cancelAllAlerts(this)
+    }
+
+    override fun onPause() {
+        AppVisibility.isInForeground = false
+        super.onPause()
     }
 
     private fun startP2pService() {
@@ -164,6 +178,10 @@ fun ChatScreen() {
     var pendingCallAction by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     fun showSnackbar(msg: String) { snackbarMessage = msg }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { /* optional — alerts work once granted */ }
 
     val callPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -414,6 +432,13 @@ fun ChatScreen() {
     }
 
     LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED
+            ) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
         displayName = prefs.displayName
         val recvDir = File(context.filesDir, "received").apply { mkdirs() }
         receiveDirPath = recvDir.absolutePath
@@ -654,6 +679,7 @@ fun ChatScreen() {
                 callState = null
                 showIncomingCallDialog = false
                 pendingIncomingCall = null
+                SrltcpAlertNotifier.cancelIncomingCall(context)
                 showSnackbar("Call ended")
             }
             "error" -> showSnackbar(event.error ?: "Unknown error")

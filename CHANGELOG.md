@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.25 — Call stability & Android notifications (2026-07-10)
+
+### Fixes
+
+- **Linux video call UI freeze** — Detect `/dev/video*` via `has_local_camera`; skip `getUserMedia({ video: true })` on headless desktops; camera off by default; recv-only transceivers only.
+- **Android notifications** — High-priority message/call alert channels; `POST_NOTIFICATIONS` runtime prompt; foreground service posts alerts when app is backgrounded.
+
+### Notes
+
+- OpenMLS evaluation deferred — current `double-ratchet-2` stack unchanged; see `docs/SECURITY.md`.
+
 ## v0.2.24 — Desktop startup fix (2026-07-10)
 
 ### Fixes (critical)

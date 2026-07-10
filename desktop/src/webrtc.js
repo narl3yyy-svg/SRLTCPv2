@@ -10,7 +10,8 @@ let localStream = null;
 let pendingIncoming = null;
 let pendingIceCandidates = [];
 let callEndedNotified = false;
-let callSettings = { mic: true, camera: true };
+let callSettings = { mic: true, camera: false };
+let localCameraAvailable = false;
 let recvOnlyVideo = false;
 let recvOnlyAudio = false;
 
@@ -47,7 +48,7 @@ async function getMedia(isVideo) {
   recvOnlyAudio = false;
 
   const wantMic = callSettings.mic;
-  const wantLocalVideo = isVideo && callSettings.camera;
+  const wantLocalVideo = isVideo && callSettings.camera && localCameraAvailable;
 
   const combined = new MediaStream();
 
@@ -343,7 +344,12 @@ function toggleCamera() {
 
 function setCallSettings({ mic, camera }) {
   if (mic !== undefined) callSettings.mic = mic;
-  if (camera !== undefined) callSettings.camera = camera;
+  if (camera !== undefined) callSettings.camera = camera && localCameraAvailable;
+}
+
+function setLocalCameraAvailable(available) {
+  localCameraAvailable = !!available;
+  if (!localCameraAvailable) callSettings.camera = false;
 }
 
 async function testMediaPermissions() {
@@ -357,7 +363,7 @@ async function testMediaPermissions() {
       parts.push(`microphone: ${mediaErrorHelp(e)} (listen-only calls still work)`);
     }
   }
-  if (callSettings.camera) {
+  if (callSettings.camera && localCameraAvailable) {
     try {
       const s = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
       const hasVideo = s.getVideoTracks().length > 0;
@@ -366,6 +372,8 @@ async function testMediaPermissions() {
     } catch (e) {
       parts.push(`camera: ${mediaErrorHelp(e)} (receive-only video still works)`);
     }
+  } else {
+    parts.push('camera disabled — receive-only video for calls');
   }
   return parts.join(' · ');
 }
@@ -379,6 +387,7 @@ window.SrltcpWebRTC = {
   toggleMute,
   toggleCamera,
   setCallSettings,
+  setLocalCameraAvailable,
   testMediaPermissions,
   get pendingIncoming() { return pendingIncoming; },
 };

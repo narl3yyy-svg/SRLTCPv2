@@ -49,6 +49,7 @@ class SrltcpForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        SrltcpAlertNotifier.ensureChannels(this)
         Log.i(TAG, "Foreground service created")
     }
 
@@ -87,7 +88,19 @@ class SrltcpForegroundService : Service() {
         eventListener = { event ->
             when (event.eventType) {
                 "peer_connected" -> updateNotification("Connected: ${event.peerId}")
-                "message" -> updateNotification("Message from ${event.peerId}")
+                "message" -> {
+                    val peer = event.peerId ?: "peer"
+                    updateNotification("Message from $peer")
+                    event.content?.let { body ->
+                        SrltcpAlertNotifier.notifyMessage(applicationContext, peer, body)
+                    }
+                }
+                "call_offer" -> {
+                    val peer = event.peerId ?: "peer"
+                    val isVideo = event.autoTrusted == true
+                    SrltcpAlertNotifier.notifyIncomingCall(applicationContext, peer, isVideo)
+                }
+                "call_ended" -> SrltcpAlertNotifier.cancelIncomingCall(applicationContext)
                 "started" -> updateNotification("Online — iroh NAT traversal")
                 "stopped" -> updateNotification("Stopped")
                 "error" -> updateNotification("Error: ${event.error}")

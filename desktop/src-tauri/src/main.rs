@@ -306,6 +306,45 @@ async fn shutdown_engine(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+/// True when a V4L2/video capture device exists (Linux). Avoids WebKit/GStreamer
+/// probing a non-existent camera, which can flood GstIntRange errors and freeze the UI.
+#[tauri::command]
+fn has_local_camera() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::read_dir("/dev")
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.ok())
+            .any(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("video")
+            })
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("system_profiler")
+            .args(["SPCameraDataType"])
+            .output()
+            .map(|o| {
+                let out = String::from_utf8_lossy(&o.stdout);
+                out.contains("Camera") && !out.contains("No cameras")
+            })
+            .unwrap_or(false)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // Conservative default — user can enable camera in Settings if present.
+        true
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        false
+    }
+}
+
 fn install_shutdown_handler(engine: Arc<Mutex<P2pEngine>>, shutting_down: Arc<AtomicBool>) {
     #[cfg(unix)]
     {
@@ -372,6 +411,7 @@ fn main() {
             file_size,
             reveal_in_folder,
             shutdown_engine,
+            has_local_camera,
         ])
         .manage(AppState {
             engine: engine.clone(),

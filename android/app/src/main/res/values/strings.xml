@@ -5,4 +5,8 @@
     <string name="notification_channel_desc">Keeps SRLTCP connected for incoming messages</string>
     <string name="notification_title">SRLTCP</string>
     <string name="notification_listening">Listening for peers…</string>
+    <string name="notification_channel_messages_name">Messages</string>
+    <string name="notification_channel_messages_desc">Alerts for incoming encrypted messages</string>
+    <string name="notification_channel_calls_name">Calls</string>
+    <string name="notification_channel_calls_desc">Alerts for incoming voice and video calls</string>
 </resources>

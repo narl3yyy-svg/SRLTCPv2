@@ -1,6 +1,6 @@
 // SRLTCP v0.2.24 Desktop Frontend
 
-const STORAGE_KEY = 'srltcp_v0.2.24';
+const STORAGE_KEY = 'srltcp_v0.2.25';
 const LEGACY_STORAGE_KEYS = ['srltcp_v0.2.16'];
 
 function loadState() {
@@ -254,6 +254,21 @@ async function init() {
     try {
       receiveDir = await invoke('get_receive_dir');
       updateReceiveDirUI();
+    } catch (_) {}
+
+    try {
+      const hasCamera = await invoke('has_local_camera');
+      window.SrltcpWebRTC?.setLocalCameraAvailable?.(hasCamera);
+      const camEl = document.getElementById('call-setting-camera');
+      if (camEl) {
+        camEl.checked = !!hasCamera;
+        camEl.disabled = !hasCamera;
+        camEl.title = hasCamera ? '' : 'No camera detected — video calls use receive-only mode';
+      }
+      window.SrltcpWebRTC?.setCallSettings?.({
+        mic: document.getElementById('call-setting-mic')?.checked ?? true,
+        camera: !!hasCamera && (camEl?.checked ?? false),
+      });
     } catch (_) {}
 
     const existingPeers = await invoke('get_peers');
