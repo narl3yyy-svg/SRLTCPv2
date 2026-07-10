@@ -315,6 +315,7 @@ fun ChatScreen() {
         scope.launch(Dispatchers.IO) {
             SrltcpEngineHolder.getOrCreate().disconnectPeer(peerId)
         }
+        transfers.clear()
         peers.remove(peerId)
         if (connectedPeer == peerId) connectedPeer = null
         peerStatus[peerId] = "paused"
@@ -513,11 +514,17 @@ fun ChatScreen() {
             "sas_ready" -> {
                 event.sas?.let { sas ->
                     val peer = event.peerId ?: return@let
+                    addPeerUnique(peer)
                     if (event.autoTrusted == true) {
                         peerVerified[peer] = true
                         connectedPeer = peer
+                        peerStatus[peer] = "online"
+                        activePeer = peer
+                        messages = loadMessagesForPeer(peer)
                         showSnackbar("Reconnected to trusted peer")
                     } else {
+                        activePeer = peer
+                        messages = loadMessagesForPeer(peer)
                         sasCode = sas
                         sasPeerId = peer
                         showSasDialog = true
@@ -525,6 +532,7 @@ fun ChatScreen() {
                 }
             }
             "peer_disconnected" -> event.peerId?.let { id ->
+                transfers.clear()
                 peers.remove(id)
                 if (connectedPeer == id) connectedPeer = null
                 val reason = event.message.orEmpty()
@@ -559,7 +567,7 @@ fun ChatScreen() {
                 val progress = event.progress?.toFloat() ?: 0f
                 val existing = transfers[id]
                 val now = System.currentTimeMillis()
-                val totalBytes = existing?.totalBytes ?: 0L
+                val totalBytes = event.message?.toLongOrNull() ?: existing?.totalBytes ?: 0L
                 var speedBps = existing?.speedBps ?: 0.0
                 if (existing != null && totalBytes > 0 && now > existing.lastUpdateMs) {
                     val delta = (progress - existing.lastProgress).coerceAtLeast(0f)
@@ -577,7 +585,10 @@ fun ChatScreen() {
                     lastUpdateMs = now,
                 )
             }
-            "transfer_cancelled" -> event.transferId?.let { transfers.remove(it) }
+            "transfer_cancelled" -> event.transferId?.let {
+                transfers.remove(it)
+                showSnackbar("Transfer cancelled")
+            }
             "transfer_complete" -> event.transferId?.let { id ->
                 val filename = event.filename ?: "file"
                 val wasOutgoing = transfers[id]?.isOutgoing ?: false
@@ -793,14 +804,7 @@ fun ChatScreen() {
         },
         bottomBar = {
             Column(Modifier.imePadding()) {
-                callState?.let { call ->
-                    CallStatusBar(
-                        call = call,
-                        peerLabel = contactLabel(call.peerId),
-                        onEndCall = { endActiveCall() },
-                    )
-                }
-                transfers.values.filter { !it.isComplete }.forEach { transfer ->
+                transfers.values.forEach { transfer ->
                     TransferProgressBar(
                         transfer = transfer,
                         onCancel = {
@@ -842,7 +846,7 @@ fun ChatScreen() {
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            if (activePeer == null && qrPayload.isNotEmpty()) {
+            if (activePeer == null && qrPayload.isNotEmpty() && savedContacts.isEmpty()) {
                 QrShareCard(
                     qrPayload = qrPayload,
                     qrImageDataUrl = qrImageDataUrl,
@@ -879,7 +883,7 @@ fun ChatScreen() {
                     }
                 }
             }
-            if (savedContacts.size > 1) {
+            if (savedContacts.isNotEmpty()) {
                 PeerChipRow(
                     peers = savedContacts.map { it.peerId },
                     activePeer = activePeer,
@@ -1019,7 +1023,7 @@ fun ChatScreen() {
 
     if (showSettingsSheet) {
         SettingsSheet(
-            version = "0.2.22",
+            version = "0.2.23",
             receiveDir = receiveDirPath,
             displayName = displayName,
             onCopyReceiveDir = {
@@ -1394,14 +1398,20 @@ fun MessageBubble(message: ChatMessage, onOpenFile: ((String) -> Unit)? = null) 
         ) {
             Column(modifier = Modifier.padding(8.dp)) {
                 when (message.kind) {
-                    MessageKind.IMAGE -> message.mediaPath?.let { path ->
-                        AsyncImage(
-                            model = File(path),
-                            contentDescription = message.content,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = 240.dp),
-                            contentScale = ContentScale.Fit,
+                    MessageKind.IMAGE -> {
+                        message.mediaPath?.let { path ->
+                            AsyncImage(
+                                model = File(path),
+                                contentDescription = message.content,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 240.dp),
+                                contentScale = ContentScale.Fit,
+                            )
+                        } ?: Text(
+                            text = "🖼 ${message.content}",
+                            color = if (message.isSent) MaterialTheme.colorScheme.onPrimary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                     MessageKind.VIDEO -> message.mediaPath?.let { path ->

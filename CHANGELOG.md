@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.2.23 — Calls, transfers, contacts UI (2026-07-10)
+
+### Fixes (critical)
+
+- **Recv-only calls** — Desktop and Android support listen/watch-only when no mic/camera (Arch headless ↔ Android video works).
+- **Transfer cleanup on disconnect** — Core cancels in-flight transfers; no infinite chunk-retry spam; UI clears progress bars.
+- **Android transfer MB/s** — Incoming transfers use `total_size` from engine progress events.
+- **Image preview** — Transfer complete uses actual storage path; chat shows inline images on both platforms.
+- **Reconnect → chat** — Auto-trusted reconnect opens chat (not stuck on QR); desktop switches to Peers panel.
+- **Android contacts** — Full-screen dialog instead of bottom sheet; contact chips shown when contacts exist.
+
+### Notes
+
+- Screen/window share planned for a future release (requires `getDisplayMedia` + signaling work).
+
 ## v0.2.22 — Linux voice/video calls & Android spinner fix (2026-07-10)
 
 ### Fixes (critical)

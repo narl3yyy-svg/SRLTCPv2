@@ -12,14 +12,15 @@ let pendingIceCandidates = [];
 let callEndedNotified = false;
 let callSettings = { mic: true, camera: true };
 let recvOnlyVideo = false;
+let recvOnlyAudio = false;
 
 function mediaErrorHelp(err) {
   const name = err?.name || '';
   if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
-    return 'Microphone/camera blocked. Linux: click Settings → Test mic & camera, allow the portal prompt, then retry.';
+    return 'Microphone/camera blocked. Linux: Settings → Test mic & camera, allow portal prompt, then retry.';
   }
   if (name === 'OverconstrainedError' || name === 'NotFoundError') {
-    return 'Camera/mic not available. Try voice-only or disable camera in Settings.';
+    return 'Camera/mic not available — listen/watch-only mode will be used if possible.';
   }
   if (name === 'NotReadableError' || name === 'AbortError') {
     return 'Device busy or unavailable. Close other apps using the camera/mic.';
@@ -29,47 +30,62 @@ function mediaErrorHelp(err) {
 
 /**
  * Minimal constraints for WebKitGTK/GStreamer on Linux.
- * Never call enumerateDevices() before permission — it triggers GstIntRange errors.
+ * Never call enumerateDevices() — triggers GstIntRange errors.
+ * Supports recv-only when no local mic/camera (e.g. headless Arch desktop).
  */
 async function getMedia(isVideo) {
   if (!navigator.mediaDevices?.getUserMedia) {
+    if (isVideo) {
+      recvOnlyVideo = true;
+      recvOnlyAudio = true;
+      return new MediaStream();
+    }
     throw new Error('WebRTC media not available in this webview');
   }
 
-  const wantMic = callSettings.mic;
-  const wantVideo = isVideo && callSettings.camera;
   recvOnlyVideo = false;
+  recvOnlyAudio = false;
 
-  if (!wantMic && !wantVideo) {
-    throw new Error('Microphone and camera disabled in Settings');
-  }
+  const wantMic = callSettings.mic;
+  const wantLocalVideo = isVideo && callSettings.camera;
 
-  // Voice-only: simplest constraint — no video probe
-  if (!wantVideo) {
-    if (!wantMic) throw new Error('Microphone disabled in Settings');
-    return navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-  }
+  const combined = new MediaStream();
 
-  // Video call: try audio+video, then audio-only with recv-only remote video
-  try {
-    return await navigator.mediaDevices.getUserMedia({ audio: wantMic, video: true });
-  } catch (e) {
-    if (!wantMic) throw new Error(mediaErrorHelp(e));
+  if (wantMic) {
     try {
-      recvOnlyVideo = true;
-      return await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    } catch (e2) {
-      throw new Error(mediaErrorHelp(e2));
+      const a = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      a.getAudioTracks().forEach((t) => combined.addTrack(t));
+    } catch (_) {
+      recvOnlyAudio = true;
     }
+  } else if (isVideo) {
+    recvOnlyAudio = true;
   }
+
+  if (wantLocalVideo) {
+    try {
+      const v = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
+      v.getVideoTracks().forEach((t) => combined.addTrack(t));
+    } catch (_) {
+      recvOnlyVideo = true;
+    }
+  } else if (isVideo) {
+    recvOnlyVideo = true;
+  }
+
+  if (isVideo && !combined.getVideoTracks().length) recvOnlyVideo = true;
+  if (wantMic && !combined.getAudioTracks().length) recvOnlyAudio = true;
+
+  return combined;
 }
 
 function addLocalTracks(pc, stream) {
   stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+  if (recvOnlyAudio) {
+    try { pc.addTransceiver('audio', { direction: 'recvonly' }); } catch (_) {}
+  }
   if (recvOnlyVideo) {
-    try {
-      pc.addTransceiver('video', { direction: 'recvonly' });
-    } catch (_) {}
+    try { pc.addTransceiver('video', { direction: 'recvonly' }); } catch (_) {}
   }
 }
 
@@ -82,7 +98,18 @@ function setCallVideoLayout(isVideo) {
   if (videos) videos.classList.toggle('voice-only', !isVideo || !showLocalVideo);
   if (local) local.classList.toggle('hidden', !showLocalVideo);
   if (remote) remote.classList.toggle('hidden', !isVideo);
-  if (voiceOnly) voiceOnly.classList.toggle('hidden', isVideo && showLocalVideo);
+  if (voiceOnly) {
+    const listenOnly = recvOnlyAudio && recvOnlyVideo;
+    const recvOnly = recvOnlyVideo && !showLocalVideo;
+    voiceOnly.textContent = listenOnly
+      ? 'Listen & watch only (no local mic/camera)'
+      : recvOnly
+        ? 'Receiving video (no local camera)'
+        : recvOnlyAudio
+          ? 'Listen only (no local mic)'
+          : 'Voice call';
+    voiceOnly.classList.toggle('hidden', isVideo && showLocalVideo && !recvOnlyAudio);
+  }
 }
 
 function showCallOverlay(show, isVideo = true) {
@@ -115,6 +142,7 @@ async function playVideoEl(el) {
 async function cleanupCall() {
   callEndedNotified = false;
   recvOnlyVideo = false;
+  recvOnlyAudio = false;
   pendingIceCandidates = [];
   peerConnection?.close();
   peerConnection = null;
@@ -197,22 +225,22 @@ function createPeerConnection(peerId, callId, isVideo, invoke, onEnded) {
   return peerConnection;
 }
 
+function callModeLabel(isVideo, gotVideo) {
+  if (!gotVideo) return recvOnlyAudio ? 'Listen only' : 'Voice call';
+  if (recvOnlyVideo && recvOnlyAudio) return 'Listen & watch';
+  if (recvOnlyVideo) return 'Video (receive only)';
+  if (recvOnlyAudio) return 'Voice (listen only)';
+  return 'Video call';
+}
+
 async function startOutgoingCall(peerId, isVideo, invoke, peerLabel, onEnded) {
   await cleanupCall();
   const callId = crypto.randomUUID();
-  let gotVideo = isVideo;
-  try {
-    localStream = await getMedia(isVideo);
-    gotVideo = isVideo && (!!localStream.getVideoTracks().length || recvOnlyVideo);
-  } catch (e) {
-    throw new Error(mediaErrorHelp(e));
-  }
+  localStream = await getMedia(isVideo);
+  const gotVideo = isVideo && (!!localStream.getVideoTracks().length || recvOnlyVideo);
   showCallOverlay(true, gotVideo);
   document.getElementById('call-peer-label').textContent = peerLabel || peerId;
-  const label = gotVideo
-    ? (recvOnlyVideo ? 'Video call (receive only)' : 'Video call')
-    : 'Voice call';
-  document.getElementById('call-type-label').textContent = label;
+  document.getElementById('call-type-label').textContent = callModeLabel(isVideo, gotVideo);
 
   createPeerConnection(peerId, callId, isVideo, invoke, onEnded);
   addLocalTracks(peerConnection, localStream);
@@ -230,22 +258,11 @@ async function answerIncomingCall(invoke, onEnded) {
   if (!pendingIncoming) throw new Error('No incoming call');
   const { peerId, callId, payload, isVideo, peerLabel } = pendingIncoming;
   showIncomingModal(false);
-  let gotVideo = isVideo;
-  try {
-    localStream = await getMedia(isVideo);
-    gotVideo = isVideo && (!!localStream.getVideoTracks().length || recvOnlyVideo);
-  } catch (e) {
-    await invoke('send_call_signal', {
-      peerId, callId, signal: 'end', payload: '', isVideo,
-    });
-    throw new Error(mediaErrorHelp(e));
-  }
+  localStream = await getMedia(isVideo);
+  const gotVideo = isVideo && (!!localStream.getVideoTracks().length || recvOnlyVideo);
   showCallOverlay(true, gotVideo);
   document.getElementById('call-peer-label').textContent = peerLabel || peerId;
-  const label = gotVideo
-    ? (recvOnlyVideo ? 'Video call (receive only)' : 'Video call')
-    : 'Voice call';
-  document.getElementById('call-type-label').textContent = label;
+  document.getElementById('call-type-label').textContent = callModeLabel(isVideo, gotVideo);
 
   createPeerConnection(peerId, callId, isVideo, invoke, onEnded);
   addLocalTracks(peerConnection, localStream);
@@ -337,7 +354,7 @@ async function testMediaPermissions() {
       s.getTracks().forEach((t) => t.stop());
       parts.push('microphone OK');
     } catch (e) {
-      parts.push(`microphone: ${mediaErrorHelp(e)}`);
+      parts.push(`microphone: ${mediaErrorHelp(e)} (listen-only calls still work)`);
     }
   }
   if (callSettings.camera) {
@@ -347,7 +364,7 @@ async function testMediaPermissions() {
       s.getTracks().forEach((t) => t.stop());
       parts.push(hasVideo ? 'camera OK' : 'camera unavailable');
     } catch (e) {
-      parts.push(`camera: ${mediaErrorHelp(e)} (video calls can still receive remote video)`);
+      parts.push(`camera: ${mediaErrorHelp(e)} (receive-only video still works)`);
     }
   }
   return parts.join(' · ');

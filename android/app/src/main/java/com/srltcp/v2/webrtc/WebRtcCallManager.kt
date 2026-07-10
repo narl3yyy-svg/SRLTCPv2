@@ -15,6 +15,7 @@ import org.webrtc.MediaStream
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
 import org.webrtc.RtpReceiver
+import org.webrtc.RtpTransceiver
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import org.webrtc.SurfaceViewRenderer
@@ -34,6 +35,10 @@ class WebRtcCallManager(private val context: Context) {
     private var localRenderer: SurfaceViewRenderer? = null
     private var remoteRenderer: SurfaceViewRenderer? = null
     private val pendingIce = mutableListOf<IceCandidate>()
+    var recvOnlyVideo = false
+        private set
+    var recvOnlyAudio = false
+        private set
 
     private fun ensureFactory() {
         if (factory != null) return
@@ -54,19 +59,25 @@ class WebRtcCallManager(private val context: Context) {
     ): String {
         ensureFactory()
         end()
+        recvOnlyVideo = false
+        recvOnlyAudio = false
         val callId = UUID.randomUUID().toString()
         val pc = createPeer(onIce)
         peerConnection = pc
 
-        val audioSource = factory!!.createAudioSource(MediaConstraints())
-        localAudio = factory!!.createAudioTrack("audio0", audioSource)
-        pc.addTrack(localAudio)
-
-        val gotVideo = if (isVideo) addCameraTrack(pc) else false
+        addAudioTrack(pc)
+        val gotLocalVideo = if (isVideo) addCameraTrack(pc) else false
+        if (isVideo && !gotLocalVideo) {
+            recvOnlyVideo = true
+            pc.addTransceiver(
+                org.webrtc.MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO,
+                RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.RECV_ONLY),
+            )
+        }
 
         val constraints = MediaConstraints().apply {
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
-            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", if (gotVideo) "true" else "false"))
+            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", if (isVideo) "true" else "false"))
         }
         pc.createOffer(object : SdpObserverAdapter() {
             override fun onCreateSuccess(desc: SessionDescription?) {
@@ -90,14 +101,20 @@ class WebRtcCallManager(private val context: Context) {
     ) {
         ensureFactory()
         end()
+        recvOnlyVideo = false
+        recvOnlyAudio = false
         val pc = createPeer(onIce)
         peerConnection = pc
 
-        val audioSource = factory!!.createAudioSource(MediaConstraints())
-        localAudio = factory!!.createAudioTrack("audio0", audioSource)
-        pc.addTrack(localAudio)
-
-        val gotVideo = if (isVideo) addCameraTrack(pc) else false
+        addAudioTrack(pc)
+        val gotLocalVideo = if (isVideo) addCameraTrack(pc) else false
+        if (isVideo && !gotLocalVideo) {
+            recvOnlyVideo = true
+            pc.addTransceiver(
+                org.webrtc.MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO,
+                RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.RECV_ONLY),
+            )
+        }
 
         pc.setRemoteDescription(
             object : SdpObserverAdapter() {
@@ -109,7 +126,7 @@ class WebRtcCallManager(private val context: Context) {
         )
         val constraints = MediaConstraints().apply {
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
-            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", if (gotVideo) "true" else "false"))
+            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", if (isVideo) "true" else "false"))
         }
         pc.createAnswer(object : SdpObserverAdapter() {
             override fun onCreateSuccess(desc: SessionDescription?) {
@@ -193,6 +210,8 @@ class WebRtcCallManager(private val context: Context) {
         localAudio = null
         localVideo = null
         remoteVideo = null
+        recvOnlyVideo = false
+        recvOnlyAudio = false
         pendingIce.clear()
         peerConnection?.close()
         peerConnection = null
@@ -200,6 +219,20 @@ class WebRtcCallManager(private val context: Context) {
         remoteRenderer?.release()
         localRenderer = null
         remoteRenderer = null
+    }
+
+    private fun addAudioTrack(pc: PeerConnection) {
+        try {
+            val audioSource = factory!!.createAudioSource(MediaConstraints())
+            localAudio = factory!!.createAudioTrack("audio0", audioSource)
+            pc.addTrack(localAudio)
+        } catch (_: Exception) {
+            recvOnlyAudio = true
+            pc.addTransceiver(
+                org.webrtc.MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO,
+                RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.RECV_ONLY),
+            )
+        }
     }
 
     private fun addCameraTrack(pc: PeerConnection): Boolean {

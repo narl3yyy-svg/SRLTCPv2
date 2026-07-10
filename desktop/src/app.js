@@ -1,6 +1,6 @@
-// SRLTCP v0.2.22 Desktop Frontend
+// SRLTCP v0.2.23 Desktop Frontend
 
-const STORAGE_KEY = 'srltcp_v0.2.22';
+const STORAGE_KEY = 'srltcp_v0.2.23';
 const LEGACY_STORAGE_KEYS = ['srltcp_v0.2.16'];
 
 function loadState() {
@@ -138,9 +138,9 @@ async function reconnectContact(contact) {
       connectedPeer = peerId;
       connectedPeers.add(peerId);
       peerStatus.set(peerId, 'online');
+      selectPeer(peerId);
       if (autoTrusted) {
         peerVerified.set(peerId, true);
-        selectPeer(peerId);
         await syncDisplayName(peerId);
         toast('Reconnected to trusted peer');
       } else {
@@ -190,7 +190,8 @@ async function syncDisplayName(broadcastTo) {
 }
 
 function softDisconnect(id) {
-  invoke('disconnect_peer', { peerId: id }).catch(() => {});
+  invoke('disconnect_peer', { peerId: id }).catch((e) => toast(`Disconnect: ${e}`, true));
+  clearTransfersForPeer(id);
   peers = peers.filter(p => p !== id);
   connectedPeers.delete(id);
   if (connectedPeer === id) connectedPeer = null;
@@ -316,6 +317,7 @@ function handleEvent(p) {
       } else {
         peerStatus.set(id, 'offline');
       }
+      clearTransfersForPeer(id);
       if (activePeer === id && reason !== 'connection lost') closeChatWindow();
       renderPeers();
       renderPeerChips();
@@ -385,26 +387,22 @@ function handleEvent(p) {
     }
     case 'transfer_progress': {
       const tid = pick(p, 'id', 'Id');
+      const peerId = pick(p, 'peer_id', 'peerId');
       const existing = transfers.get(tid);
       const outgoing = existing?.outgoing ?? false;
-      updateTransfer(tid, p.filename, p.progress, outgoing, existing?.totalBytes);
-      if (!outgoing && receiveDir && p.filename) {
-        const guess = `${receiveDir}/${p.filename}`;
-        invoke('file_size', { path: guess }).then((size) => {
-          const t = transfers.get(tid);
-          if (t && !t.totalBytes) updateTransfer(tid, t.filename, t.progress, false, size);
-        }).catch(() => {});
-      }
+      const totalBytes = p.total_bytes ?? p.totalBytes ?? Number(p.message) || existing?.totalBytes || 0;
+      updateTransfer(tid, p.filename, p.progress, outgoing, totalBytes, peerId);
       break;
     }
     case 'transfer_complete': {
       const tid = pick(p, 'id', 'Id');
+      const peerId = pick(p, 'peer_id', 'peerId');
       const fname = p.filename || 'file';
-      const fpath = p.path || p.message || (receiveDir ? `${receiveDir}/${fname}` : '');
-      updateTransfer(tid, fname, 1, transfers.get(tid)?.outgoing ?? false);
-      setTimeout(() => removeTransfer(tid), 2000);
+      const fpath = p.path || p.message || '';
+      removeTransfer(tid);
       const kind = mediaKind(fname);
-      const sender = shortPeer(pick(p, 'peer_id', 'peerId'));
+      const sender = shortPeer(peerId);
+      if (peerId && peerId !== activePeer) selectPeer(peerId);
       if ((kind === 'image' || kind === 'video') && fpath) {
         appendMessage(fname, 'received', sender, { kind, path: fpath });
       } else {
@@ -641,8 +639,20 @@ function renderPeerChips() {
   });
 }
 
+function focusChatPanel() {
+  document.querySelector('.nav-btn[data-panel="peers"]')?.click();
+}
+
+function clearTransfersForPeer(peerId) {
+  for (const [id, t] of [...transfers.entries()]) {
+    if (t.peerId === peerId) transfers.delete(id);
+  }
+  renderTransfers();
+}
+
 function selectPeer(id) {
   activePeer = id;
+  focusChatPanel();
   renderPeers();
   renderPeerChips();
   updateChatHeader();
@@ -848,7 +858,7 @@ function hideSasModal() {
   pendingSas = null;
 }
 
-function updateTransfer(id, filename, progress, outgoing, totalBytes) {
+function updateTransfer(id, filename, progress, outgoing, totalBytes, peerId = null) {
   const existing = transfers.get(id);
   const now = Date.now();
   const bytes = totalBytes || existing?.totalBytes || 0;
@@ -866,6 +876,7 @@ function updateTransfer(id, filename, progress, outgoing, totalBytes) {
     speedBps,
     lastProgress: progress,
     lastUpdateMs: now,
+    peerId: peerId || existing?.peerId || activePeer,
   });
   renderTransfers();
 }

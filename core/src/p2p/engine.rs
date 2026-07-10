@@ -71,6 +71,7 @@ pub enum EngineEvent {
         filename: String,
         progress: f64,
         peer_id: String,
+        total_bytes: u64,
     },
     TransferComplete {
         id: String,
@@ -818,8 +819,33 @@ impl P2pEngine {
         self.connect_iroh_ticket(ticket).await.map(|_| ())
     }
 
+    async fn cancel_peer_transfers(&self, peer_id: &str) {
+        let outgoing: Vec<(String, String)> = {
+            let transfers = self.transfers.read().await;
+            transfers
+                .iter()
+                .filter(|(_, t)| t.peer_id == peer_id)
+                .map(|(id, t)| (id.clone(), t.sender.manifest.filename.clone()))
+                .collect()
+        };
+        for (id, filename) in outgoing {
+            self.cancelled_transfers.write().await.insert(id.clone());
+            self.transfers.write().await.remove(&id);
+            let _ = self
+                .event_tx
+                .send(EngineEvent::TransferCancelled {
+                    id,
+                    filename,
+                    peer_id: peer_id.to_string(),
+                })
+                .await;
+        }
+        self.incoming_transfers.write().await.clear();
+    }
+
     pub async fn disconnect_peer(&self, peer_id: &str) -> Result<(), String> {
         let resolved = self.resolve_peer_id(peer_id).await.unwrap_or_else(|_| peer_id.to_string());
+        self.cancel_peer_transfers(&resolved).await;
         let transport = self
             .peers
             .read()
@@ -858,6 +884,7 @@ impl P2pEngine {
         if self.user_paused.read().await.contains(peer_id) {
             return;
         }
+        self.cancel_peer_transfers(peer_id).await;
         let _ = self
             .event_tx
             .send(EngineEvent::PeerDisconnected {
@@ -1168,6 +1195,7 @@ impl P2pEngine {
                 filename: filename.clone(),
                 progress,
                 peer_id: resolved.clone(),
+                total_bytes: manifest.total_size,
             })
             .await;
 
@@ -1698,6 +1726,7 @@ impl EngineInbound {
                                     filename,
                                     progress: 0.0,
                                     peer_id: peer_id.to_string(),
+                                    total_bytes: total_size,
                                 })
                                 .await;
                         }
@@ -1730,6 +1759,7 @@ impl EngineInbound {
                                 let _ =
                                     receiver.receive_chunk(chunk_id, bytes::Bytes::from(data));
                                 let progress = receiver.progress();
+                                let total_bytes = receiver.manifest.total_size;
                                 let _ = self
                                     .event_tx
                                     .send(EngineEvent::TransferProgress {
@@ -1737,6 +1767,7 @@ impl EngineInbound {
                                         filename: filename.clone(),
                                         progress,
                                         peer_id: peer_id.to_string(),
+                                        total_bytes,
                                     })
                                     .await;
                                 let ack = receiver.selective_ack();
@@ -1975,6 +2006,7 @@ impl EngineInbound {
                 let chunks = active.sender.next_chunks(8);
                 let filename = active.sender.manifest.filename.clone();
                 let progress = active.sender.progress();
+                let total_bytes = active.sender.manifest.total_size;
                 let _ = self
                     .event_tx
                     .send(EngineEvent::TransferProgress {
@@ -1982,6 +2014,7 @@ impl EngineInbound {
                         filename: filename.clone(),
                         progress,
                         peer_id: peer_id.clone(),
+                        total_bytes,
                     })
                     .await;
                 chunks
@@ -2014,6 +2047,25 @@ impl EngineInbound {
                     })),
                 };
                 if self.send_app_message(&peer_id, msg).await.is_err() {
+                    if !self.iroh.read().await.has_connection(&peer_id).await {
+                        let filename = self
+                            .transfers
+                            .write()
+                            .await
+                            .remove(&transfer_id)
+                            .map(|t| t.sender.manifest.filename);
+                        if let Some(filename) = filename {
+                            let _ = self
+                                .event_tx
+                                .send(EngineEvent::TransferCancelled {
+                                    id: transfer_id,
+                                    filename,
+                                    peer_id: peer_id.clone(),
+                                })
+                                .await;
+                        }
+                        return;
+                    }
                     warn!(transfer_id = %transfer_id, "chunk send failed — will retry");
                     tokio::time::sleep(Duration::from_millis(200)).await;
                 }

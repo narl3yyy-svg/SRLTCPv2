@@ -191,10 +191,11 @@ fn engine_event_to_uniffi(event: EngineEvent) -> SrltcpEvent {
             filename,
             progress,
             peer_id,
+            total_bytes,
         } => SrltcpEvent {
             event_type: "transfer_progress".into(),
             peer_id: Some(peer_id),
-            message: None,
+            message: Some(total_bytes.to_string()),
             content: None,
             sas: None,
             transfer_id: Some(id),

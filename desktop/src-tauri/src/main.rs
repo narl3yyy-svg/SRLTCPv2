@@ -465,6 +465,7 @@ fn main() {
                             filename,
                             progress,
                             peer_id,
+                            total_bytes,
                         } => {
                             serde_json::json!({
                                 "type": "transfer_progress",
@@ -472,6 +473,7 @@ fn main() {
                                 "filename": filename,
                                 "progress": progress,
                                 "peer_id": peer_id,
+                                "total_bytes": total_bytes,
                             })
                         }
                         EngineEvent::TransferComplete {
