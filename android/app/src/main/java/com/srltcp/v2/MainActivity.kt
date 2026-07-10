@@ -50,6 +50,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import org.webrtc.SurfaceViewRenderer
+import com.srltcp.v2.BuildConfig
 import com.srltcp.v2.data.AppPreferences
 import com.srltcp.v2.data.SavedContact
 import com.srltcp.v2.service.SrltcpAlertNotifier
@@ -775,7 +776,7 @@ fun ChatScreen() {
                     Column {
                         Text("SRLTCP", fontWeight = FontWeight.Bold)
                         Text(
-                            "v0.2.22 • ${if (engineOnline) "Online" else "Offline"} • bg active",
+                            "v${BuildConfig.VERSION_NAME} • ${if (engineOnline) "Online" else "Offline"} • bg active",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -1052,7 +1053,7 @@ fun ChatScreen() {
 
     if (showSettingsSheet) {
         SettingsSheet(
-            version = "0.2.26",
+            version = BuildConfig.VERSION_NAME,
             receiveDir = receiveDirPath,
             displayName = displayName,
             onCopyReceiveDir = {

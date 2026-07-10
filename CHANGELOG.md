@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.27 — Android version label fix (2026-07-10)
+
+### Fixes
+
+- **Status bar showed v0.2.22** — Top bar and Settings now read `BuildConfig.VERSION_NAME` instead of a hardcoded string.
+
 ## v0.2.26 — Android startup ANR fix (2026-07-10)
 
 ### Fixes
