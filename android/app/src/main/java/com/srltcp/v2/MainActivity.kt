@@ -378,11 +378,14 @@ fun ChatScreen() {
         val offline = connectedPeer != peer
         val text = inputText.trim()
         if (text.isEmpty()) return
-        SrltcpEngineHolder.getOrCreate().sendMessage(peer, text)
         val sender = displayName.ifBlank { "You" }
         messages = messages + ChatMessage(content = text, isSent = true, sender = sender)
         inputText = ""
         if (offline) showSnackbar("Message queued — reconnecting…")
+        scope.launch(Dispatchers.IO) {
+            runCatching { SrltcpEngineHolder.getOrCreate().sendMessage(peer, text) }
+                .onFailure { withContext(Dispatchers.Main) { showSnackbar("Send failed: ${it.message}") } }
+        }
     }
 
     fun removeContact(peerId: String) {
@@ -732,7 +735,7 @@ fun ChatScreen() {
                     Column {
                         Text("SRLTCP", fontWeight = FontWeight.Bold)
                         Text(
-                            "v0.2.21 • ${if (engineOnline) "Online" else "Offline"} • bg active",
+                            "v0.2.22 • ${if (engineOnline) "Online" else "Offline"} • bg active",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -980,11 +983,11 @@ fun ChatScreen() {
             sasCode = sasCode,
             peerId = sasPeerId ?: "",
             onConfirm = {
-                sasPeerId?.let { peerId ->
+                val peerId = sasPeerId ?: return@SasVerificationDialog
+                showSasDialog = false
+                scope.launch(Dispatchers.IO) {
                     val engine = SrltcpEngineHolder.getOrCreate()
                     engine.confirmPeerTrusted(peerId)
-                    peerVerified[peerId] = true
-                    connectedPeer = peerId
                     val savedQr = savedContacts.find { it.peerId == peerId }?.qrPayload
                         ?: remoteQrInput.trim()
                     if (savedQr.isNotBlank()) engine.registerSavedPeer(peerId, savedQr)
@@ -995,13 +998,16 @@ fun ChatScreen() {
                         qrPayload = savedQr,
                     )
                     prefs.upsertContact(contact)
-                    val idx = savedContacts.indexOfFirst { it.peerId == peerId }
-                    if (idx >= 0) savedContacts[idx] = contact else savedContacts.add(contact)
-                    syncTrustedPubkeys(SrltcpEngineHolder.getOrCreate())
+                    syncTrustedPubkeys(engine)
                     syncDisplayName(peerId)
+                    withContext(Dispatchers.Main) {
+                        peerVerified[peerId] = true
+                        connectedPeer = peerId
+                        val idx = savedContacts.indexOfFirst { it.peerId == peerId }
+                        if (idx >= 0) savedContacts[idx] = contact else savedContacts.add(contact)
+                        showSnackbar("Peer verified — secure channel established")
+                    }
                 }
-                showSasDialog = false
-                showSnackbar("Peer verified — secure channel established")
             },
             onReject = {
                 sasPeerId?.let { softDisconnect(it) }
@@ -1013,7 +1019,7 @@ fun ChatScreen() {
 
     if (showSettingsSheet) {
         SettingsSheet(
-            version = "0.2.21",
+            version = "0.2.22",
             receiveDir = receiveDirPath,
             displayName = displayName,
             onCopyReceiveDir = {
@@ -1078,10 +1084,12 @@ fun ChatScreen() {
     }
 
     if (showPeersSheet) {
-        val onlinePeers = SrltcpEngineHolder.getOrCreate()
-            .connectedPeers()
-            .filter { it.startsWith("peer:") }
-            .ifEmpty { connectedPeer?.let { listOf(it) } ?: emptyList() }
+        val onlinePeers = SrltcpEngineHolder.engineOrNull()
+            ?.connectedPeers()
+            ?.filter { it.startsWith("peer:") }
+            ?.ifEmpty { connectedPeer?.let { listOf(it) } }
+            ?: connectedPeer?.let { listOf(it) }
+            ?: emptyList()
         PeersSheet(
             onlinePeers = onlinePeers,
             contacts = savedContacts.toList(),

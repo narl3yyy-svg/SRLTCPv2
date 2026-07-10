@@ -381,6 +381,20 @@ fn main() {
             let handle = app.handle().clone();
             let eng = engine.clone();
 
+            #[cfg(target_os = "linux")]
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.with_webview(|wv| {
+                    use webkit2gtk::{SettingsExt, WebViewExt};
+                    if let Some(settings) = wv.inner().settings() {
+                        settings.set_enable_webrtc(true);
+                        settings.set_enable_media_stream(true);
+                        settings.set_enable_media(true);
+                        settings.set_media_playback_requires_user_gesture(false);
+                    }
+                });
+                tracing::info!("WebKit WebRTC/media settings applied");
+            }
+
             let recv_dir = app.path().app_data_dir().ok().map(|d| d.join("received"));
             tauri::async_runtime::spawn(async move {
                 let eng = eng.clone();

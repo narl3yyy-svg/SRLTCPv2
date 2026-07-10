@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.2.22 — Linux voice/video calls & Android spinner fix (2026-07-10)
+
+### Fixes (critical)
+
+- **Linux voice/video calls** — Enable WebKit WebRTC/media-stream in Tauri setup; portal + PipeWire env in `run.sh`; minimal `getUserMedia` constraints (no `enumerateDevices`, no audio constraint objects that trigger GstIntRange); recv-only video when local camera unavailable.
+- **Android infinite spinner / ANR** — Engine returns immediately; iroh binds in background (fixes mutex deadlock from `start()` + `waitUntilReady()`). `getOrCreate()` no longer blocks the main thread; Peers sheet and SAS confirm run engine work on IO.
+- **iroh online hang** — 45s timeout on `ep.online()`; overall start timeout in `wait_until_ready`.
+
+### Linux notes
+
+- First call: Settings → **Test mic & camera**, allow the portal prompt.
+- GstIntRange GStreamer logs suppressed via `GST_DEBUG=*:0` in `run.sh`.
+- Video without local camera: receive-only mode (Android/desktop camera still works one-way).
+
 ## v0.2.21 — Save path, transfer speed, Android launch fix (2026-07-10)
 
 ### Features

@@ -1,4 +1,4 @@
-# SRLTCP v0.2.21
+# SRLTCP v0.2.22
 
 **Secure Reliable LAN/iroh/Serial P2P Messaging**
 
@@ -20,7 +20,7 @@ That's it. The script installs Rust if needed, builds on first run, and launches
 
 Press **Ctrl+C** for graceful shutdown. Run `./cleanup.sh` for a full reset.
 
-## Features (v0.2.21)
+## Features (v0.2.22)
 
 | Feature | Description |
 |---------|-------------|

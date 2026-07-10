@@ -4,13 +4,13 @@
 
 SRLTCP is privacy-first communication software: no accounts, no central servers, and end-to-end encryption with a human-verifiable SAS step before you trust a peer. A single Rust core powers the desktop (Tauri) and Android (Kotlin/Compose) clients, so crypto and protocol behavior stay consistent everywhere.
 
-**Current release: [v0.2.21](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.21)**
+**Current release: [v0.2.22](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.22)**
 
 ---
 
 ## Security status (read this)
 
-v0.2.21 adds **save-folder path**, **transfer MB/s**, **open file location**, and fixes **Android launch hang** (engine init off main thread). v0.2.20 fixes **SAS confirm / add-peer crash** (double-ratchet responder send chain). v0.2.19 fixes **macOS iroh DNS/relay connectivity** (router hijack) and **WebKit GStreamer video constraints**. v0.2.18 fixed **video playback controls** and **voice/video call reliability**. v0.2.17 fixed **call UI**, **peer presence**, **display names**, and **serial I/O**. v0.2.13+ uses **iroh** NAT traversal and **double-ratchet-2** E2EE with QR v4.
+v0.2.22 fixes **Linux voice/video calls** (WebKit WebRTC, portal permissions, GstIntRange) and **Android infinite spinner**. v0.2.21 adds **save-folder path**, **transfer MB/s**, **open file location**, and fixes **Android launch hang** (engine init off main thread). v0.2.20 fixes **SAS confirm / add-peer crash** (double-ratchet responder send chain). v0.2.19 fixes **macOS iroh DNS/relay connectivity** (router hijack) and **WebKit GStreamer video constraints**. v0.2.18 fixed **video playback controls** and **voice/video call reliability**. v0.2.17 fixed **call UI**, **peer presence**, **display names**, and **serial I/O**. v0.2.13+ uses **iroh** NAT traversal and **double-ratchet-2** E2EE with QR v4.
 
 **What works today**
 
@@ -77,7 +77,7 @@ run.bat
 Install the APK from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest):
 
 ```bash
-adb install dist/SRLTCPv2-0.2.21.apk
+adb install dist/SRLTCPv2-0.2.22.apk
 ```
 
 Or build locally (JDK 17, Android SDK/NDK):
@@ -115,6 +115,12 @@ Saved verified contacts reconnect automatically (fresh handshake, no SAS re-prom
 | Display name after auth | ✓ | ✓ |
 | Voice / video calls (WebRTC) | ✓ | ✓ |
 | Foreground background service | — | ✓ |
+
+### v0.2.22 highlights
+
+- Linux voice/video: WebKit WebRTC enabled, portal/PipeWire env, minimal media constraints
+- Recv-only video when desktop has no camera (still see Android camera)
+- Android spinner deadlock fix; iroh online timeout
 
 ### v0.2.21 highlights
 
@@ -196,9 +202,9 @@ SRLTCP uses hybrid post-quantum key exchange, a double ratchet for forward secre
 Pushing a version tag triggers CI to publish desktop prebuilts and the Android APK:
 
 ```bash
-git tag -a v0.2.21 -m "SRLTCP v0.2.21"
+git tag -a v0.2.22 -m "SRLTCP v0.2.22"
 git push origin main
-git push origin v0.2.21
+git push origin v0.2.22
 ```
 
 ---

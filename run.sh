@@ -258,11 +258,6 @@ find_binary() {
         return 1
     fi
 
-    if [[ "$USE_PREBUILT" != true ]]; then
-        echo ""
-        return 1
-    fi
-
     candidates=(
         "dist/bin/${platform}/srltcp-desktop"
         "dist/srltcp-desktop-${platform}"
@@ -389,7 +384,7 @@ resolve_binary() {
     err "Options:"
     err "  1) Wait and run again:  ./run.sh"
     err "  2) Build locally (needs Rust + webkit2gtk):  ./run.sh --rebuild"
-    err "  3) Stage a local prebuilt:  ./scripts/build-desktop.sh && ./run.sh --no-prebuilt"
+    err "  3) Stage a local prebuilt:  ./scripts/build-desktop.sh && ./run.sh"
     exit 1
 }
 
@@ -434,6 +429,15 @@ main() {
     # Suppress harmless WebKit spellcheck (libenchant) plugin warnings on Linux
     export ENCHANT_MODULE_DIR="${ENCHANT_MODULE_DIR:-/dev/null}"
     export G_MESSAGES_DEBUG="${G_MESSAGES_DEBUG:-}"
+    if [[ "$(uname -s)" == "Linux" ]]; then
+        # WebKitGTK media capture via xdg-desktop-portal + PipeWire
+        export GTK_USE_PORTAL="${GTK_USE_PORTAL:-1}"
+        export PIPEWIRE_RUNTIME_DIR="${PIPEWIRE_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}}"
+        # Allow portal permission prompts for mic/camera in the webview
+        export WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS="${WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS:-1}"
+        # Reduce GStreamer GstIntRange noise from WebKit device probing
+        export GST_DEBUG="${GST_DEBUG:-*:0}"
+    fi
     RUST_LOG="${RUST_LOG:-info}" "$binary" &
     local app_pid=$!
     echo "$app_pid" > "$PID_FILE"

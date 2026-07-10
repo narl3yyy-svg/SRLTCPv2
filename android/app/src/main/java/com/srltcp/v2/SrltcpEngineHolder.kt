@@ -101,12 +101,14 @@ object SrltcpEngineHolder {
         return eng
     }
 
-    /** @deprecated Use [awaitEngine] from coroutines — never call from main thread before ready. */
-    @Synchronized
+    /** Returns cached engine only — never blocks. Use [awaitEngine] if not ready yet. */
     fun getOrCreate(): SrltcpEngine {
         engine?.let { return it }
-        return createEngineLocked()
+        startInBackground()
+        return engine ?: error("Engine not ready — wait for startup to finish")
     }
+
+    fun requireEngine(): SrltcpEngine = getOrCreate()
 
     private fun startEventPolling(eng: SrltcpEngine) {
         if (polling) return

@@ -21,6 +21,9 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 signal-hook = { version = "0.3", features = ["iterator"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = "2.0"
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
