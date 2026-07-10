@@ -1,6 +1,6 @@
-// SRLTCP v0.2.23 Desktop Frontend
+// SRLTCP v0.2.24 Desktop Frontend
 
-const STORAGE_KEY = 'srltcp_v0.2.23';
+const STORAGE_KEY = 'srltcp_v0.2.24';
 const LEGACY_STORAGE_KEYS = ['srltcp_v0.2.16'];
 
 function loadState() {
@@ -390,7 +390,7 @@ function handleEvent(p) {
       const peerId = pick(p, 'peer_id', 'peerId');
       const existing = transfers.get(tid);
       const outgoing = existing?.outgoing ?? false;
-      const totalBytes = p.total_bytes ?? p.totalBytes ?? Number(p.message) || existing?.totalBytes || 0;
+      const totalBytes = Number(p.total_bytes ?? p.totalBytes ?? p.message ?? existing?.totalBytes ?? 0) || 0;
       updateTransfer(tid, p.filename, p.progress, outgoing, totalBytes, peerId);
       break;
     }

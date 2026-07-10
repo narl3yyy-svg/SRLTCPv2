@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.24 — Desktop startup fix (2026-07-10)
+
+### Fixes (critical)
+
+- **Desktop stuck on "Connecting…"** — JavaScript syntax error in `app.js` (`??` mixed with `||`) prevented the UI from loading; engine was online but status never updated.
+
 ## v0.2.23 — Calls, transfers, contacts UI (2026-07-10)
 
 ### Fixes (critical)
