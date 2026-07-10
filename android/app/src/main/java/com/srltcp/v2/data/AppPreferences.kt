@@ -80,9 +80,14 @@ class AppPreferences(context: Context) {
         prefs.edit().remove("${KEY_CHAT_PREFIX}$peerId").apply()
     }
 
+    var lastActivePeer: String
+        get() = prefs.getString(KEY_LAST_ACTIVE_PEER, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_LAST_ACTIVE_PEER, value).apply()
+
     companion object {
         private const val KEY_DISPLAY_NAME = "display_name"
         private const val KEY_CONTACTS = "contacts"
         private const val KEY_CHAT_PREFIX = "chat_"
+        private const val KEY_LAST_ACTIVE_PEER = "last_active_peer"
     }
 }

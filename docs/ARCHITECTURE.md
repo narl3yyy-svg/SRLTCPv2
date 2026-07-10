@@ -1,6 +1,6 @@
 # Architecture
 
-SRLTCP v0.2.22 system architecture.
+SRLTCP v0.2.29 system architecture.
 
 ## High-Level Overview
 
@@ -100,11 +100,13 @@ User input → ChatMessage JSON → PeerCrypto::encrypt (double-ratchet-2)
 
 ## Trusted Reconnect
 
-1. Verified contacts store Ed25519 pubkey hex + QR payload locally
-2. `load_trusted_pubkeys()` on startup
-3. Fresh handshake on reconnect; SAS skipped when pubkey matches saved trust
-4. Outbound queue flushes after auto-trust
-5. Engine auto-reconnects with exponential backoff
+1. Verified contacts store Ed25519 pubkey hex + QR payload locally (desktop `localStorage`; Android SharedPreferences)
+2. Per-peer chat history persisted alongside contacts
+3. `load_trusted_pubkeys()` + `register_saved_peer()` on startup
+4. UI auto-reconnects last active (or most recent) verified contact without re-SAS when pubkey matches
+5. Fresh handshake on reconnect; SAS skipped on auto-trusted path
+6. Outbound queue flushes after auto-trust
+7. Engine auto-reconnects with exponential backoff on connection loss
 
 ## Android Background
 

@@ -4,13 +4,13 @@
 
 SRLTCP is privacy-first communication software: no accounts, no central servers, and end-to-end encryption with a human-verifiable SAS step before you trust a peer. A single Rust core powers the desktop (Tauri) and Android (Kotlin/Compose) clients, so crypto and protocol behavior stay consistent everywhere.
 
-**Current release: [v0.2.22](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.22)**
+**Current release: [v0.2.29](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.29)**
 
 ---
 
 ## Security status (read this)
 
-v0.2.22 fixes **Linux voice/video calls** (WebKit WebRTC, portal permissions, GstIntRange) and **Android infinite spinner**. v0.2.21 adds **save-folder path**, **transfer MB/s**, **open file location**, and fixes **Android launch hang** (engine init off main thread). v0.2.20 fixes **SAS confirm / add-peer crash** (double-ratchet responder send chain). v0.2.19 fixes **macOS iroh DNS/relay connectivity** (router hijack) and **WebKit GStreamer video constraints**. v0.2.18 fixed **video playback controls** and **voice/video call reliability**. v0.2.17 fixed **call UI**, **peer presence**, **display names**, and **serial I/O**. v0.2.13+ uses **iroh** NAT traversal and **double-ratchet-2** E2EE with QR v4.
+v0.2.29 fixes **contact persistence**, **SAS auto-save**, **startup reconnect without re-SAS**, **delete-contact UI cleanup**, **short display names**, and **Android crash/ANR** on cold start. Security docs now state honest residual risks (unaudited crypto, plaintext-at-rest chat). v0.2.27 fixed Android version label. v0.2.26 fixed Android startup ANR. v0.2.25 improved call stability and Android notifications. v0.2.24 fixed desktop stuck on "Connecting…". v0.2.22 fixed **Linux voice/video calls** and **Android infinite spinner**. v0.2.13+ uses **iroh** NAT traversal and **double-ratchet-2** E2EE with QR v4.
 
 **What works today**
 
@@ -77,7 +77,7 @@ run.bat
 Install the APK from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest):
 
 ```bash
-adb install dist/SRLTCPv2-0.2.22.apk
+adb install dist/SRLTCPv2-0.2.29.apk
 ```
 
 Or build locally (JDK 17, Android SDK/NDK):
@@ -97,7 +97,7 @@ Or build locally (JDK 17, Android SDK/NDK):
 
 **Cross-network**: QR v4 includes an **iroh ticket** — peers connect through NAT relay/hole-punching with no router configuration.
 
-Saved verified contacts reconnect automatically (fresh handshake, no SAS re-prompt unless identity changes). Messages sent while offline queue until reconnect.
+Saved verified contacts persist locally with per-peer chat history. On startup the app auto-reconnects to your last active peer (fresh handshake, no SAS re-prompt when pubkey matches). Messages sent while offline queue until reconnect.
 
 ---
 
@@ -115,6 +115,14 @@ Saved verified contacts reconnect automatically (fresh handshake, no SAS re-prom
 | Display name after auth | ✓ | ✓ |
 | Voice / video calls (WebRTC) | ✓ | ✓ |
 | Foreground background service | — | ✓ |
+
+### v0.2.29 highlights
+
+- Contact + per-peer chat persistence (desktop localStorage, Android SharedPreferences)
+- SAS auto-save on verify; remove contact clears UI and history
+- Startup reconnect to last active saved peer without re-SAS
+- Short display names (12-char pubkey fallback); Android cold-start ANR fixes
+- Honest security documentation in `docs/SECURITY.md`
 
 ### v0.2.22 highlights
 
@@ -202,9 +210,9 @@ SRLTCP uses hybrid post-quantum key exchange, a double ratchet for forward secre
 Pushing a version tag triggers CI to publish desktop prebuilts and the Android APK:
 
 ```bash
-git tag -a v0.2.22 -m "SRLTCP v0.2.22"
+git tag -a v0.2.29 -m "SRLTCP v0.2.29"
 git push origin main
-git push origin v0.2.22
+git push origin v0.2.29
 ```
 
 ---

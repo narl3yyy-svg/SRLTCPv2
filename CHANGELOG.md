@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.2.29 — Contacts, persistence, startup reconnect (2026-07-10)
+
+### Fixes
+
+- **Contact persistence** — Saved contacts and per-peer chat history survive app restart (desktop `localStorage`; Android SharedPreferences). Legacy storage keys migrated on desktop.
+- **SAS auto-save** — Verified peers and QR payload saved automatically on SAS confirm or auto-trusted reconnect — no manual save step.
+- **Delete contact clears UI** — Remove wipes contact, chat history, transfers, and closes the chat pane on desktop and Android.
+- **Short display names** — Peer lists show remote display name when known, otherwise first 12 hex chars of pubkey (not full `peer:…` id).
+- **Startup reconnect without re-SAS** — On launch, trusted saved contacts register with the engine; last active (or most recent) verified peer reconnects automatically, skipping SAS when pubkey matches stored trust.
+- **Android crash/ANR fixes** — UI renders before engine init; native work on IO; cold-start reconnect does not block the main thread.
+
+### Documentation
+
+- **Honest security docs** — `docs/SECURITY.md` lists residual risks: unaudited crypto, plaintext-at-rest chat/contacts, WebRTC media path, no OS keystore.
+
 ## v0.2.27 — Android version label fix (2026-07-10)
 
 ### Fixes

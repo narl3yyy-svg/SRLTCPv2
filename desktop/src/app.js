@@ -1,7 +1,7 @@
-// SRLTCP v0.2.24 Desktop Frontend
+// SRLTCP v0.2.29 Desktop Frontend
 
-const STORAGE_KEY = 'srltcp_v0.2.25';
-const LEGACY_STORAGE_KEYS = ['srltcp_v0.2.16'];
+const STORAGE_KEY = 'srltcp_v0.2.29';
+const LEGACY_STORAGE_KEYS = ['srltcp_v0.2.16', 'srltcp_v0.2.24', 'srltcp_v0.2.25'];
 
 function loadState() {
   for (const key of [STORAGE_KEY, ...LEGACY_STORAGE_KEYS]) {
@@ -280,6 +280,11 @@ async function init() {
       }
     });
     connectedPeer = existingPeers.find(id => id.startsWith('peer:')) || null;
+    const lastId = loadState().lastActivePeer;
+    const resume = savedContacts.find(c => c.id === lastId && c.verified && c.qr)
+      || savedContacts.find(c => c.verified && c.qr);
+    if (resume && !connectedPeer) reconnectContact(resume);
+    else if (resume && connectedPeer === resume.id) selectPeer(resume.id);
     setStatus('Online', true);
   } catch (e) {
     console.error('Init failed:', e);
@@ -517,6 +522,7 @@ function persistContacts() {
     displayName,
     contacts: savedContacts,
     chatHistory: chatHistory,
+    lastActivePeer: activePeer || loadState().lastActivePeer || '',
   });
 }
 
@@ -557,7 +563,12 @@ function removeTrustedContact(id) {
   removePeer(id);
   savedContacts = savedContacts.filter(c => c.id !== id);
   delete chatHistory[id];
+  delete messageStore[id];
+  if (activePeer === id) closeChatWindow();
+  if (loadState().lastActivePeer === id) saveState({ lastActivePeer: '' });
   persistContacts();
+  renderPeers();
+  renderPeerChips();
   renderContactsList();
   toast(`Removed ${contactLabel(id)}`);
 }
@@ -667,6 +678,7 @@ function clearTransfersForPeer(peerId) {
 
 function selectPeer(id) {
   activePeer = id;
+  persistContacts();
   focusChatPanel();
   renderPeers();
   renderPeerChips();

@@ -376,15 +376,22 @@ resolve_binary() {
         return 0
     fi
 
-    err "No prebuilt binary available for ${platform} at v${VERSION}."
-    err "Release assets publish after CI finishes (~15–25 min after tag push)."
-    err "  Releases: https://github.com/${REPO}/releases/tag/v${VERSION}"
-    err "  CI status: https://github.com/${REPO}/actions"
-    err ""
-    err "Options:"
-    err "  1) Wait and run again:  ./run.sh"
-    err "  2) Build locally (needs Rust + webkit2gtk):  ./run.sh --rebuild"
-    err "  3) Stage a local prebuilt:  ./scripts/build-desktop.sh && ./run.sh"
+    warn "No GitHub prebuilt for v${VERSION} yet — building locally..."
+    if [[ -x "$SCRIPT_DIR/scripts/build-desktop.sh" ]]; then
+        "$SCRIPT_DIR/scripts/build-desktop.sh" || {
+            err "Local build failed. Install deps (Rust, webkit2gtk) or wait for CI:"
+            err "  https://github.com/${REPO}/releases/tag/v${VERSION}"
+            exit 1
+        }
+        bin="$(find_binary)"
+        if [[ -n "$bin" ]]; then
+            printf '%s' "$bin"
+            return 0
+        fi
+    fi
+
+    err "No binary available for ${platform} at v${VERSION}."
+    err "Try: ./run.sh --rebuild  or  ./scripts/build-desktop.sh"
     exit 1
 }
 

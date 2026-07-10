@@ -1,4 +1,4 @@
-# SRLTCP v0.2.22
+# SRLTCP v0.2.29
 
 **Secure Reliable LAN/iroh/Serial P2P Messaging**
 
@@ -20,7 +20,7 @@ That's it. The script installs Rust if needed, builds on first run, and launches
 
 Press **Ctrl+C** for graceful shutdown. Run `./cleanup.sh` for a full reset.
 
-## Features (v0.2.22)
+## Features (v0.2.29)
 
 | Feature | Description |
 |---------|-------------|
@@ -32,6 +32,7 @@ Press **Ctrl+C** for graceful shutdown. Run `./cleanup.sh` for a full reset.
 | **Media** | Images and videos displayed inline in chat |
 | **Calling** | WebRTC voice/video with E2EE signaling |
 | **Discovery** | QR code + Short Authentication String (SAS) |
+| **Contacts** | Auto-saved on verify; per-peer chat persistence; startup reconnect without re-SAS |
 | **Android** | Foreground Service for always-on background P2P |
 
 ## Project Structure

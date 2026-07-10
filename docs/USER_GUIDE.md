@@ -1,6 +1,6 @@
 # User Guide
 
-Using SRLTCP v0.2.22 for secure peer-to-peer messaging.
+Using SRLTCP v0.2.29 for secure peer-to-peer messaging.
 
 ## Getting Started
 
@@ -15,7 +15,7 @@ The launcher downloads a prebuilt binary from GitHub Releases. Use `./run.sh --r
 
 ### Android
 
-1. Download `SRLTCPv2-0.2.22.apk` from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest) or build locally (see [BUILD.md](BUILD.md))
+1. Download `SRLTCPv2-0.2.29.apk` from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest) or build locally (see [BUILD.md](BUILD.md))
 2. Open SRLTCP — the background service starts automatically
 3. A notification appears: "Listening for peers..."
 4. You can safely swipe the app away or press Home
@@ -24,7 +24,7 @@ The launcher downloads a prebuilt binary from GitHub Releases. Use `./run.sh --r
 
 ### QR Code + SAS (Required)
 
-SRLTCP v0.2.22 uses **QR v4** with an **iroh ticket** for NAT traversal — no port forwarding or WAN settings required. Paste the peer's QR and tap **Connect & Verify**.
+SRLTCP v0.2.29 uses **QR v4** with an **iroh ticket** for NAT traversal — no port forwarding or WAN settings required. Paste the peer's QR and tap **Connect & Verify**.
 
 1. **Share identity:** Copy or display your QR code. Send the payload to your peer.
 2. **Paste peer QR:** Open **Add Peer**, paste their QR payload, and click **Connect & Verify (QR + SAS)**.
@@ -63,7 +63,11 @@ The **Peers** panel has two sections:
 
 **Disconnect** ends the session but keeps the contact. The chat window closes. Use **Reconnect** on a saved contact to connect again — you will not be auto-reconnected after a manual disconnect.
 
-**Display name:** Set yours in **Settings → Display name**. After verification, both peers see each other's names in the chat header and contact lists.
+**Startup auto-reconnect:** On launch, verified **Saved Contacts** register with the engine. The app reconnects to your last active peer (or most recently seen verified contact) automatically. When the stored Ed25519 pubkey matches, SAS is skipped — messaging resumes after handshake.
+
+**Remove contact:** Deletes the saved contact, clears per-peer chat history, and closes the chat UI. Use this when you no longer want a peer listed.
+
+**Display name:** Set yours in **Settings → Display name**. After verification, both peers see each other's names in the chat header and contact lists. Without a display name, peers show as the first 12 characters of their pubkey.
 
 ## Sending Messages
 
@@ -121,18 +125,18 @@ Settings → Apps → SRLTCP → Force Stop
 | Problem | Solution |
 |---------|----------|
 | `run.sh` says no prebuilt | Install from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases) or use `--rebuild` |
-| Android app stuck on loading | Update to **v0.2.22+** (engine init no longer blocks UI thread) |
-| SAS confirm does nothing / crash | Both peers on **v0.2.22+**; initiator (who pasted QR) confirms first |
+| Android app stuck on loading | Update to **v0.2.29+** (UI shows before engine init; work runs on IO thread) |
+| SAS confirm does nothing / crash | Both peers on **v0.2.29+**; initiator (who pasted QR) confirms first |
 | No peers in Peers Online | Only connected peers appear there; check **Saved Contacts** and tap **Reconnect** |
 | Peer shows offline but is up | They may have disconnected from you; reconnect from Saved Contacts |
 | macOS relay/DNS errors in terminal | `export SRLTCP_DNS=10.0.50.1` (router IP from `scutil --dns`) then `./run.sh` |
-| GStreamer GstIntRange warnings (Linux) | Suppressed in v0.2.22 `run.sh`; harmless if seen |
+| GStreamer GstIntRange warnings (Linux) | Suppressed in `run.sh`; harmless if seen |
 | Voice call permission denied | Linux: Settings → **Test mic & camera**, allow portal prompt; retry call |
 | Video call, no local camera | Desktop receives remote video (recv-only); Android camera still works |
 | Video won't play | Use the Play button or native controls; on desktop try **Open** to play in your system player |
-| Transfer stuck | Wait for ACK progress; cancel and retry; both peers on v0.2.22+ |
+| Transfer stuck | Wait for ACK progress; cancel and retry; both peers on v0.2.29+ |
 | No serial ports listed | Plug in device, click **Refresh**; Linux: add user to `dialout` group |
-| Serial connect fails | Both peers on v0.2.22+; try another baud rate; check cable |
+| Serial connect fails | Both peers on v0.2.29+; try another baud rate; check cable |
 | SAS codes don't match | Possible MITM — do not trust the connection; retry |
 | Port already in use | Run `./cleanup.sh` then restart |
 | Android service stopped | Disable battery optimization for SRLTCP |
@@ -142,5 +146,6 @@ Settings → Apps → SRLTCP → Force Stop
 
 - Always verify the SAS code on first contact with a new peer
 - Use serial for air-gapped or high-security environments
-- The app does not store messages on disk by default
-- Force Stop on Android clears all session state from memory
+- **Chat history is persisted per peer** locally (desktop `localStorage`; Android app storage) — survives restart and soft disconnect. Not encrypted at rest beyond OS filesystem permissions.
+- Saved contacts and QR payloads are stored locally for auto-reconnect
+- Force Stop on Android clears in-memory session state; persisted contacts/chat remain on disk until you remove them or clear app data
