@@ -10,7 +10,7 @@ SRLTCP is privacy-first communication software: no accounts, no central servers,
 
 ## Security status (read this)
 
-v0.2.19 fixes **macOS iroh DNS/relay connectivity** (router hijack) and **WebKit GStreamer video constraints**. v0.2.18 fixed **video playback controls** in chat and **voice/video call reliability** (ICE queuing, permissions, camera fallback). v0.2.17 fixed **call UI** (answer dialog, overlay, settings), **peer presence** (online/reconnecting/offline), **display name exchange**, **serial I/O**, and disconnect/reconnect behavior. v0.2.16 added voice/video calls, file transfer ACKs, and offline queue. v0.2.13+ uses **iroh** NAT traversal (no port forwarding) and **double-ratchet-2** E2EE with QR v4.
+v0.2.20 fixes **SAS confirm / add-peer crash** (double-ratchet responder send chain). v0.2.19 fixes **macOS iroh DNS/relay connectivity** (router hijack) and **WebKit GStreamer video constraints**. v0.2.18 fixed **video playback controls** and **voice/video call reliability**. v0.2.17 fixed **call UI**, **peer presence**, **display names**, and **serial I/O**. v0.2.13+ uses **iroh** NAT traversal and **double-ratchet-2** E2EE with QR v4.
 
 **What works today**
 
@@ -77,7 +77,7 @@ run.bat
 Install the APK from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest):
 
 ```bash
-adb install dist/SRLTCPv2-0.2.17.apk
+adb install dist/SRLTCPv2-0.2.20.apk
 ```
 
 Or build locally (JDK 17, Android SDK/NDK):
@@ -115,13 +115,23 @@ Saved verified contacts reconnect automatically (fresh handshake, no SAS re-prom
 | Voice / video calls (WebRTC) | ✓ | ✓ |
 | Foreground background service | — | ✓ |
 
+### v0.2.20 highlights
+
+- SAS confirm no longer crashes (ratchet responder must receive initiator's first message)
+- Initiator sends `ratchet_open` bootstrap after trust — both peers can message
+
+### v0.2.19 highlights
+
+- macOS iroh DNS fix (`scutil --dns`); `SRLTCP_DNS` override for router hijack
+- WebKit GStreamer video constraint fix for calls
+
+### v0.2.18 highlights
+
+- Chat video Play/Pause/Open controls; call ICE queuing and permission fixes
+
 ### v0.2.17 highlights
 
-- Incoming call answer dialog (desktop + Android) — fixes WebKit `NotAllowedError`
-- Call overlay with end/mute/camera controls
-- Peers Online vs Saved Contacts with real presence status
-- Display name exchange after verification
-- Serial device detection refresh; serial read/write loop fix
+- Incoming call answer dialog; call overlay; peer presence; display names; serial I/O
 
 ### v0.2.16 highlights
 
@@ -178,9 +188,9 @@ SRLTCP uses hybrid post-quantum key exchange, a double ratchet for forward secre
 Pushing a version tag triggers CI to publish desktop prebuilts and the Android APK:
 
 ```bash
-git tag -a v0.2.17 -m "SRLTCP v0.2.17"
+git tag -a v0.2.20 -m "SRLTCP v0.2.20"
 git push origin main
-git push origin v0.2.17
+git push origin v0.2.20
 ```
 
 ---

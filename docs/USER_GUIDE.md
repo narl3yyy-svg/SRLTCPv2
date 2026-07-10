@@ -1,6 +1,6 @@
 # User Guide
 
-Using SRLTCP v0.2.18 for secure peer-to-peer messaging.
+Using SRLTCP v0.2.20 for secure peer-to-peer messaging.
 
 ## Getting Started
 
@@ -15,7 +15,7 @@ The launcher downloads a prebuilt binary from GitHub Releases. Use `./run.sh --r
 
 ### Android
 
-1. Download `SRLTCPv2-0.2.18.apk` from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest) or build locally (see [BUILD.md](BUILD.md))
+1. Download `SRLTCPv2-0.2.20.apk` from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest) or build locally (see [BUILD.md](BUILD.md))
 2. Open SRLTCP — the background service starts automatically
 3. A notification appears: "Listening for peers..."
 4. You can safely swipe the app away or press Home
@@ -24,13 +24,15 @@ The launcher downloads a prebuilt binary from GitHub Releases. Use `./run.sh --r
 
 ### QR Code + SAS (Required)
 
-SRLTCP v0.2.18 uses **QR v4** with an **iroh ticket** for NAT traversal — no port forwarding or WAN settings required. Paste the peer's QR and tap **Connect & Verify**.
+SRLTCP v0.2.20 uses **QR v4** with an **iroh ticket** for NAT traversal — no port forwarding or WAN settings required. Paste the peer's QR and tap **Connect & Verify**.
 
 1. **Share identity:** Copy or display your QR code. Send the payload to your peer.
 2. **Paste peer QR:** Open **Add Peer**, paste their QR payload, and click **Connect & Verify (QR + SAS)**.
 3. **Compare:** Both sides see a 6-digit SAS code. Verify verbally or through a known channel.
 4. **Trust:** If codes match, click **Codes Match — Trust Peer**. Messaging unlocks.
 5. **Mismatch:** If codes differ, disconnect immediately — possible man-in-the-middle attack.
+
+**Important:** The peer who **started the connection** (pasted QR) should confirm SAS first. The other peer can send messages once they receive the first encrypted message (usually within a second).
 
 ### Serial Cable (Desktop, Optional)
 
@@ -93,23 +95,13 @@ The **Peers** panel has two sections:
 
 SRLTCP on Android is designed to stay connected:
 
-- **Swipe away the app** — Service keeps running, notification stays
-- **Press Home** — Same behavior
-- **Receive messages** — P2P core processes them in background
-- **Stop completely** — Settings → Apps → SRLTCP → Force Stop
+- A foreground service keeps the P2P engine alive
+- Battery optimization should be disabled for SRLTCP (Settings → Apps → SRLTCP → Battery → Unrestricted)
+- Swiping the app away does not stop the service
 
 ## Shutting Down
 
 ### Desktop
-
-- Press **Ctrl+C** in the terminal running `run.sh`
-- Or close the app window (triggers graceful shutdown)
-
-Both methods close serial ports, disconnect iroh sessions, and clean up resources.
-
-### Full Cleanup
-
-If something goes wrong or you want a completely clean state:
 
 ```bash
 ./cleanup.sh        # Linux/macOS
@@ -127,15 +119,16 @@ Settings → Apps → SRLTCP → Force Stop
 | Problem | Solution |
 |---------|----------|
 | `run.sh` says no prebuilt | Install from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases) or use `--rebuild` |
+| SAS confirm does nothing / crash | Both peers on **v0.2.20+**; initiator (who pasted QR) confirms first |
 | No peers in Peers Online | Only connected peers appear there; check **Saved Contacts** and tap **Reconnect** |
 | Peer shows offline but is up | They may have disconnected from you; reconnect from Saved Contacts |
-| macOS relay/DNS errors in terminal | Router DNS hijack: run `export SRLTCP_DNS=10.0.50.1` (your router IP from `scutil --dns`) then `./run.sh`. Or set Wi-Fi DNS to 1.1.1.1 in System Settings |
+| macOS relay/DNS errors in terminal | `export SRLTCP_DNS=10.0.50.1` (router IP from `scutil --dns`) then `./run.sh` |
 | GStreamer GstIntRange warnings (Linux) | Harmless WebKit noise during video calls; fixed in v0.2.19+ |
 | Voice call permission denied | Linux: grant portal mic access; answer incoming calls with **Answer** (not auto) |
 | Video won't play | Use the Play button or native controls; on desktop try **Open** to play in your system player |
-| Transfer stuck | Wait for ACK progress; cancel and retry; both peers on v0.2.18+ |
+| Transfer stuck | Wait for ACK progress; cancel and retry; both peers on v0.2.20+ |
 | No serial ports listed | Plug in device, click **Refresh**; Linux: add user to `dialout` group |
-| Serial connect fails | Both peers on v0.2.18+; try another baud rate; check cable |
+| Serial connect fails | Both peers on v0.2.20+; try another baud rate; check cable |
 | SAS codes don't match | Possible MITM — do not trust the connection; retry |
 | Port already in use | Run `./cleanup.sh` then restart |
 | Android service stopped | Disable battery optimization for SRLTCP |

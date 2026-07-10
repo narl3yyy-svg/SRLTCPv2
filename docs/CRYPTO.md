@@ -1,4 +1,4 @@
-# Cryptography — SRLTCP v0.2.17
+# Cryptography — SRLTCP v0.2.20
 
 ## Overview
 
@@ -31,6 +31,8 @@ SAS = SHA-256(sort(pk_local, pk_remote) || shared_secret || transcript)[0:3] mod
 ```
 
 Users must compare SAS out-of-band, then call `confirm_peer_trusted()` in the UI.
+
+After trust, the **initiator** (who pasted QR / dialed) sends a `ratchet_open` system message to unlock the responder's send chain (Signal spec: responder `cks` is `None` until first inbound decrypt).
 
 ## Message path
 

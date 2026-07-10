@@ -1,4 +1,4 @@
-# SRLTCP v0.2.17
+# SRLTCP v0.2.20
 
 **Secure Reliable LAN/iroh/Serial P2P Messaging**
 
@@ -20,7 +20,7 @@ That's it. The script installs Rust if needed, builds on first run, and launches
 
 Press **Ctrl+C** for graceful shutdown. Run `./cleanup.sh` for a full reset.
 
-## Features (v0.2.17)
+## Features (v0.2.20)
 
 | Feature | Description |
 |---------|-------------|
@@ -48,13 +48,10 @@ SRLTCPv2/
 
 ## Documentation
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — System design overview
-- [SECURITY.md](SECURITY.md) — Threat model and security properties
-- [CRYPTO.md](CRYPTO.md) — Cryptographic primitives and protocols
-- [SERIAL_PROTOCOL.md](SERIAL_PROTOCOL.md) — Serial framing and reliability
-- [BUILD.md](BUILD.md) — Build instructions for all platforms
-- [USER_GUIDE.md](USER_GUIDE.md) — End-user guide
-
-## License
-
-MIT OR Apache-2.0
+| Document | Description |
+|----------|-------------|
+| [USER_GUIDE.md](USER_GUIDE.md) | End-user guide |
+| [BUILD.md](BUILD.md) | Build from source |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | System design |
+| [CRYPTO.md](CRYPTO.md) | Cryptographic protocol |
+| [SECURITY.md](SECURITY.md) | Threat model and audit status |
