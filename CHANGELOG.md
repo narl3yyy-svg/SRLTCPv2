@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.20 — SAS confirm ratchet panic fix (2026-07-10)
+
+### Fixes (critical)
+
+- **SAS confirm / add peer crash** — Responder role could not encrypt before receiving the initiator's first ratchet message (`cks.unwrap()` panic in double-ratchet-2). Now returns a safe error, initiator sends a `ratchet_open` bootstrap after trust, and responder can reply after decrypting it.
+
 ## v0.2.19 — macOS DNS & WebKit video fixes (2026-07-10)
 
 ### Fixes

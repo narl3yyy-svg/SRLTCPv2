@@ -38,6 +38,14 @@ impl PeerCrypto {
         self.trust == TrustState::Trusted
     }
 
+    pub fn is_initiator(&self) -> bool {
+        self.ratchet.as_ref().is_some_and(|r| r.is_initiator())
+    }
+
+    pub fn can_send_encrypted(&self) -> bool {
+        self.ratchet.as_ref().is_some_and(|r| r.can_send())
+    }
+
     pub fn sas_pending(&self) -> Option<&str> {
         match &self.trust {
             TrustState::SasPending { sas } => Some(sas.as_str()),
@@ -224,6 +232,12 @@ impl PeerCrypto {
             .ratchet
             .as_mut()
             .ok_or_else(|| "no session ratchet".to_string())?;
+        if !ratchet.can_send() {
+            return Err(
+                "ratchet send chain not ready — wait for peer's first message (responder role)"
+                    .into(),
+            );
+        }
         ratchet
             .encrypt_to_bytes(plaintext)
             .map_err(|e| e.to_string())
@@ -257,6 +271,7 @@ fn extract_bob_ratchet_pk(resp_body: &[u8]) -> Result<PublicKey, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::ratchet::SessionRatchet;
 
     #[test]
     fn sas_matches_both_sides_with_canonical_transcript() {
@@ -286,5 +301,17 @@ mod tests {
         let sas_bob = bob_crypto.responder_process_step3(&bob, &frame3).unwrap();
         assert_eq!(sas_alice, sas_bob);
         assert_eq!(sas_alice.len(), 6);
+    }
+
+    #[test]
+    fn responder_cannot_send_before_first_inbound() {
+        let secret = [7u8; 32];
+        let (mut bob, bob_pk) = SessionRatchet::init_responder(&secret).unwrap();
+        let mut alice = SessionRatchet::init_initiator(&secret, &bob_pk);
+
+        let env = alice.encrypt(b"hello").unwrap();
+        assert!(bob.encrypt(b"too early").is_err());
+        let _ = bob.decrypt(&env).unwrap();
+        assert!(bob.encrypt(b"reply").is_ok());
     }
 }

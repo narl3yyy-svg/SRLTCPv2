@@ -29,6 +29,8 @@ pub struct RatchetEnvelope {
 pub struct SessionRatchet {
     inner: Ratchet<StaticSecret>,
     is_initiator: bool,
+    /// Initiator may send immediately; responder must receive one message first (Signal spec).
+    send_ready: bool,
     /// Bob's ratchet DH public key (init_bob output) — sent in handshake step 2.
     bob_ratchet_pk: Option<PublicKey>,
 }
@@ -42,6 +44,7 @@ impl SessionRatchet {
             Self {
                 inner,
                 is_initiator: false,
+                send_ready: false,
                 bob_ratchet_pk: Some(bob_pk),
             },
             bob_pk,
@@ -55,8 +58,17 @@ impl SessionRatchet {
         Self {
             inner,
             is_initiator: true,
+            send_ready: true,
             bob_ratchet_pk: None,
         }
+    }
+
+    pub fn is_initiator(&self) -> bool {
+        self.is_initiator
+    }
+
+    pub fn can_send(&self) -> bool {
+        self.send_ready
     }
 
     pub fn bob_ratchet_pk(&self) -> Option<&PublicKey> {
@@ -64,6 +76,9 @@ impl SessionRatchet {
     }
 
     pub fn encrypt(&mut self, plaintext: &[u8]) -> Result<RatchetEnvelope, RatchetError> {
+        if !self.send_ready {
+            return Err(RatchetError::InvalidState);
+        }
         let ad = b"srltcp-v3";
         let (header, ciphertext, nonce) = self.inner.ratchet_encrypt(plaintext, ad);
         Ok(RatchetEnvelope {
@@ -82,6 +97,9 @@ impl SessionRatchet {
             &envelope.nonce,
             ad,
         );
+        if !self.is_initiator {
+            self.send_ready = true;
+        }
         Ok(plaintext)
     }
 

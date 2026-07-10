@@ -258,17 +258,50 @@ impl P2pEngine {
                 .map(|q| q.into_iter().collect())
                 .unwrap_or_default()
         };
+        let mut deferred = Vec::new();
         for item in items {
-            match item {
-                PendingOutbound::Text(content) => {
-                    let _ = self.try_send_message_now(peer_id, &content).await;
-                }
+            let err = match &item {
+                PendingOutbound::Text(content) => self.try_send_message_now(peer_id, content).await.err(),
                 PendingOutbound::File(path) => {
                     let path_str = path.to_string_lossy().to_string();
-                    let _ = self.try_send_file_now(peer_id, &path_str).await;
+                    self.try_send_file_now(peer_id, &path_str).await.err().map(|e| e)
                 }
+            };
+            if err.as_ref().is_some_and(|e| e.contains("ratchet send chain not ready")) {
+                deferred.push(item);
             }
         }
+        if !deferred.is_empty() {
+            let mut map = self.pending_outbound.write().await;
+            let q = map.entry(peer_id.to_string()).or_default();
+            for item in deferred {
+                q.push_back(item);
+            }
+        }
+    }
+
+    /// Initiator opens the ratchet send chain so the responder can reply (Signal spec).
+    async fn send_ratchet_bootstrap(&self, peer_id: &str) -> Result<(), String> {
+        let resolved = self.resolve_peer_id(peer_id).await?;
+        let is_initiator = self
+            .peers
+            .read()
+            .await
+            .get(&resolved)
+            .is_some_and(|s| s.crypto.is_initiator());
+        if !is_initiator {
+            return Ok(());
+        }
+        let msg = ChatMessage {
+            id: uuid::Uuid::new_v4(),
+            sender_id: self.public_key_hex(),
+            recipient_id: resolved.clone(),
+            msg_type: MessageType::System,
+            content: String::new(),
+            timestamp: chrono::Utc::now(),
+            metadata: Some(serde_json::json!({ "action": "ratchet_open" })),
+        };
+        self.send_wire_message(&resolved, msg).await
     }
 
     fn schedule_auto_reconnect(&self, peer_id: String) {
@@ -342,6 +375,15 @@ impl P2pEngine {
             return Ok(());
         }
         let resolved = self.resolve_peer_id(peer_id).await?;
+        if !self
+            .peers
+            .read()
+            .await
+            .get(&resolved)
+            .is_some_and(|s| s.crypto.can_send_encrypted())
+        {
+            return Ok(());
+        }
         let msg = ChatMessage {
             id: uuid::Uuid::new_v4(),
             sender_id: self.public_key_hex(),
@@ -953,6 +995,7 @@ impl P2pEngine {
 
         self.user_paused.write().await.remove(&canonical);
         if auto_trusted {
+            let _ = self.send_ratchet_bootstrap(&canonical).await;
             self.flush_pending_for_peer(&canonical).await;
             let _ = self.broadcast_profile(&canonical).await;
         }
@@ -978,7 +1021,9 @@ impl P2pEngine {
                 .insert(hex::encode(remote_pk).to_lowercase());
         }
         self.user_paused.write().await.remove(&resolved);
+        let _ = self.send_ratchet_bootstrap(&resolved).await;
         let _ = self.broadcast_profile(&resolved).await;
+        self.flush_pending_for_peer(&resolved).await;
         Ok(())
     }
 
@@ -1525,7 +1570,15 @@ impl EngineInbound {
                 };
                 if auto_trusted {
                     self.flush_pending_inbound(&canonical).await;
-                    self.send_profile(&canonical).await;
+                    if self
+                        .peers
+                        .read()
+                        .await
+                        .get(&canonical)
+                        .is_some_and(|s| s.crypto.can_send_encrypted())
+                    {
+                        self.send_profile(&canonical).await;
+                    }
                 }
                 self.user_paused.write().await.remove(&canonical);
                 let _ = self
@@ -1560,8 +1613,35 @@ impl EngineInbound {
             }
         };
 
+        let became_send_ready = {
+            let peers = self.peers.read().await;
+            peers
+                .get(peer_id)
+                .is_some_and(|s| s.crypto.is_trusted() && s.crypto.can_send_encrypted())
+        };
+
         if let Ok(msg) = ChatMessage::from_json(&plaintext) {
+            if msg.metadata.as_ref().and_then(|m| m.get("action")).and_then(|v| v.as_str())
+                == Some("ratchet_open")
+            {
+                if became_send_ready {
+                    let canonical = self
+                        .canonicalize_peer_inbound(peer_id)
+                        .await
+                        .unwrap_or_else(|_| peer_id.to_string());
+                    self.send_profile(&canonical).await;
+                    self.flush_pending_inbound(&canonical).await;
+                }
+                return;
+            }
             self.handle_app_message(peer_id, msg).await;
+        } else if became_send_ready {
+            let canonical = self
+                .canonicalize_peer_inbound(peer_id)
+                .await
+                .unwrap_or_else(|_| peer_id.to_string());
+            self.send_profile(&canonical).await;
+            self.flush_pending_inbound(&canonical).await;
         }
     }
 
