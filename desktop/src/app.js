@@ -1,7 +1,10 @@
 // SRLTCP v0.2.29 Desktop Frontend
 
 const STORAGE_KEY = 'srltcp_v0.2.29';
-const LEGACY_STORAGE_KEYS = ['srltcp_v0.2.16', 'srltcp_v0.2.24', 'srltcp_v0.2.25'];
+const LEGACY_STORAGE_KEYS = [
+  'srltcp_v0.2.16', 'srltcp_v0.2.24', 'srltcp_v0.2.25',
+  'srltcp_v0.2.26', 'srltcp_v0.2.27', 'srltcp_v0.2.28',
+];
 
 function loadState() {
   for (const key of [STORAGE_KEY, ...LEGACY_STORAGE_KEYS]) {
@@ -386,6 +389,19 @@ function handleEvent(p) {
         connectedPeer = id;
         connectedPeers.add(id);
         peerStatus.set(id, 'online');
+        const qr = window._lastConnectQr
+          || savedContacts.find(c => c.id === id)?.qr
+          || '';
+        const name = remoteDisplayNames.get(id)
+          || savedContacts.find(c => c.id === id)?.name
+          || shortPeer(id);
+        const existing = savedContacts.findIndex(c => c.id === id);
+        const entry = { id, name, verified: true, qr };
+        if (existing >= 0) savedContacts[existing] = { ...savedContacts[existing], ...entry };
+        else savedContacts.push(entry);
+        persistContacts();
+        if (qr) invoke('register_saved_peer', { peerId: id, qr }).catch(() => {});
+        syncTrustedPubkeys();
         selectPeer(id);
         updateChatHeader();
         updateInputState();
@@ -559,12 +575,13 @@ function restoreContacts() {
 }
 
 function removeTrustedContact(id) {
+  const wasActive = activePeer === id;
   invoke('disconnect_peer', { peerId: id }).catch(() => {});
   removePeer(id);
   savedContacts = savedContacts.filter(c => c.id !== id);
   delete chatHistory[id];
   delete messageStore[id];
-  if (activePeer === id) closeChatWindow();
+  if (wasActive) closeChatWindow();
   if (loadState().lastActivePeer === id) saveState({ lastActivePeer: '' });
   persistContacts();
   renderPeers();
@@ -653,10 +670,12 @@ function renderPeers() {
 
 function renderPeerChips() {
   const bar = document.getElementById('peer-chips');
-  const onlineIds = getOnlinePeerIds();
-  if (onlineIds.length === 0) { bar.classList.add('hidden'); return; }
+  const chipIds = savedContacts.length > 0
+    ? savedContacts.map(c => c.id)
+    : getOnlinePeerIds();
+  if (chipIds.length === 0) { bar.classList.add('hidden'); return; }
   bar.classList.remove('hidden');
-  bar.innerHTML = onlineIds.map(id => {
+  bar.innerHTML = chipIds.map(id => {
     const v = peerVerified.get(id) ? ' ✓' : '';
     return `<button class="chip${id === activePeer ? ' active' : ''}${peerVerified.get(id) ? ' verified' : ''}" data-peer="${id}">${escapeHtml(contactLabel(id))}${v}</button>`;
   }).join('');

@@ -15,6 +15,14 @@
 
 - **Honest security docs** — `docs/SECURITY.md` lists residual risks: unaudited crypto, plaintext-at-rest chat/contacts, WebRTC media path, no OS keystore.
 
+### Polish (post-release)
+
+- **Desktop delete contact** — Removing a contact no longer switches to another peer's chat; the chat pane closes cleanly.
+- **Desktop version labels** — `index.html` title and sidebar show v0.2.29.
+- **Desktop saved-contact chips** — Chip row lists saved contacts (offline included), matching Android.
+- **Desktop auto-trusted event** — `sas_ready` with `autoTrusted` now persists the contact and QR like manual SAS confirm.
+- **Legacy storage migration** — Desktop loads contacts from v0.2.26–v0.2.28 storage keys.
+
 ## v0.2.27 — Android version label fix (2026-07-10)
 
 ### Fixes
