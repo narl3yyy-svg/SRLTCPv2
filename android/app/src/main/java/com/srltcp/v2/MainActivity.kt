@@ -106,6 +106,10 @@ data class TransferState(
     val progress: Float,
     val isOutgoing: Boolean,
     val isComplete: Boolean = false,
+    val totalBytes: Long = 0L,
+    val speedBps: Double = 0.0,
+    val lastProgress: Float = 0f,
+    val lastUpdateMs: Long = 0L,
 )
 
 data class CallState(
@@ -134,6 +138,8 @@ fun ChatScreen() {
     var qrImageDataUrl by remember { mutableStateOf("") }
     val peers = remember { mutableStateListOf<String>() }
     var engineOnline by remember { mutableStateOf(false) }
+    var engineReady by remember { mutableStateOf(false) }
+    var receiveDirPath by remember { mutableStateOf("") }
     val transfers = remember { mutableStateMapOf<String, TransferState>() }
     var callState by remember { mutableStateOf<CallState?>(null) }
     var snackbarMessage by remember { mutableStateOf<String?>(null) }
@@ -405,23 +411,32 @@ fun ChatScreen() {
 
     LaunchedEffect(Unit) {
         displayName = prefs.displayName
-        val engine = SrltcpEngineHolder.getOrCreate()
         val recvDir = File(context.filesDir, "received").apply { mkdirs() }
-        engine.setReceiveDir(recvDir.absolutePath)
-        savedContacts.clear()
-        savedContacts.addAll(prefs.loadContacts())
-        prefs.loadContacts().forEach { c ->
-            if (!peers.contains(c.peerId)) peers.add(c.peerId)
-            peerVerified[c.peerId] = c.verified
+        receiveDirPath = recvDir.absolutePath
+        try {
+            val engine = SrltcpEngineHolder.awaitEngine()
+            engine.setReceiveDir(recvDir.absolutePath)
+            engineOnline = engine.isRunning()
+            qrPayload = engine.qrPayload()
+            qrImageDataUrl = engine.qrImageDataUrl()
+            savedContacts.clear()
+            savedContacts.addAll(prefs.loadContacts())
+            prefs.loadContacts().forEach { c ->
+                if (!peers.contains(c.peerId)) peers.add(c.peerId)
+                peerVerified[c.peerId] = c.verified
+            }
+            syncTrustedPubkeys(engine)
+            savedContacts.filter { it.verified && it.qrPayload.isNotBlank() }.forEach { c ->
+                engine.registerSavedPeer(c.peerId, c.qrPayload)
+            }
+            syncDisplayName(null)
+            reconcilePeers()
+            refreshConnectedPeer()
+            connectedPeer?.let { peerStatus[it] = "online" }
+            engineReady = true
+        } catch (e: Exception) {
+            showSnackbar("Engine failed to start: ${e.message ?: e}")
         }
-        syncTrustedPubkeys(engine)
-        savedContacts.filter { it.verified && it.qrPayload.isNotBlank() }.forEach { c ->
-            engine.registerSavedPeer(c.peerId, c.qrPayload)
-        }
-        syncDisplayName(null)
-        reconcilePeers()
-        refreshConnectedPeer()
-        connectedPeer?.let { peerStatus[it] = "online" }
     }
 
     LaunchedEffect(activePeer) {
@@ -536,11 +551,23 @@ fun ChatScreen() {
                 val filename = event.filename ?: "file"
                 val progress = event.progress?.toFloat() ?: 0f
                 val existing = transfers[id]
+                val now = System.currentTimeMillis()
+                val totalBytes = existing?.totalBytes ?: 0L
+                var speedBps = existing?.speedBps ?: 0.0
+                if (existing != null && totalBytes > 0 && now > existing.lastUpdateMs) {
+                    val delta = (progress - existing.lastProgress).coerceAtLeast(0f)
+                    val dt = (now - existing.lastUpdateMs) / 1000.0
+                    if (dt > 0.05) speedBps = (delta * totalBytes) / dt
+                }
                 transfers[id] = TransferState(
                     id = id,
                     filename = filename,
                     progress = progress,
                     isOutgoing = existing?.isOutgoing ?: false,
+                    totalBytes = totalBytes,
+                    speedBps = speedBps,
+                    lastProgress = progress,
+                    lastUpdateMs = now,
                 )
             }
             "transfer_cancelled" -> event.transferId?.let { transfers.remove(it) }
@@ -565,6 +592,7 @@ fun ChatScreen() {
                         isSent = wasOutgoing,
                         sender = if (wasOutgoing) "You" else event.peerId ?: "peer",
                         kind = MessageKind.FILE,
+                        mediaPath = recvPath.takeIf { it.exists() }?.absolutePath,
                     )
                 }
                 showSnackbar(if (wasOutgoing) "Upload complete: $filename" else "Download complete: $filename")
@@ -632,8 +660,9 @@ fun ChatScreen() {
                 return@launch
             }
             val filename = File(path).name
+            val fileSize = File(path).length()
             val result = withContext(Dispatchers.IO) {
-                SrltcpEngineHolder.getOrCreate().sendFile(peer, path)
+                SrltcpEngineHolder.awaitEngine().sendFile(peer, path)
             }
             if (result.filename.startsWith("error:")) {
                 showSnackbar(result.filename.removePrefix("error: ").trim())
@@ -643,6 +672,7 @@ fun ChatScreen() {
                     filename = result.filename,
                     progress = result.progress.toFloat(),
                     isOutgoing = true,
+                    totalBytes = fileSize,
                 )
                 val kind = mediaKindForPath(path, filename)
                 if (kind == MessageKind.IMAGE || kind == MessageKind.VIDEO) {
@@ -660,14 +690,19 @@ fun ChatScreen() {
     }
 
     DisposableEffect(Unit) {
-        val engine = SrltcpEngineHolder.getOrCreate()
-        engineOnline = engine.isRunning()
-        qrPayload = engine.qrPayload()
-        qrImageDataUrl = engine.qrImageDataUrl()
-        refreshConnectedPeer()
-        reconcilePeers()
         SrltcpEngineHolder.addEventListener(eventListener)
         onDispose { SrltcpEngineHolder.removeEventListener(eventListener) }
+    }
+
+    if (!engineReady) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator()
+                Spacer(modifier = Modifier.height(12.dp))
+                Text("Starting secure P2P engine…", fontSize = 14.sp)
+            }
+        }
+        return
     }
 
     LaunchedEffect(messages.size) {
@@ -693,7 +728,7 @@ fun ChatScreen() {
                     Column {
                         Text("SRLTCP", fontWeight = FontWeight.Bold)
                         Text(
-                            "v0.2.17 • ${if (engineOnline) "Online" else "Offline"} • bg active",
+                            "v0.2.21 • ${if (engineOnline) "Online" else "Offline"} • bg active",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -869,7 +904,12 @@ fun ChatScreen() {
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(vertical = 8.dp),
                 ) {
-                    items(messages, key = { it.id }) { msg -> MessageBubble(msg) }
+                    items(messages, key = { it.id }) { msg ->
+                        MessageBubble(
+                            message = msg,
+                            onOpenFile = { path -> openFileOrFolder(context, path) { showSnackbar(it) } },
+                        )
+                    }
                 }
             }
         }
@@ -969,8 +1009,16 @@ fun ChatScreen() {
 
     if (showSettingsSheet) {
         SettingsSheet(
-            version = "0.2.17",
+            version = "0.2.21",
+            receiveDir = receiveDirPath,
             displayName = displayName,
+            onCopyReceiveDir = {
+                copyTextToClipboard(context, "receive dir", receiveDirPath)
+                showSnackbar("Save folder path copied")
+            },
+            onRequestCallPermissions = {
+                ensureCallPermissions(true) { showSnackbar("Mic/camera permissions granted") }
+            },
             onDisplayNameChange = { name ->
                 displayName = name
                 prefs.displayName = name
@@ -1300,10 +1348,12 @@ fun CallStatusBar(call: CallState, peerLabel: String, onEndCall: () -> Unit) {
 @Composable
 fun TransferProgressBar(transfer: TransferState, onCancel: (() -> Unit)? = null) {
     val label = if (transfer.isOutgoing) "Sending" else "Receiving"
+    val speedMb = transfer.speedBps / (1024.0 * 1024.0)
+    val speedLabel = if (speedMb >= 0.01) " • ${"%.2f".format(speedMb)} MB/s" else ""
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                "$label: ${transfer.filename} (${(transfer.progress * 100).toInt()}%)",
+                "$label: ${transfer.filename} (${(transfer.progress * 100).toInt()}%$speedLabel)",
                 fontSize = 12.sp,
                 modifier = Modifier.weight(1f),
             )
@@ -1319,7 +1369,7 @@ fun TransferProgressBar(transfer: TransferState, onCancel: (() -> Unit)? = null)
 }
 
 @Composable
-fun MessageBubble(message: ChatMessage) {
+fun MessageBubble(message: ChatMessage, onOpenFile: ((String) -> Unit)? = null) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (message.isSent) Arrangement.End else Arrangement.Start,
@@ -1347,7 +1397,16 @@ fun MessageBubble(message: ChatMessage) {
                     }
                     else -> {}
                 }
-                if (message.kind != MessageKind.IMAGE && message.kind != MessageKind.VIDEO) {
+                if (message.kind == MessageKind.FILE && message.mediaPath != null) {
+                    Text(
+                        text = message.content,
+                        color = if (message.isSent) MaterialTheme.colorScheme.onPrimary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    TextButton(onClick = { onOpenFile?.invoke(message.mediaPath!!) }) {
+                        Text("Open file", fontSize = 11.sp)
+                    }
+                } else if (message.kind != MessageKind.IMAGE && message.kind != MessageKind.VIDEO) {
                     Text(
                         text = message.content,
                         color = if (message.isSent) MaterialTheme.colorScheme.onPrimary
@@ -1502,6 +1561,33 @@ fun ActiveCallOverlay(
                 }
             }
         }
+    }
+}
+
+private fun openFileOrFolder(context: Context, path: String, onMsg: (String) -> Unit) {
+    val file = File(path)
+    if (!file.exists()) {
+        onMsg("File not found: $path")
+        return
+    }
+    try {
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file,
+        )
+        val mime = context.contentResolver.getType(uri)
+            ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase())
+            ?: "*/*"
+        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mime)
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(android.content.Intent.createChooser(intent, "Open with"))
+    } catch (_: Exception) {
+        val folder = file.parentFile?.absolutePath ?: path
+        copyTextToClipboard(context, "file path", folder)
+        onMsg("Saved at: $folder")
     }
 }
 

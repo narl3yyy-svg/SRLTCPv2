@@ -1,6 +1,6 @@
 # Architecture
 
-SRLTCP v0.2.20 system architecture.
+SRLTCP v0.2.21 system architecture.
 
 ## High-Level Overview
 

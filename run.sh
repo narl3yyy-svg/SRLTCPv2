@@ -431,6 +431,9 @@ main() {
     fi
 
     log "Launching: $binary"
+    # Suppress harmless WebKit spellcheck (libenchant) plugin warnings on Linux
+    export ENCHANT_MODULE_DIR="${ENCHANT_MODULE_DIR:-/dev/null}"
+    export G_MESSAGES_DEBUG="${G_MESSAGES_DEBUG:-}"
     RUST_LOG="${RUST_LOG:-info}" "$binary" &
     local app_pid=$!
     echo "$app_pid" > "$PID_FILE"

@@ -10,5 +10,6 @@ class SrltcpApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         System.setProperty("uniffi.component.srltcp_core.libraryOverride", "srltcp_core")
+        SrltcpEngineHolder.startInBackground()
     }
 }

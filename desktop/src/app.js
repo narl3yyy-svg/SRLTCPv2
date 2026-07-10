@@ -1,6 +1,6 @@
-// SRLTCP v0.2.17 Desktop Frontend
+// SRLTCP v0.2.21 Desktop Frontend
 
-const STORAGE_KEY = 'srltcp_v0.2.17';
+const STORAGE_KEY = 'srltcp_v0.2.21';
 const LEGACY_STORAGE_KEYS = ['srltcp_v0.2.16'];
 
 function loadState() {
@@ -46,6 +46,25 @@ const activeCallRef = { current: null };
 let pendingSas = null;
 const transfers = new Map();
 let receiveDir = '';
+
+function formatSpeed(bps) {
+  const mb = bps / (1024 * 1024);
+  return mb >= 0.01 ? ` · ${mb.toFixed(2)} MB/s` : '';
+}
+
+function updateReceiveDirUI() {
+  const el = document.getElementById('receive-dir-path');
+  if (el) el.textContent = receiveDir || '(unknown)';
+}
+
+async function revealPath(path) {
+  if (!path) return;
+  try {
+    await invoke('reveal_in_folder', { path });
+  } catch (e) {
+    toast(`Reveal failed: ${e}`, true);
+  }
+}
 
 const IMAGE_EXT = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp']);
 const VIDEO_EXT = new Set(['mp4', 'webm', 'mkv', 'mov', '3gp']);
@@ -231,7 +250,10 @@ async function init() {
     for (const c of savedContacts.filter(x => x.verified && x.qr)) {
       try { await invoke('register_saved_peer', { peerId: c.id, qr: c.qr }); } catch (_) {}
     }
-    try { receiveDir = await invoke('get_receive_dir'); } catch (_) {}
+    try {
+      receiveDir = await invoke('get_receive_dir');
+      updateReceiveDirUI();
+    } catch (_) {}
 
     const existingPeers = await invoke('get_peers');
     existingPeers.forEach(id => {
@@ -361,20 +383,32 @@ function handleEvent(p) {
       if (activePeer === oldId || activePeer === null) selectPeer(newId);
       break;
     }
-    case 'transfer_progress':
-      updateTransfer(pick(p, 'id', 'Id'), p.filename, p.progress, false);
+    case 'transfer_progress': {
+      const tid = pick(p, 'id', 'Id');
+      const existing = transfers.get(tid);
+      const outgoing = existing?.outgoing ?? false;
+      updateTransfer(tid, p.filename, p.progress, outgoing, existing?.totalBytes);
+      if (!outgoing && receiveDir && p.filename) {
+        const guess = `${receiveDir}/${p.filename}`;
+        invoke('file_size', { path: guess }).then((size) => {
+          const t = transfers.get(tid);
+          if (t && !t.totalBytes) updateTransfer(tid, t.filename, t.progress, false, size);
+        }).catch(() => {});
+      }
       break;
+    }
     case 'transfer_complete': {
       const tid = pick(p, 'id', 'Id');
       const fname = p.filename || 'file';
       const fpath = p.path || p.message || (receiveDir ? `${receiveDir}/${fname}` : '');
-      updateTransfer(tid, fname, 1, false);
+      updateTransfer(tid, fname, 1, transfers.get(tid)?.outgoing ?? false);
       setTimeout(() => removeTransfer(tid), 2000);
       const kind = mediaKind(fname);
+      const sender = shortPeer(pick(p, 'peer_id', 'peerId'));
       if ((kind === 'image' || kind === 'video') && fpath) {
-        appendMessage(fname, 'received', shortPeer(pick(p, 'peer_id', 'peerId')), { kind, path: fpath });
+        appendMessage(fname, 'received', sender, { kind, path: fpath });
       } else {
-        appendMessage(`📁 ${fname}`, 'received', shortPeer(pick(p, 'peer_id', 'peerId')));
+        appendMessage(`📁 ${fname}`, 'received', sender, { kind: 'file', path: fpath || null });
       }
       break;
     }
@@ -762,6 +796,14 @@ function appendMessage(content, direction, sender, opts = {}, persist = true) {
     text.className = 'msg-text';
     text.textContent = content;
     div.appendChild(text);
+    if (opts.kind === 'file' && opts.path) {
+      const openBtn = document.createElement('button');
+      openBtn.type = 'button';
+      openBtn.className = 'btn-sm msg-open-btn';
+      openBtn.textContent = 'Open location';
+      openBtn.onclick = () => revealPath(opts.path);
+      div.appendChild(openBtn);
+    }
   }
 
   const meta = document.createElement('div');
@@ -806,8 +848,25 @@ function hideSasModal() {
   pendingSas = null;
 }
 
-function updateTransfer(id, filename, progress, outgoing) {
-  transfers.set(id, { filename, progress, outgoing });
+function updateTransfer(id, filename, progress, outgoing, totalBytes) {
+  const existing = transfers.get(id);
+  const now = Date.now();
+  const bytes = totalBytes || existing?.totalBytes || 0;
+  let speedBps = existing?.speedBps || 0;
+  if (existing && bytes > 0 && now > existing.lastUpdateMs) {
+    const delta = Math.max(0, progress - existing.lastProgress);
+    const dt = (now - existing.lastUpdateMs) / 1000;
+    if (dt > 0.05) speedBps = (delta * bytes) / dt;
+  }
+  transfers.set(id, {
+    filename,
+    progress,
+    outgoing,
+    totalBytes: bytes,
+    speedBps,
+    lastProgress: progress,
+    lastUpdateMs: now,
+  });
   renderTransfers();
 }
 
@@ -822,7 +881,7 @@ function renderTransfers() {
   panel.classList.remove('hidden');
   panel.innerHTML = [...transfers.entries()].map(([id, t]) => `
     <div class="transfer-item" data-transfer="${escapeHtml(id)}">
-      <span>${t.outgoing ? '↑' : '↓'} ${escapeHtml(t.filename)} — ${Math.round(t.progress * 100)}%</span>
+      <span>${t.outgoing ? '↑' : '↓'} ${escapeHtml(t.filename)} — ${Math.round(t.progress * 100)}%${formatSpeed(t.speedBps || 0)}</span>
       <div class="progress-track"><div class="progress-fill" style="width:${Math.round(t.progress * 100)}%"></div></div>
       ${t.outgoing ? `<button class="btn-sm transfer-cancel" data-cancel="${escapeHtml(id)}">Cancel</button>` : ''}
     </div>`).join('');
@@ -966,6 +1025,35 @@ document.getElementById('check-updates')?.addEventListener('click', () => {
   toast('Run: git pull && ./run.sh  —  Releases: github.com/narl3yyy-svg/SRLTCPv2');
 });
 
+document.getElementById('open-receive-dir')?.addEventListener('click', async () => {
+  if (!receiveDir) {
+    try { receiveDir = await invoke('get_receive_dir'); updateReceiveDirUI(); } catch (_) {}
+  }
+  if (receiveDir) await revealPath(receiveDir);
+  else toast('Receive folder not ready', true);
+});
+
+document.getElementById('copy-receive-dir')?.addEventListener('click', async () => {
+  if (!receiveDir) {
+    try { receiveDir = await invoke('get_receive_dir'); updateReceiveDirUI(); } catch (_) {}
+  }
+  if (receiveDir) {
+    await navigator.clipboard.writeText(receiveDir);
+    toast('Save folder path copied');
+  } else {
+    toast('Receive folder not ready', true);
+  }
+});
+
+document.getElementById('test-media-perms')?.addEventListener('click', async () => {
+  try {
+    const msg = await window.SrltcpWebRTC?.testMediaPermissions?.();
+    toast(msg || 'Media test complete');
+  } catch (e) {
+    toast(`Media test failed: ${e}`, true);
+  }
+});
+
 document.getElementById('sas-reject').onclick = async () => {
   if (pendingSas) {
     toast('SAS mismatch — disconnecting peer (possible MITM)', true);
@@ -1075,15 +1163,19 @@ document.getElementById('send-file-btn').onclick = async () => {
   try { filePath = await openFileDialog({ multiple: false }); } catch (_) {}
   if (!filePath) return;
   try {
+    let totalBytes = 0;
+    try { totalBytes = await invoke('file_size', { path: filePath }); } catch (_) {}
     const result = await invoke('send_file', { peerId: activePeer, filePath });
     const kind = mediaKind(result.filename);
-    if (result.transfer_id) updateTransfer(result.transfer_id, result.filename, result.progress || 0, true);
+    if (result.transfer_id) {
+      updateTransfer(result.transfer_id, result.filename, result.progress || 0, true, totalBytes);
+    }
     if (kind === 'image' || kind === 'video') {
       appendMessage(result.filename, 'sent', 'You', { kind, path: filePath });
     } else if (result.filename?.startsWith('queued:')) {
       toast('File queued — reconnecting…');
     } else {
-      appendMessage(`Sending: ${result.filename}`, 'sent', 'You');
+      appendMessage(`📤 ${result.filename}`, 'sent', 'You', { kind: 'file', path: filePath });
     }
     if (offline) toast('File queued — reconnecting…');
   } catch (e) { toast(`File error: ${e}`, true); }

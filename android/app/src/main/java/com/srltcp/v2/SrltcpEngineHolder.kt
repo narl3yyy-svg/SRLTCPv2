@@ -1,6 +1,7 @@
 package com.srltcp.v2
 
 import android.util.Log
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -9,6 +10,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import uniffi.srltcp_core.SrltcpEngine
 import uniffi.srltcp_core.SrltcpEvent
 import uniffi.srltcp_core.initCrypto
@@ -24,6 +26,10 @@ object SrltcpEngineHolder {
     @Volatile
     private var engine: SrltcpEngine? = null
 
+    private val ready = CompletableDeferred<SrltcpEngine>()
+    @Volatile
+    private var starting = false
+
     private var scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val eventListeners = mutableSetOf<(SrltcpEvent) -> Unit>()
     @Volatile
@@ -33,24 +39,65 @@ object SrltcpEngineHolder {
         System.setProperty("uniffi.component.srltcp_core.libraryOverride", "srltcp_core")
     }
 
-    @Synchronized
-    fun getOrCreate(): SrltcpEngine {
-        ensureNativeLibrary()
-        engine?.let { return it }
-        val job = scope.coroutineContext[Job]
-        if (job == null || !job.isActive) {
-            scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /** Non-blocking — returns null until [awaitEngine] completes. */
+    fun engineOrNull(): SrltcpEngine? = engine
+
+    fun isEngineReady(): Boolean = engine != null && (engine?.isRunning() == true)
+
+    /** Starts engine on IO if needed; safe from any thread. */
+    fun startInBackground() {
+        if (engine != null || starting) return
+        synchronized(this) {
+            if (engine != null || starting) return
+            starting = true
+            val job = scope.coroutineContext[Job]
+            if (job == null || !job.isActive) {
+                scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            }
+            scope.launch {
+                try {
+                    createEngineLocked()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Engine start failed", e)
+                    starting = false
+                    if (!ready.isCompleted) ready.completeExceptionally(e)
+                }
+            }
         }
+    }
+
+    suspend fun awaitEngine(): SrltcpEngine {
+        engine?.let { return it }
+        startInBackground()
+        return withContext(Dispatchers.IO) {
+            if (engine != null) return@withContext engine!!
+            ready.await()
+        }
+    }
+
+    @Synchronized
+    private fun createEngineLocked(): SrltcpEngine {
+        engine?.let { return it }
+        ensureNativeLibrary()
         Log.i(TAG, "Creating Rust SrltcpEngine via UniFFI")
         initCrypto()
         val eng = SrltcpEngine()
         eng.start(QUIC_PORT)
         eng.waitUntilReady(30u)
         engine = eng
+        starting = false
         polling = false
         startEventPolling(eng)
+        if (!ready.isCompleted) ready.complete(eng)
         Log.i(TAG, "Engine started on QUIC port $QUIC_PORT")
         return eng
+    }
+
+    /** @deprecated Use [awaitEngine] from coroutines — never call from main thread before ready. */
+    @Synchronized
+    fun getOrCreate(): SrltcpEngine {
+        engine?.let { return it }
+        return createEngineLocked()
     }
 
     private fun startEventPolling(eng: SrltcpEngine) {
@@ -81,12 +128,12 @@ object SrltcpEngineHolder {
 
     fun isEngineRunning(): Boolean = engine?.isRunning() ?: false
 
-    /** Only on explicit ACTION_STOP — not on swipe-away. */
     @Synchronized
     fun shutdown() {
         Log.i(TAG, "Shutting down Rust engine")
         engine?.shutdown()
         engine = null
+        starting = false
         polling = false
         scope.cancel()
     }

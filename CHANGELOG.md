@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.2.21 — Save path, transfer speed, Android launch fix (2026-07-10)
+
+### Features
+
+- **Received files location** — Settings shows the save folder path; copy path or open folder (desktop + Android).
+- **Open file location** — Received file messages include an “Open location” / “Open file” action in chat.
+- **Transfer MB/s** — Progress bars show throughput during send/receive (desktop + Android).
+
+### Fixes
+
+- **Android launch hang** — Engine init moved off the main thread (`startInBackground` / `awaitEngine`); loading spinner until ready.
+- **Android file open** — `FileProvider` for opening received files on Android 7+.
+- **Mic/camera permissions** — Desktop “Test mic & camera” button; Android settings grant button; simplified WebRTC video constraints (no GstIntRange spam).
+- **libenchant warnings** — `ENCHANT_MODULE_DIR=/dev/null` in `run.sh` suppresses harmless WebKit spellcheck plugin noise.
+
 ## v0.2.20 — SAS confirm ratchet panic fix (2026-07-10)
 
 ### Fixes (critical)

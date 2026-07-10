@@ -228,6 +228,67 @@ async fn broadcast_profile(state: State<'_, AppState>, peer_id: String) -> Resul
 }
 
 #[tauri::command]
+fn file_size(path: String) -> Result<u64, String> {
+    std::fs::metadata(&path)
+        .map(|m| m.len())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn reveal_in_folder(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err(format!("path not found: {path}"));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let target = if p.is_file() {
+            p.parent().unwrap_or(p)
+        } else {
+            p
+        };
+        std::process::Command::new("xdg-open")
+            .arg(target)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if p.is_file() {
+            std::process::Command::new("open")
+                .arg("-R")
+                .arg(p)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        } else {
+            std::process::Command::new("open")
+                .arg(p)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if p.is_file() {
+            std::process::Command::new("explorer")
+                .arg(format!("/select,{}", p.display()))
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        } else {
+            std::process::Command::new("explorer")
+                .arg(p)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        return Err("reveal_in_folder not supported on this platform".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn get_receive_dir(state: State<'_, AppState>) -> Result<String, String> {
     Ok(state
         .engine
@@ -308,6 +369,8 @@ fn main() {
             set_display_name,
             broadcast_profile,
             get_receive_dir,
+            file_size,
+            reveal_in_folder,
             shutdown_engine,
         ])
         .manage(AppState {

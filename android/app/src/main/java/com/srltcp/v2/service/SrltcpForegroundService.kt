@@ -15,6 +15,10 @@ import androidx.core.app.NotificationCompat
 import com.srltcp.v2.MainActivity
 import com.srltcp.v2.R
 import com.srltcp.v2.SrltcpEngineHolder
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import uniffi.srltcp_core.SrltcpEvent
 
 /**
@@ -40,6 +44,7 @@ class SrltcpForegroundService : Service() {
     }
 
     private var eventListener: ((SrltcpEvent) -> Unit)? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onCreate() {
         super.onCreate()
@@ -78,29 +83,31 @@ class SrltcpForegroundService : Service() {
     }
 
     private fun startP2pCore() {
-        try {
-            val engine = SrltcpEngineHolder.getOrCreate()
-
-            eventListener = { event ->
-                when (event.eventType) {
-                    "peer_connected" -> updateNotification("Connected: ${event.peerId}")
-                    "message" -> updateNotification("Message from ${event.peerId}")
-                    "started" -> updateNotification("Online — iroh NAT traversal")
-                    "stopped" -> updateNotification("Stopped")
-                    "error" -> updateNotification("Error: ${event.error}")
-                }
-                Log.d(TAG, "Engine event: ${event.eventType}")
+        SrltcpEngineHolder.startInBackground()
+        eventListener = { event ->
+            when (event.eventType) {
+                "peer_connected" -> updateNotification("Connected: ${event.peerId}")
+                "message" -> updateNotification("Message from ${event.peerId}")
+                "started" -> updateNotification("Online — iroh NAT traversal")
+                "stopped" -> updateNotification("Stopped")
+                "error" -> updateNotification("Error: ${event.error}")
             }
-            eventListener?.let { SrltcpEngineHolder.addEventListener(it) }
+            Log.d(TAG, "Engine event: ${event.eventType}")
+        }
+        eventListener?.let { SrltcpEngineHolder.addEventListener(it) }
 
-            val peers = engine.connectedPeers()
-            Log.i(
-                TAG,
-                "Rust engine running=${engine.isRunning()} peers=${peers.size} key=${engine.publicKeyHex().take(16)}…"
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to start P2P core", e)
-            updateNotification("Error — check logcat")
+        scope.launch {
+            try {
+                val engine = SrltcpEngineHolder.awaitEngine()
+                val peers = engine.connectedPeers()
+                Log.i(
+                    TAG,
+                    "Rust engine running=${engine.isRunning()} peers=${peers.size} key=${engine.publicKeyHex().take(16)}…"
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start P2P core", e)
+                updateNotification("Error — check logcat")
+            }
         }
     }
 

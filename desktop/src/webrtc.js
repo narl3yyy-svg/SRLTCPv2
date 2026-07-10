@@ -35,8 +35,13 @@ async function getMedia(isVideo) {
     : false;
   let video = false;
   if (isVideo && callSettings.camera) {
-    // WebKit/GStreamer rejects ideal+max ranges (GstIntRange start >= end). Keep simple.
-    video = { width: 640, height: 480, frameRate: { ideal: 24, max: 30 } };
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const hasCamera = devices.some((d) => d.kind === 'videoinput');
+      if (hasCamera) video = true;
+    } catch (_) {
+      video = true;
+    }
   }
   try {
     return await navigator.mediaDevices.getUserMedia({ audio, video });
@@ -300,6 +305,32 @@ function setCallSettings({ mic, camera }) {
   if (camera !== undefined) callSettings.camera = camera;
 }
 
+async function testMediaPermissions() {
+  const mic = callSettings.mic;
+  const cam = callSettings.camera;
+  const parts = [];
+  if (mic) {
+    try {
+      const s = await getMedia(false);
+      s.getTracks().forEach((t) => t.stop());
+      parts.push('microphone OK');
+    } catch (e) {
+      parts.push(`microphone: ${mediaErrorHelp(e)}`);
+    }
+  }
+  if (cam) {
+    try {
+      const s = await getMedia(true);
+      const hasVideo = s.getVideoTracks().length > 0;
+      s.getTracks().forEach((t) => t.stop());
+      parts.push(hasVideo ? 'camera OK' : 'camera unavailable (voice-only fallback)');
+    } catch (e) {
+      parts.push(`camera: ${mediaErrorHelp(e)}`);
+    }
+  }
+  return parts.join(' · ');
+}
+
 window.SrltcpWebRTC = {
   startOutgoingCall,
   answerIncomingCall,
@@ -309,5 +340,6 @@ window.SrltcpWebRTC = {
   toggleMute,
   toggleCamera,
   setCallSettings,
+  testMediaPermissions,
   get pendingIncoming() { return pendingIncoming; },
 };

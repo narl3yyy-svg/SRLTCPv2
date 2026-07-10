@@ -25,7 +25,7 @@ object WebRtcCallManagerHolder {
         onState: (CallState) -> Unit,
     ) = withContext(Dispatchers.IO) {
         val m = mgr(context)
-        val engine = SrltcpEngineHolder.getOrCreate()
+        val engine = SrltcpEngineHolder.awaitEngine()
         val notify: (CallState) -> Unit = { state ->
             CoroutineScope(Dispatchers.Main).launch { onState(state) }
         }
@@ -51,7 +51,7 @@ object WebRtcCallManagerHolder {
         onState: (CallState) -> Unit,
     ): String = withContext(Dispatchers.IO) {
         val m = mgr(context)
-        val engine = SrltcpEngineHolder.getOrCreate()
+        val engine = SrltcpEngineHolder.awaitEngine()
         var activeCallId = ""
         m.startOutgoing(isVideo, { ice ->
             engine.sendCallSignal(peerId, activeCallId, "ice", ice, isVideo)

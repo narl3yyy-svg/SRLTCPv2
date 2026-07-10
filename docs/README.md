@@ -1,4 +1,4 @@
-# SRLTCP v0.2.20
+# SRLTCP v0.2.21
 
 **Secure Reliable LAN/iroh/Serial P2P Messaging**
 
@@ -20,7 +20,7 @@ That's it. The script installs Rust if needed, builds on first run, and launches
 
 Press **Ctrl+C** for graceful shutdown. Run `./cleanup.sh` for a full reset.
 
-## Features (v0.2.20)
+## Features (v0.2.21)
 
 | Feature | Description |
 |---------|-------------|
@@ -28,7 +28,7 @@ Press **Ctrl+C** for graceful shutdown. Run `./cleanup.sh` for a full reset.
 | **LAN/WAN** | iroh transport — relay + hole punching, no router config |
 | **Post-Quantum** | Hybrid X25519 + ML-KEM-768 key exchange |
 | **Messaging** | Double Ratchet E2EE with emoji support |
-| **File Transfer** | Resumable chunked transfer on all transports |
+| **File Transfer** | Resumable chunked transfer with MB/s progress; save path in Settings |
 | **Media** | Images and videos displayed inline in chat |
 | **Calling** | WebRTC voice/video with E2EE signaling |
 | **Discovery** | QR code + Short Authentication String (SAS) |
