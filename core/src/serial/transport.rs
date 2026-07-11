@@ -2,11 +2,16 @@
 
 use std::sync::Arc;
 
+#[cfg(all(not(target_os = "android"), feature = "desktop"))]
 use std::io::{Read, Write};
 
 use bytes::{Bytes, BytesMut};
-use tokio::sync::{mpsc, Mutex, RwLock};
-use tracing::{debug, info, warn};
+use tokio::sync::{mpsc, RwLock};
+#[cfg(all(not(target_os = "android"), feature = "desktop"))]
+use tokio::sync::Mutex;
+use tracing::{info, warn};
+#[cfg(all(not(target_os = "android"), feature = "desktop"))]
+use tracing::debug;
 
 #[cfg(all(not(target_os = "android"), feature = "desktop"))]
 use std::time::Duration;

@@ -15,7 +15,7 @@ pub enum WireFrame {
     Encrypted(EncryptedPayload),
 }
 
-/// Signed hybrid handshake step (1 = initiator, 2 = responder, 3 = ratchet DH).
+/// Signed hybrid handshake step (1 = initiator, 2 = responder, 3 = transcript complete).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignedHandshake {
     pub step: u8,

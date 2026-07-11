@@ -1,6 +1,6 @@
 # Serial Protocol Specification
 
-SRLTCP v0.2.0 serial transport — COBS framing, CRC32 integrity, and sequenced reliability.
+SRLTCP serial transport — COBS framing, CRC32 integrity, and sequenced reliability.
 
 ## Why This Design?
 
@@ -23,7 +23,7 @@ We need application-layer reliability without wasting precious serial bandwidth.
 
 3. **Sequenced ACK/NACK** — Lightweight control packets (≤16 bytes on wire) instead of repeating full frames. Cumulative ACK piggybacked on data frames to minimize standalone control traffic.
 
-4. **Session AEAD** — Encryption applied at the logical message level (AES-256-GCM via Double Ratchet), not per serial byte. The reliability layer handles plaintext frames; encryption wraps complete messages before they enter the serial stack.
+4. **Session AEAD** — Encryption applied at the logical message level (Double Ratchet AEAD via `double-ratchet-2`), not per serial byte. The reliability layer handles frames; encryption wraps complete messages before they enter the serial stack.
 
 ## Wire Format
 
@@ -71,6 +71,7 @@ The trailing `0x00` is the frame delimiter. COBS guarantees no interior `0x00` b
 
 - Default window: **8 frames**
 - Maximum payload per frame: **4096 bytes**
+- Maximum out-of-order receive buffer: **64 frames** (DoS cap)
 - At 115200 baud, 8 × ~500 bytes ≈ 55ms of pipeline — good balance
 
 ### ACK Strategy

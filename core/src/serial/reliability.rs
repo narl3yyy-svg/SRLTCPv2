@@ -17,6 +17,8 @@ pub const DEFAULT_RTO_MS: u64 = 200;
 pub const DEFAULT_WINDOW_SIZE: usize = 8;
 /// Maximum retransmission attempts before giving up.
 pub const MAX_RETRIES: u32 = 12;
+/// Cap out-of-order receive buffer to resist memory DoS on noisy/malicious links.
+pub const MAX_RECV_BUFFER: usize = 64;
 
 /// Sliding-window reliability engine.
 pub struct ReliabilityLayer {
@@ -144,10 +146,20 @@ impl ReliabilityLayer {
                         self.recv_next = self.recv_next.wrapping_add(1);
                     }
                 } else if seq_gt(frame.seq, self.recv_next) {
-                    // Out of order — buffer it
-                    self.recv_buffer
-                        .entry(frame.seq)
-                        .or_insert_with(|| frame.payload.clone());
+                    // Out of order — buffer with hard cap (DoS resistance)
+                    if self.recv_buffer.len() < MAX_RECV_BUFFER
+                        || self.recv_buffer.contains_key(&frame.seq)
+                    {
+                        self.recv_buffer
+                            .entry(frame.seq)
+                            .or_insert_with(|| frame.payload.clone());
+                    } else {
+                        warn!(
+                            seq = frame.seq,
+                            buffered = self.recv_buffer.len(),
+                            "recv_buffer full — dropping out-of-order frame"
+                        );
+                    }
                     // Send NACK for the missing sequence
                     responses.push(Frame::nack(0, self.recv_next, self.recv_next));
                 }

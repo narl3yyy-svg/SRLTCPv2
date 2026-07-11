@@ -12,17 +12,31 @@ android {
         applicationId = "com.srltcp.v2"
         minSdk = 26
         targetSdk = 35
-        versionCode = 231
-        versionName = "0.2.31"
+        versionCode = 300
+        versionName = "0.3.0"
+        // Default slim APK: modern phones only. Set SRLTCP_UNIVERSAL_APK=1 for multi-ABI.
+        ndk {
+            if (System.getenv("SRLTCP_UNIVERSAL_APK") == "1") {
+                abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+            } else {
+                abiFilters += listOf("arm64-v8a")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Sideload / GitHub Releases: sign with debug keystore so install works out of box.
+            signingConfig = signingConfigs.getByName("debug")
+        }
+        debug {
+            isMinifyEnabled = false
         }
     }
 
@@ -39,6 +53,20 @@ android {
         compose = true
         buildConfig = true
     }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false
+        }
+        resources {
+            excludes += setOf(
+                "META-INF/DEPENDENCIES",
+                "META-INF/LICENSE*",
+                "META-INF/NOTICE*",
+                "META-INF/*.kotlin_module",
+            )
+        }
+    }
 }
 
 dependencies {
@@ -48,6 +76,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-service:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("net.java.dev.jna:jna:5.15.0@aar")
+    implementation("androidx.security:security-crypto:1.0.0")
 
     implementation(platform("androidx.compose:compose-bom:2024.10.01"))
     implementation("androidx.compose.ui:ui")

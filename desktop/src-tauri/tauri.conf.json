@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "SRLTCP",
-  "version": "0.2.31",
+  "version": "0.3.0",
   "identifier": "com.srltcp.v2",
   "build": {
     "frontendDist": "../src",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "SRLTCP v0.2.31",
+        "title": "SRLTCP v0.3.0",
         "width": 1100,
         "height": 750,
         "minWidth": 800,
@@ -24,7 +24,14 @@
     ],
     "security": {
       "csp": "default-src 'self'; connect-src 'self' https: wss: stun: turn:; media-src 'self' blob: mediastream: https://asset.localhost http://asset.localhost asset:; img-src 'self' data: blob: https://asset.localhost http://asset.localhost asset:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'",
-      "capabilities": ["default"]
+      "capabilities": ["default"],
+      "assetProtocol": {
+        "enable": true,
+        "scope": {
+          "requireLiteralLeadingDot": false,
+          "allow": ["$APPDATA/**/*"]
+        }
+      }
     }
   },
   "bundle": {

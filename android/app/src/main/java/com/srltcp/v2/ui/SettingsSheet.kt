@@ -69,6 +69,16 @@ fun SettingsSheet(
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
 
+            Text("Privacy", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Chat is end-to-end encrypted after SAS. Voice/video media uses WebRTC (DTLS-SRTP), not Double Ratchet. Chat history is stored on this device. Your identity seed is encrypted in app storage.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 14.sp,
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+
             Text("Calls", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             Text(
                 "Grant microphone and camera before voice/video calls.",

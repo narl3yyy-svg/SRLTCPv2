@@ -1,10 +1,10 @@
-//! Cryptographic primitives for SRLTCP v0.2.0.
+//! Cryptographic primitives for SRLTCP.
 //!
-//! - Ed25519 long-term identity
+//! - Ed25519 long-term identity (persistable seed)
 //! - Hybrid X25519 + ML-KEM-768 key exchange
-//! - AES-256-GCM session encryption (hardware-accelerated via aws-lc-rs)
-//! - Double Ratchet for messaging
+//! - Signal-spec Double Ratchet messaging (double-ratchet-2)
 //! - QR + SAS discovery/verification
+//! - Secrets zeroized on drop where possible
 
 pub mod handshake;
 pub mod identity;
@@ -14,7 +14,8 @@ pub mod wire;
 
 pub use handshake::{HandshakeError, HybridKeyExchange};
 pub use identity::{
-    compute_sas, compute_sas_with_transcript, parse_qr_payload, Identity, IdentityError, ParsedQr,
+    compute_sas, compute_sas_with_transcript, load_or_create_seed_file, parse_qr_payload, write_seed_file,
+    Identity, IdentityError, IdentitySeed, ParsedQr,
 };
 pub use peer_crypto::{PeerCrypto, TrustState};
 pub use ratchet::{RatchetEnvelope, RatchetError, SessionRatchet};

@@ -7,15 +7,15 @@ members = [
 exclude = ["android"]
 
 [workspace.package]
-version = "0.2.31"
+version = "0.3.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["SRLTCP Contributors"]
 repository = "https://github.com/narl3yyy-svg/SRLTCPv2"
-description = "Secure Reliable LAN/TCP/Serial P2P messaging — v0.2.31"
+description = "Secure Reliable LAN/TCP/Serial P2P messaging — v0.3.0"
 
 [workspace.dependencies]
-tokio = { version = "1.43", features = ["full"] }
+tokio = { version = "1.43", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "net", "fs"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "2.0"
@@ -30,3 +30,16 @@ hex = "0.4"
 base64 = "0.22"
 uuid = { version = "1.11", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+
+# Size-optimized release binaries (desktop + Android native)
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = "s"
+panic = "abort"
+
+# Even smaller for Android jniLibs when built with --profile release
+[profile.release-size]
+inherits = "release"
+opt-level = "z"

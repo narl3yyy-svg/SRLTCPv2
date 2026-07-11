@@ -91,7 +91,14 @@ pub enum EngineEvent {
         payload: String,
         is_video: bool,
     },
-    CallEnded { call_id: String },
+    CallEnded {
+        call_id: String,
+        peer_id: Option<String>,
+    },
+    PeerQrRefresh {
+        peer_id: String,
+        qr: String,
+    },
     MessageQueued { peer_id: String, queue_size: usize },
     Reconnecting { peer_id: String },
     PeerProfile { peer_id: String, display_name: String },
@@ -119,6 +126,7 @@ struct ActiveTransfer {
 }
 
 struct ActiveCall {
+    #[allow(dead_code)]
     session: CallSession,
 }
 
@@ -131,6 +139,8 @@ pub struct P2pEngine {
     peers: Arc<RwLock<HashMap<String, PeerSession>>>,
     transfers: Arc<RwLock<HashMap<String, ActiveTransfer>>>,
     calls: Arc<RwLock<HashMap<String, ActiveCall>>>,
+    /// One active call per canonical peer id (peer:{pubkey}).
+    active_peer_calls: Arc<RwLock<HashMap<String, String>>>,
     event_tx: mpsc::Sender<EngineEvent>,
     /// Handshake step-2/3 waiters keyed by peer_id.
     handshake_wait: Arc<RwLock<HashMap<String, oneshot::Sender<SignedHandshake>>>>,
@@ -151,9 +161,14 @@ pub struct P2pEngine {
 }
 
 impl P2pEngine {
+    /// Create engine with a fresh ephemeral identity (tests / one-shot use).
     pub fn new() -> (Self, mpsc::Receiver<EngineEvent>) {
+        Self::with_identity(Identity::generate())
+    }
+
+    /// Create engine with a stable long-term identity (production path).
+    pub fn with_identity(identity: Identity) -> (Self, mpsc::Receiver<EngineEvent>) {
         let (event_tx, event_rx) = mpsc::channel(512);
-        let identity = Identity::generate();
 
         let engine = Self {
             identity,
@@ -163,6 +178,7 @@ impl P2pEngine {
             peers: Arc::new(RwLock::new(HashMap::new())),
             transfers: Arc::new(RwLock::new(HashMap::new())),
             calls: Arc::new(RwLock::new(HashMap::new())),
+            active_peer_calls: Arc::new(RwLock::new(HashMap::new())),
             event_tx,
             handshake_wait: Arc::new(RwLock::new(HashMap::new())),
             peer_aliases: Arc::new(RwLock::new(HashMap::new())),
@@ -344,6 +360,7 @@ impl P2pEngine {
             peers: self.peers.clone(),
             transfers: self.transfers.clone(),
             calls: self.calls.clone(),
+            active_peer_calls: self.active_peer_calls.clone(),
             event_tx: self.event_tx.clone(),
             handshake_wait: self.handshake_wait.clone(),
             peer_aliases: self.peer_aliases.clone(),
@@ -395,6 +412,46 @@ impl P2pEngine {
             metadata: Some(serde_json::json!({ "action": "profile" })),
         };
         self.send_wire_message(&resolved, msg).await
+    }
+
+    /// Share a fresh v4 QR (live iroh ticket) so saved contacts stay reconnectable.
+    pub async fn broadcast_fresh_qr(&self, peer_id: &str) -> Result<(), String> {
+        let resolved = self.resolve_peer_id(peer_id).await?;
+        if !self.is_peer_trusted(&resolved).await {
+            return Ok(());
+        }
+        let qr = self.qr_payload_async().await?;
+        let msg = ChatMessage {
+            id: uuid::Uuid::new_v4(),
+            sender_id: self.public_key_hex(),
+            recipient_id: resolved.clone(),
+            msg_type: MessageType::System,
+            content: qr,
+            timestamp: chrono::Utc::now(),
+            metadata: Some(serde_json::json!({ "action": "qr_refresh" })),
+        };
+        self.send_wire_message(&resolved, msg).await
+    }
+
+    async fn clear_call_for_peer(&self, peer_id: &str, call_id: &str) {
+        let resolved = self
+            .resolve_peer_id(peer_id)
+            .await
+            .unwrap_or_else(|_| peer_id.to_string());
+        {
+            let mut peer_calls = self.active_peer_calls.write().await;
+            if peer_calls.get(&resolved).is_some_and(|id| id == call_id) {
+                peer_calls.remove(&resolved);
+            }
+        }
+        self.calls.write().await.remove(call_id);
+        let _ = self
+            .event_tx
+            .send(EngineEvent::CallEnded {
+                call_id: call_id.to_string(),
+                peer_id: Some(resolved),
+            })
+            .await;
     }
 
     fn transfer_storage_name(transfer_id: &str, filename: &str) -> String {
@@ -722,6 +779,9 @@ impl P2pEngine {
             user_paused: self.user_paused.clone(),
             local_display_name: self.local_display_name.clone(),
             remote_display_names: self.remote_display_names.clone(),
+            calls: self.calls.clone(),
+            active_peer_calls: self.active_peer_calls.clone(),
+            saved_peer_qr: self.saved_peer_qr.clone(),
         }
     }
 
@@ -952,6 +1012,7 @@ impl P2pEngine {
                     transport: TransportKind::Relay,
                 })
                 .await;
+            let _ = self.broadcast_fresh_qr(&canonical).await;
             return Ok((canonical, String::new(), true));
         }
 
@@ -1075,6 +1136,7 @@ impl P2pEngine {
             let _ = self.send_ratchet_bootstrap(&canonical).await;
             self.flush_pending_for_peer(&canonical).await;
             let _ = self.broadcast_profile(&canonical).await;
+            let _ = self.broadcast_fresh_qr(&canonical).await;
         }
 
         Ok((canonical, sas, auto_trusted))
@@ -1100,6 +1162,7 @@ impl P2pEngine {
         self.user_paused.write().await.remove(&resolved);
         let _ = self.send_ratchet_bootstrap(&resolved).await;
         let _ = self.broadcast_profile(&resolved).await;
+        let _ = self.broadcast_fresh_qr(&resolved).await;
         self.flush_pending_for_peer(&resolved).await;
         Ok(())
     }
@@ -1312,6 +1375,25 @@ impl P2pEngine {
         is_video: bool,
     ) -> Result<(), String> {
         let resolved = self.resolve_peer_id(peer_id).await?;
+        if signal == "offer" {
+            let mut peer_calls = self.active_peer_calls.write().await;
+            if let Some(existing) = peer_calls.get(&resolved) {
+                if existing != call_id {
+                    return Err("already in a call with this peer".into());
+                }
+            } else {
+                peer_calls.insert(resolved.clone(), call_id.to_string());
+                self.calls.write().await.insert(
+                    call_id.to_string(),
+                    ActiveCall {
+                        session: CallSession::new(&resolved, is_video),
+                    },
+                );
+            }
+        }
+        if signal == "end" {
+            self.clear_call_for_peer(&resolved, call_id).await;
+        }
         let msg_type = match signal {
             "offer" => MessageType::CallOffer,
             "answer" => MessageType::CallAnswer,
@@ -1319,14 +1401,6 @@ impl P2pEngine {
             "end" => MessageType::CallAnswer,
             _ => return Err(format!("unknown call signal: {signal}")),
         };
-        if signal == "end" {
-            let _ = self
-                .event_tx
-                .send(EngineEvent::CallEnded {
-                    call_id: call_id.to_string(),
-                })
-                .await;
-        }
         let msg = ChatMessage {
             id: uuid::Uuid::new_v4(),
             sender_id: self.public_key_hex(),
@@ -1353,9 +1427,7 @@ impl P2pEngine {
 
     pub async fn end_call(&self, peer_id: &str, call_id: &str) -> Result<(), String> {
         self.send_call_signal(peer_id, call_id, "end", "", false)
-            .await?;
-        self.calls.write().await.remove(call_id);
-        Ok(())
+            .await
     }
 
     async fn send_wire_frame(&self, peer_id: &str, frame: &WireFrame) -> Result<(), String> {
@@ -1458,6 +1530,7 @@ impl P2pEngine {
         self.peers.write().await.clear();
         self.transfers.write().await.clear();
         self.calls.write().await.clear();
+        self.active_peer_calls.write().await.clear();
         self.handshake_wait.write().await.clear();
 
         let _ = self.event_tx.send(EngineEvent::Stopped).await;
@@ -1497,9 +1570,62 @@ struct EngineInbound {
     user_paused: Arc<RwLock<HashSet<String>>>,
     local_display_name: Arc<RwLock<String>>,
     remote_display_names: Arc<RwLock<HashMap<String, String>>>,
+    calls: Arc<RwLock<HashMap<String, ActiveCall>>>,
+    active_peer_calls: Arc<RwLock<HashMap<String, String>>>,
+    saved_peer_qr: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl EngineInbound {
+    async fn clear_call_for_peer(&self, peer_id: &str, call_id: &str) {
+        {
+            let mut peer_calls = self.active_peer_calls.write().await;
+            if peer_calls.get(peer_id).is_some_and(|id| id == call_id) {
+                peer_calls.remove(peer_id);
+            }
+        }
+        self.calls.write().await.remove(call_id);
+        let _ = self
+            .event_tx
+            .send(EngineEvent::CallEnded {
+                call_id: call_id.to_string(),
+                peer_id: Some(peer_id.to_string()),
+            })
+            .await;
+    }
+
+    async fn send_call_end_wire(&self, peer_id: &str, call_id: &str, is_video: bool) {
+        let msg = ChatMessage {
+            id: uuid::Uuid::new_v4(),
+            sender_id: self.identity.public_key_hex(),
+            recipient_id: peer_id.to_string(),
+            msg_type: MessageType::CallAnswer,
+            content: String::new(),
+            timestamp: chrono::Utc::now(),
+            metadata: Some(serde_json::json!({
+                "call_id": call_id,
+                "signal": "end",
+                "is_video": is_video,
+            })),
+        };
+        let _ = self.send_app_message(peer_id, msg).await;
+    }
+
+    async fn broadcast_fresh_qr(&self, peer_id: &str) {
+        let Ok(ticket) = self.iroh.read().await.ticket_string() else {
+            return;
+        };
+        let qr = self.identity.qr_payload_v4(&ticket);
+        let msg = ChatMessage {
+            id: uuid::Uuid::new_v4(),
+            sender_id: self.identity.public_key_hex(),
+            recipient_id: peer_id.to_string(),
+            msg_type: MessageType::System,
+            content: qr,
+            timestamp: chrono::Utc::now(),
+            metadata: Some(serde_json::json!({ "action": "qr_refresh" })),
+        };
+        let _ = self.send_app_message(peer_id, msg).await;
+    }
     async fn send_profile(&self, peer_id: &str) {
         let name = self.local_display_name.read().await.clone();
         if name.is_empty() {
@@ -1655,7 +1781,8 @@ impl EngineInbound {
                         .get(&canonical)
                         .is_some_and(|s| s.crypto.can_send_encrypted())
                     {
-                        self.send_profile(&canonical).await;
+                        let _ = self.send_profile(&canonical).await;
+                        let _ = self.broadcast_fresh_qr(&canonical).await;
                     }
                 }
                 self.user_paused.write().await.remove(&canonical);
@@ -1927,17 +2054,44 @@ impl EngineInbound {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
                 if !call_id.is_empty() {
+                    let canonical = self
+                        .canonicalize_peer_inbound(peer_id)
+                        .await
+                        .unwrap_or_else(|_| peer_id.to_string());
                     if signal == "end" {
-                        let _ = self
-                            .event_tx
-                            .send(EngineEvent::CallEnded { call_id })
-                            .await;
+                        self.clear_call_for_peer(&canonical, &call_id).await;
+                    } else if signal == "offer" {
+                        let busy = {
+                            let peer_calls = self.active_peer_calls.read().await;
+                            peer_calls
+                                .get(&canonical)
+                                .is_some_and(|existing| existing != &call_id)
+                        };
+                        if busy {
+                            self.send_call_end_wire(&canonical, &call_id, is_video)
+                                .await;
+                        } else {
+                            self.active_peer_calls
+                                .write()
+                                .await
+                                .insert(canonical.clone(), call_id.clone());
+                            let _ = self
+                                .event_tx
+                                .send(EngineEvent::CallSignaling {
+                                    call_id,
+                                    peer_id: canonical,
+                                    signal: signal.to_string(),
+                                    payload: msg.content.clone(),
+                                    is_video,
+                                })
+                                .await;
+                        }
                     } else {
                         let _ = self
                             .event_tx
                             .send(EngineEvent::CallSignaling {
                                 call_id,
-                                peer_id: peer_id.to_string(),
+                                peer_id: canonical,
                                 signal: signal.to_string(),
                                 payload: msg.content.clone(),
                                 is_video,
@@ -1951,22 +2105,65 @@ impl EngineInbound {
 
         if msg.msg_type == MessageType::System {
             if let Some(meta) = &msg.metadata {
-                if meta.get("action").and_then(|v| v.as_str()) == Some("profile") {
-                    let name = msg.content.trim().to_string();
-                    if !name.is_empty() {
-                        self.remote_display_names
+                match meta.get("action").and_then(|v| v.as_str()) {
+                    Some("profile") => {
+                        let name = msg.content.trim().to_string();
+                        if !name.is_empty() {
+                            self.remote_display_names
+                                .write()
+                                .await
+                                .insert(peer_id.to_string(), name.clone());
+                            let _ = self
+                                .event_tx
+                                .send(EngineEvent::PeerProfile {
+                                    peer_id: peer_id.to_string(),
+                                    display_name: name,
+                                })
+                                .await;
+                        }
+                        return;
+                    }
+                    Some("qr_refresh") => {
+                        let qr = msg.content.trim().to_string();
+                        if qr.is_empty() {
+                            return;
+                        }
+                        let canonical = self
+                            .canonicalize_peer_inbound(peer_id)
+                            .await
+                            .unwrap_or_else(|_| peer_id.to_string());
+                        // Reject identity swaps via ticket refresh — only same Ed25519 key.
+                        match parse_qr_payload(&qr) {
+                            Ok(parsed) => {
+                                let expected = peer_id_from_pubkey(&parsed.public_key);
+                                if expected != canonical {
+                                    warn!(
+                                        peer = %canonical,
+                                        claimed = %expected,
+                                        "qr_refresh identity mismatch — ignored"
+                                    );
+                                    return;
+                                }
+                            }
+                            Err(e) => {
+                                warn!(error = %e, "qr_refresh parse failed — ignored");
+                                return;
+                            }
+                        }
+                        self.saved_peer_qr
                             .write()
                             .await
-                            .insert(peer_id.to_string(), name.clone());
+                            .insert(canonical.clone(), qr.clone());
                         let _ = self
                             .event_tx
-                            .send(EngineEvent::PeerProfile {
-                                peer_id: peer_id.to_string(),
-                                display_name: name,
+                            .send(EngineEvent::PeerQrRefresh {
+                                peer_id: canonical,
+                                qr,
                             })
                             .await;
+                        return;
                     }
-                    return;
+                    _ => {}
                 }
             }
         }

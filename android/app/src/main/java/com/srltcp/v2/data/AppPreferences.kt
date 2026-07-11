@@ -1,6 +1,10 @@
 package com.srltcp.v2.data
 
 import android.content.Context
+import android.content.SharedPreferences
+import android.util.Log
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -12,12 +16,23 @@ data class SavedContact(
     val lastSeen: Long = System.currentTimeMillis(),
 )
 
+/**
+ * Preferences with encrypted storage for the long-term identity seed.
+ * Contacts/chat remain in regular SharedPreferences (OS sandbox only) —
+ * see SECURITY.md residual risks for at-rest messaging.
+ */
 class AppPreferences(context: Context) {
     private val prefs = context.getSharedPreferences("srltcp_prefs", Context.MODE_PRIVATE)
+    private val securePrefs: SharedPreferences = createSecurePrefs(context)
 
     var displayName: String
         get() = prefs.getString(KEY_DISPLAY_NAME, "") ?: ""
         set(value) = prefs.edit().putString(KEY_DISPLAY_NAME, value).apply()
+
+    /** 64-char hex Ed25519 seed — empty if not yet created. */
+    var identitySeedHex: String
+        get() = securePrefs.getString(KEY_IDENTITY_SEED, "") ?: ""
+        set(value) = securePrefs.edit().putString(KEY_IDENTITY_SEED, value).apply()
 
     fun loadContacts(): List<SavedContact> {
         val raw = prefs.getString(KEY_CONTACTS, "[]") ?: "[]"
@@ -85,9 +100,31 @@ class AppPreferences(context: Context) {
         set(value) = prefs.edit().putString(KEY_LAST_ACTIVE_PEER, value).apply()
 
     companion object {
+        private const val TAG = "AppPreferences"
         private const val KEY_DISPLAY_NAME = "display_name"
         private const val KEY_CONTACTS = "contacts"
         private const val KEY_CHAT_PREFIX = "chat_"
         private const val KEY_LAST_ACTIVE_PEER = "last_active_peer"
+        private const val KEY_IDENTITY_SEED = "identity_seed_hex"
+        private const val SECURE_PREFS = "srltcp_secure_prefs"
+
+        private fun createSecurePrefs(context: Context): SharedPreferences {
+            return try {
+                val masterKey = MasterKey.Builder(context)
+                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                    .build()
+                EncryptedSharedPreferences.create(
+                    context,
+                    SECURE_PREFS,
+                    masterKey,
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "EncryptedSharedPreferences unavailable — falling back to private prefs", e)
+                // Still MODE_PRIVATE (app sandbox); better than regenerating identity every launch.
+                context.getSharedPreferences(SECURE_PREFS, Context.MODE_PRIVATE)
+            }
+        }
     }
 }

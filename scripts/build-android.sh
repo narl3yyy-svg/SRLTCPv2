@@ -71,11 +71,37 @@ if [[ "$SKIP_NATIVE" == false ]]; then
     fi
     echo "[android] ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
 
-    rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android 2>/dev/null || true
+    # Default: arm64-only slim APK. Set SRLTCP_UNIVERSAL_APK=1 for arm64+armv7+x86_64.
+    if [[ "${SRLTCP_UNIVERSAL_APK:-0}" == "1" ]]; then
+        rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android 2>/dev/null || true
+        NDK_TARGETS=(-t arm64-v8a -t armeabi-v7a -t x86_64)
+        echo "[android] Building universal ABIs (arm64 + armv7 + x86_64)"
+    else
+        rustup target add aarch64-linux-android 2>/dev/null || true
+        NDK_TARGETS=(-t arm64-v8a)
+        echo "[android] Building slim arm64-v8a only (set SRLTCP_UNIVERSAL_APK=1 for multi-ABI)"
+    fi
 
     cd "$CORE_DIR"
-    cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 \
+    # Clear stale ABIs so APK does not bundle leftover .so files
+    rm -rf "$JNI_DIR"
+    mkdir -p "$JNI_DIR"
+    cargo ndk "${NDK_TARGETS[@]}" \
         -o "$JNI_DIR" build --release --no-default-features --features android
+    # Strip symbols from native libs (extra size win beyond cargo strip)
+    if command -v llvm-strip &>/dev/null || [[ -n "${ANDROID_NDK_HOME:-}" ]]; then
+        STRIP_BIN=""
+        if [[ -n "${ANDROID_NDK_HOME:-}" ]]; then
+            STRIP_BIN=$(find "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt" -name 'llvm-strip' 2>/dev/null | head -1 || true)
+        fi
+        STRIP_BIN="${STRIP_BIN:-llvm-strip}"
+        if command -v "$STRIP_BIN" &>/dev/null || [[ -x "$STRIP_BIN" ]]; then
+            find "$JNI_DIR" -name '*.so' -print0 | while IFS= read -r -d '' so; do
+                "$STRIP_BIN" --strip-unneeded "$so" 2>/dev/null || true
+            done
+            echo "[android] Stripped native libraries"
+        fi
+    fi
 
     echo "[android] Generating UniFFI Kotlin bindings..."
     cargo build --release -p srltcp-core --no-default-features --features android
@@ -116,11 +142,17 @@ if [[ ! -x ./gradlew ]]; then
 fi
 
 export JAVA_HOME
-./gradlew --no-daemon assembleDebug
+# Prefer minified release APK for distribution; fall back to debug if release fails.
+if ./gradlew --no-daemon assembleRelease; then
+    APK=$(find "$ANDROID_DIR/app/build/outputs/apk/release" -name "*.apk" ! -name "*.apk.idsig" | head -1)
+else
+    echo "[android] WARNING: assembleRelease failed — trying assembleDebug" >&2
+    ./gradlew --no-daemon assembleDebug
+    APK="$ANDROID_DIR/app/build/outputs/apk/debug/app-debug.apk"
+fi
 
-APK="$ANDROID_DIR/app/build/outputs/apk/debug/app-debug.apk"
-if [[ ! -f "$APK" ]]; then
-    echo "[android] ERROR: APK not produced at $APK" >&2
+if [[ -z "${APK:-}" || ! -f "$APK" ]]; then
+    echo "[android] ERROR: APK not produced" >&2
     exit 1
 fi
 

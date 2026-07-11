@@ -1,11 +1,13 @@
-//! SRLTCP v0.2.31 Desktop — Tauri v2 backend with graceful shutdown.
+//! SRLTCP v0.3.0 Desktop — Tauri v2 backend with graceful shutdown.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use srltcp_core::crypto::{load_or_create_seed_file, Identity};
 use srltcp_core::p2p::{EngineEvent, P2pEngine};
 use tauri::{Emitter, Manager, State};
 use tokio::sync::Mutex;
@@ -13,6 +15,55 @@ use tokio::sync::Mutex;
 struct AppState {
     engine: Arc<Mutex<P2pEngine>>,
     shutting_down: Arc<AtomicBool>,
+}
+
+/// Resolve durable app data dir for identity seed (XDG / platform conventions).
+fn identity_data_dir() -> PathBuf {
+    if let Ok(custom) = std::env::var("SRLTCP_DATA_DIR") {
+        return PathBuf::from(custom);
+    }
+    // Prefer XDG on Linux; fall back to home-relative paths.
+    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+        return PathBuf::from(xdg).join("srltcp");
+    }
+    if let Some(home) = dirs_next_home() {
+        #[cfg(target_os = "macos")]
+        {
+            return home.join("Library/Application Support/srltcp");
+        }
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(appdata) = std::env::var("APPDATA") {
+                return PathBuf::from(appdata).join("srltcp");
+            }
+            return home.join("AppData/Roaming/srltcp");
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            return home.join(".local/share/srltcp");
+        }
+    }
+    std::env::temp_dir().join("srltcp")
+}
+
+fn dirs_next_home() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
+fn load_persistent_identity() -> Identity {
+    let path = identity_data_dir().join("identity.seed");
+    match load_or_create_seed_file(&path) {
+        Ok(seed) => {
+            tracing::info!(path = %path.display(), "loaded persistent identity");
+            Identity::from_seed(&seed)
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "identity seed load failed — using ephemeral identity");
+            Identity::generate()
+        }
+    }
 }
 
 async fn graceful_shutdown(engine: Arc<Mutex<P2pEngine>>) {
@@ -373,7 +424,9 @@ fn main() {
     srltcp_core::init_crypto();
     srltcp_core::init_logging("info");
 
-    let (engine, mut event_rx) = P2pEngine::new();
+    let identity = load_persistent_identity();
+    tracing::info!(pk = %identity.public_key_hex(), "local identity ready");
+    let (engine, mut event_rx) = P2pEngine::with_identity(identity);
     let engine = Arc::new(Mutex::new(engine));
     let shutting_down = Arc::new(AtomicBool::new(false));
 
@@ -557,8 +610,19 @@ fn main() {
                                 "is_video": is_video,
                             })
                         }
-                        EngineEvent::CallEnded { call_id } => {
-                            serde_json::json!({ "type": "call_ended", "call_id": call_id })
+                        EngineEvent::CallEnded { call_id, peer_id } => {
+                            serde_json::json!({
+                                "type": "call_ended",
+                                "call_id": call_id,
+                                "peer_id": peer_id,
+                            })
+                        }
+                        EngineEvent::PeerQrRefresh { peer_id, qr } => {
+                            serde_json::json!({
+                                "type": "peer_qr_refresh",
+                                "peer_id": peer_id,
+                                "qr": qr,
+                            })
                         }
                         EngineEvent::MessageQueued { peer_id, queue_size } => {
                             serde_json::json!({

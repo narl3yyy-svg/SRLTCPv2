@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SRLTCP v0.2.3 — Full cleanup: kill processes, release ports, remove temp files
+# SRLTCP — Full cleanup: kill processes, release ports, remove temp files
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

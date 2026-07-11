@@ -4,6 +4,7 @@ use ed25519_dalek::{SigningKey, VerifyingKey};
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 #[derive(Debug, Error)]
 pub enum IdentityError {
@@ -11,6 +12,46 @@ pub enum IdentityError {
     InvalidKey(String),
     #[error("signature verification failed")]
     BadSignature,
+    #[error("identity has no signing key (verify-only)")]
+    NoSigningKey,
+}
+
+/// 32-byte Ed25519 seed that is zeroized on drop.
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
+pub struct IdentitySeed([u8; 32]);
+
+impl IdentitySeed {
+    pub fn generate() -> Self {
+        let mut bytes = [0u8; 32];
+        rand::RngCore::fill_bytes(&mut OsRng, &mut bytes);
+        Self(bytes)
+    }
+
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    pub fn from_slice(bytes: &[u8]) -> Result<Self, IdentityError> {
+        let arr: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| IdentityError::InvalidKey("expected 32-byte seed".into()))?;
+        Ok(Self(arr))
+    }
+
+    pub fn from_hex(hex_str: &str) -> Result<Self, IdentityError> {
+        let clean = hex_str.trim();
+        let bytes = hex::decode(clean)
+            .map_err(|e| IdentityError::InvalidKey(format!("invalid seed hex: {e}")))?;
+        Self::from_slice(&bytes)
+    }
+
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    pub fn to_hex(&self) -> String {
+        hex::encode(self.0)
+    }
 }
 
 /// Ed25519 identity for long-term authentication.
@@ -22,7 +63,11 @@ pub struct Identity {
 
 impl Identity {
     pub fn generate() -> Self {
-        let signing_key = SigningKey::generate(&mut OsRng);
+        Self::from_seed(&IdentitySeed::generate())
+    }
+
+    pub fn from_seed(seed: &IdentitySeed) -> Self {
+        let signing_key = SigningKey::from_bytes(seed.as_bytes());
         let verifying_key = signing_key.verifying_key();
         Self {
             signing_key,
@@ -30,13 +75,18 @@ impl Identity {
         }
     }
 
-    pub fn from_seed(seed: &[u8; 32]) -> Self {
-        let signing_key = SigningKey::from_bytes(seed);
-        let verifying_key = signing_key.verifying_key();
-        Self {
-            signing_key,
-            verifying_key,
-        }
+    /// Legacy constructor — prefers [`from_seed`].
+    pub fn from_seed_bytes(seed: &[u8; 32]) -> Self {
+        Self::from_seed(&IdentitySeed::from_bytes(*seed))
+    }
+
+    /// Export the 32-byte seed for secure persistence (caller must protect storage).
+    pub fn to_seed(&self) -> IdentitySeed {
+        IdentitySeed::from_bytes(self.signing_key.to_bytes())
+    }
+
+    pub fn seed_hex(&self) -> String {
+        self.to_seed().to_hex()
     }
 
     pub fn public_key_bytes(&self) -> [u8; 32] {
@@ -45,20 +95,6 @@ impl Identity {
 
     pub fn public_key_hex(&self) -> String {
         hex::encode(self.public_key_bytes())
-    }
-
-    pub fn from_public_key(bytes: &[u8]) -> Result<Self, IdentityError> {
-        let arr: [u8; 32] = bytes
-            .try_into()
-            .map_err(|_| IdentityError::InvalidKey("expected 32 bytes".into()))?;
-        let verifying_key = VerifyingKey::from_bytes(&arr)
-            .map_err(|e| IdentityError::InvalidKey(e.to_string()))?;
-        // Verification-only identity (no private key)
-        let signing_key = SigningKey::from_bytes(&[0u8; 32]);
-        Ok(Self {
-            signing_key,
-            verifying_key,
-        })
     }
 
     pub fn sign(&self, message: &[u8]) -> [u8; 64] {
@@ -274,6 +310,53 @@ pub fn compute_sas_with_transcript(
     format!("{val:06}")
 }
 
+/// Load-or-create a persistent identity seed from a file (desktop / CLI).
+/// File mode is set to 0o600 on Unix. Format: ASCII hex of 32-byte seed + newline.
+pub fn load_or_create_seed_file(path: &std::path::Path) -> Result<IdentitySeed, IdentityError> {
+    if path.exists() {
+        let data = std::fs::read_to_string(path)
+            .map_err(|e| IdentityError::InvalidKey(format!("read identity seed: {e}")))?;
+        let seed = IdentitySeed::from_hex(data.trim())?;
+        return Ok(seed);
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| IdentityError::InvalidKey(format!("create identity dir: {e}")))?;
+    }
+    let seed = IdentitySeed::generate();
+    write_seed_file(path, &seed)?;
+    Ok(seed)
+}
+
+/// Write identity seed to disk (0o600 on Unix).
+pub fn write_seed_file(path: &std::path::Path, seed: &IdentitySeed) -> Result<(), IdentityError> {
+    let hex = seed.to_hex();
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(|e| IdentityError::InvalidKey(format!("write identity seed: {e}")))?;
+        f.write_all(hex.as_bytes())
+            .map_err(|e| IdentityError::InvalidKey(format!("write identity seed: {e}")))?;
+        f.write_all(b"\n")
+            .map_err(|e| IdentityError::InvalidKey(format!("write identity seed: {e}")))?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, format!("{hex}\n"))
+            .map_err(|e| IdentityError::InvalidKey(format!("write identity seed: {e}")))?;
+    }
+    // Best-effort wipe of stack hex (String still may linger until drop).
+    let _ = Zeroizing::new(hex);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,6 +367,30 @@ mod tests {
         let msg = b"test message";
         let sig = id.sign(msg);
         Identity::verify(&id.public_key_bytes(), msg, &sig).unwrap();
+    }
+
+    #[test]
+    fn seed_roundtrip_stable_pubkey() {
+        let seed = IdentitySeed::generate();
+        let a = Identity::from_seed(&seed);
+        let b = Identity::from_seed(&seed);
+        assert_eq!(a.public_key_bytes(), b.public_key_bytes());
+        let hex = seed.to_hex();
+        let restored = IdentitySeed::from_hex(&hex).unwrap();
+        let c = Identity::from_seed(&restored);
+        assert_eq!(a.public_key_bytes(), c.public_key_bytes());
+    }
+
+    #[test]
+    fn seed_file_persistence() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("identity.seed");
+        let seed1 = load_or_create_seed_file(&path).unwrap();
+        let seed2 = load_or_create_seed_file(&path).unwrap();
+        assert_eq!(seed1.as_bytes(), seed2.as_bytes());
+        let id1 = Identity::from_seed(&seed1);
+        let id2 = Identity::from_seed(&seed2);
+        assert_eq!(id1.public_key_hex(), id2.public_key_hex());
     }
 
     #[test]
@@ -307,7 +414,6 @@ mod tests {
     #[test]
     fn qr_v3_legacy_host_port_in_host_field() {
         let id = Identity::generate();
-        // v0.2.6 bug: local_endpoint() passed "ip:port" as host
         let qr = id.qr_payload_with_endpoint(Some("10.0.30.101:9473"), 9473);
         let parsed = parse_qr_payload(&qr).unwrap();
         assert_eq!(parsed.endpoint.as_deref(), Some("10.0.30.101:9473"));

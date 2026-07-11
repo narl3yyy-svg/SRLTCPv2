@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.3.0 — Production hardening (2026-07-11)
+
+### Security
+
+- **Persistent identity** — Ed25519 seed survives restarts (desktop seed file mode 0600; Android EncryptedSharedPreferences / Keystore).
+- **Zeroization** — Hybrid KEX shared secrets and identity seeds use `zeroize` / `Zeroizing`.
+- **QR refresh binding** — Ticket updates accepted only when Ed25519 pubkey matches the session peer (blocks identity swap).
+- **Serial DoS** — Out-of-order receive buffer hard-capped.
+- **Hybrid step-2 cleanup** — Removed unused responder ML-KEM EK from new handshakes; legacy bodies still parse.
+- **Honest WebRTC docs** — Media is DTLS-SRTP, not Double-Ratchet E2EE (UI privacy note).
+- Removed unused `aes-gcm` / `hashbrown` direct deps; `zeroize` actually used.
+
+### Lightweight
+
+- Workspace **release profile**: LTO, `codegen-units=1`, strip, `opt-level=s`, `panic=abort`.
+- QR `image` crate: **PNG-only** features (no TIFF/EXR/AVIF bloat).
+- Android default **arm64-v8a only** release APK + ProGuard/R8 + resource shrink; `SRLTCP_UNIVERSAL_APK=1` for multi-ABI.
+- `build-android.sh` uses `assembleRelease` and strips native `.so` files.
+
+### UX
+
+- Desktop first-run welcome banner, fingerprint display, light/dark via `prefers-color-scheme`.
+- Settings privacy notes for calls and local chat storage.
+- Call lifecycle / QR refresh improvements from 0.2.32 line absorbed.
+
+### Docs & repo
+
+- LICENSE-MIT + LICENSE-APACHE + CONTRIBUTING.md added.
+- README, SECURITY, CRYPTO, ARCHITECTURE, BUILD, USER_GUIDE updated for 0.3.0.
+- Identity persistence tests added.
+- Prebuilt binaries removed from git tracking (GitHub Releases only); `dist/.gitkeep` retained.
+
+### Residual risks (unchanged class)
+
+- `double-ratchet-2` still pre-release; chat history not encrypted at rest; no third-party audit.
+
 ## v0.2.31 — Linux launcher & prebuilt fix (2026-07-11)
 
 ### Fixes

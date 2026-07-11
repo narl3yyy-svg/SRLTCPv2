@@ -23,9 +23,11 @@ object WebRtcCallManagerHolder {
         payload: String,
         isVideo: Boolean,
         onState: (CallState) -> Unit,
+        onConnectionLost: () -> Unit = {},
     ) = withContext(Dispatchers.IO) {
         val m = mgr(context)
         val engine = SrltcpEngineHolder.awaitEngine()
+        m.onConnectionLost = onConnectionLost
         val notify: (CallState) -> Unit = { state ->
             CoroutineScope(Dispatchers.Main).launch { onState(state) }
         }
@@ -49,10 +51,12 @@ object WebRtcCallManagerHolder {
         peerId: String,
         isVideo: Boolean,
         onState: (CallState) -> Unit,
+        onConnectionLost: () -> Unit,
     ): String = withContext(Dispatchers.IO) {
         val m = mgr(context)
         val engine = SrltcpEngineHolder.awaitEngine()
         var activeCallId = ""
+        m.onConnectionLost = onConnectionLost
         m.startOutgoing(isVideo, { ice ->
             engine.sendCallSignal(peerId, activeCallId, "ice", ice, isVideo)
         }) { callId, offer ->

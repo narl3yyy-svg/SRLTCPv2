@@ -11,6 +11,7 @@ use rand::rngs::OsRng;
 use sha2::Sha256;
 use thiserror::Error;
 use x25519_dalek::{EphemeralSecret, PublicKey};
+use zeroize::{Zeroize, Zeroizing};
 
 use super::identity::compute_sas;
 
@@ -25,12 +26,18 @@ pub enum HandshakeError {
 }
 
 /// Hybrid key exchange combining classical X25519 and post-quantum ML-KEM-768.
+///
+/// Layout (wire):
+/// - Initiator msg: X25519_pk(32) || ML-KEM-768_ek(1184)
+/// - Responder msg: X25519_pk(32) || ML-KEM_ct(1088)  [+ optional bob ratchet pk appended by PeerCrypto]
+///
+/// Shared secret = HKDF-SHA256(X25519_ss || ML-KEM_ss, info="srltcp-v2-hybrid-kex").
 pub struct HybridKeyExchange {
     x25519_secret: Option<EphemeralSecret>,
     x25519_public: PublicKey,
     mlkem_dk: Option<DecapsulationKey768>,
     mlkem_ek_bytes: Vec<u8>,
-    shared_secret: Option<Vec<u8>>,
+    shared_secret: Option<Zeroizing<Vec<u8>>>,
 }
 
 impl HybridKeyExchange {
@@ -72,12 +79,16 @@ impl HybridKeyExchange {
 
     /// Responder processes initiator message and produces response.
     pub fn responder_accept(&mut self, initiator_msg: &[u8]) -> Result<Vec<u8>, HandshakeError> {
+        // X25519(32) + ML-KEM-768 encapsulation key (1184)
         if initiator_msg.len() < 32 + 1184 {
             return Err(HandshakeError::InvalidMessage("too short".into()));
         }
 
-        let x25519_remote = PublicKey::from(<[u8; 32]>::try_from(&initiator_msg[..32]).unwrap());
-        let mlkem_remote_ek = &initiator_msg[32..];
+        let x25519_remote = PublicKey::from(
+            <[u8; 32]>::try_from(&initiator_msg[..32])
+                .map_err(|_| HandshakeError::InvalidMessage("bad x25519 key".into()))?,
+        );
+        let mlkem_remote_ek = &initiator_msg[32..32 + 1184];
 
         let x25519_secret = self
             .x25519_secret
@@ -91,31 +102,33 @@ impl HybridKeyExchange {
             .map_err(|e| HandshakeError::Crypto(format!("invalid ML-KEM key: {e}")))?;
         let (ct, mlkem_shared) = ek.encapsulate();
 
-        let (dk, ek_local) = MlKem768::generate_keypair();
-        self.mlkem_dk = Some(dk);
-        let ek_local_bytes = ek_local.to_bytes();
-
         let shared = Self::combine_secrets(x25519_shared.as_bytes(), mlkem_shared.as_slice());
         self.shared_secret = Some(shared);
 
-        let mut response = Vec::new();
+        // Response: X25519_pk || ML-KEM ciphertext only (no unused second EK).
+        let mut response = Vec::with_capacity(32 + 1088);
         response.extend_from_slice(self.x25519_public.as_bytes());
         response.extend_from_slice(ct.as_ref());
-        response.extend_from_slice(ek_local_bytes.as_ref());
         Ok(response)
     }
 
     /// Initiator processes responder message.
+    ///
+    /// Accepts both:
+    /// - New format: 32 + 1088 (+ optional 32-byte ratchet pk handled by PeerCrypto strip)
+    /// - Legacy format: 32 + 1088 + 1184 unused EK (+ optional ratchet pk)
     pub fn initiator_finish(&mut self, responder_msg: &[u8]) -> Result<(), HandshakeError> {
         let ct_size = 1088;
-        let ek_size = 1184;
-        if responder_msg.len() < 32 + ct_size + ek_size {
+        let min_len = 32 + ct_size;
+        if responder_msg.len() < min_len {
             return Err(HandshakeError::InvalidMessage("too short".into()));
         }
 
-        let x25519_remote = PublicKey::from(<[u8; 32]>::try_from(&responder_msg[..32]).unwrap());
+        let x25519_remote = PublicKey::from(
+            <[u8; 32]>::try_from(&responder_msg[..32])
+                .map_err(|_| HandshakeError::InvalidMessage("bad x25519 key".into()))?,
+        );
         let mlkem_ct = &responder_msg[32..32 + ct_size];
-        // Responder's ML-KEM encapsulation key is sent for ratchet setup, not a second KEX leg.
 
         let x25519_secret = self
             .x25519_secret
@@ -131,30 +144,40 @@ impl HybridKeyExchange {
             .map_err(|_| HandshakeError::InvalidMessage("invalid ML-KEM ciphertext length".into()))?;
         let mlkem_shared = dk.decapsulate(&ct);
 
-        // Same inputs as responder_accept — both peers must derive identical secrets.
         let combined = Self::combine_secrets(x25519_shared.as_bytes(), mlkem_shared.as_slice());
         self.shared_secret = Some(combined);
         Ok(())
     }
 
-    fn combine_secrets(x25519: &[u8], mlkem: &[u8]) -> Vec<u8> {
-        let mut input = Vec::with_capacity(x25519.len() + mlkem.len());
+    fn combine_secrets(x25519: &[u8], mlkem: &[u8]) -> Zeroizing<Vec<u8>> {
+        let mut input = Zeroizing::new(Vec::with_capacity(x25519.len() + mlkem.len()));
         input.extend_from_slice(x25519);
         input.extend_from_slice(mlkem);
         let hk = Hkdf::<Sha256>::new(None, &input);
         let mut okm = vec![0u8; 32];
         hk.expand(b"srltcp-v2-hybrid-kex", &mut okm)
             .expect("HKDF expand");
-        okm
+        Zeroizing::new(okm)
     }
 
     pub fn shared_secret(&self) -> Option<&[u8]> {
-        self.shared_secret.as_deref()
+        self.shared_secret.as_deref().map(|s| s.as_slice())
+    }
+
+    pub fn take_shared_secret(&mut self) -> Option<Zeroizing<Vec<u8>>> {
+        self.shared_secret.take()
     }
 
     pub fn sas(&self, local_pk: &[u8], remote_pk: &[u8]) -> Option<String> {
         self.shared_secret
             .as_ref()
             .map(|s| compute_sas(s, local_pk, remote_pk))
+    }
+}
+
+impl Drop for HybridKeyExchange {
+    fn drop(&mut self) {
+        self.mlkem_ek_bytes.zeroize();
+        // shared_secret is Zeroizing; x25519/mlkem keys drop with crate impls
     }
 }

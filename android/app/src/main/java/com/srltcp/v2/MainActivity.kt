@@ -231,10 +231,20 @@ fun ChatScreen() {
     }
 
     fun startOutgoingCall(peer: String, video: Boolean) {
+        if (callState != null || pendingIncomingCall != null) {
+            showSnackbar("Already in a call")
+            return
+        }
         ensureCallPermissions(video) {
             scope.launch {
                 try {
-                    WebRtcCallManagerHolder.startOutgoing(context, peer, video) { callState = it }
+                    WebRtcCallManagerHolder.startOutgoing(
+                        context,
+                        peer,
+                        video,
+                        onState = { callState = it },
+                        onConnectionLost = { endActiveCall() },
+                    )
                 } catch (e: Exception) {
                     showSnackbar("Call failed: ${e.message ?: e}")
                 }
@@ -246,6 +256,18 @@ fun ChatScreen() {
         remoteDisplayNames[peerId]?.takeIf { it.isNotBlank() }?.let { return it }
         savedContacts.find { it.peerId == peerId }?.displayName?.takeIf { it.isNotBlank() }?.let { return it }
         return peerId.removePrefix("peer:").removePrefix("iroh:").removePrefix("quic:").take(12)
+    }
+
+    fun updateContactQr(peerId: String, qr: String) {
+        if (qr.isBlank()) return
+        val idx = savedContacts.indexOfFirst { it.peerId == peerId }
+        if (idx >= 0) {
+            savedContacts[idx] = savedContacts[idx].copy(qrPayload = qr)
+            prefs.upsertContact(savedContacts[idx])
+            scope.launch(Dispatchers.IO) {
+                SrltcpEngineHolder.awaitEngine().registerSavedPeer(peerId, qr)
+            }
+        }
     }
 
     fun saveVerifiedContact(peerId: String, qr: String, name: String? = null) {
@@ -752,7 +774,9 @@ fun ChatScreen() {
                             WebRtcCallManagerHolder.handleSignal(
                                 context, peer, callId, event.eventType.removePrefix("call_"),
                                 payload, isVideo,
-                            ) { state -> callState = state }
+                                onState = { state -> callState = state },
+                                onConnectionLost = { endActiveCall() },
+                            )
                         } catch (e: Exception) {
                             showSnackbar("Call error: ${e.message ?: e}")
                         }
@@ -760,12 +784,27 @@ fun ChatScreen() {
                 }
             }
             "call_end", "call_ended" -> {
-                WebRtcCallManagerHolder.end()
-                callState = null
-                showIncomingCallDialog = false
-                pendingIncomingCall = null
-                SrltcpAlertNotifier.cancelIncomingCall(context)
-                showSnackbar("Call ended")
+                val endedPeer = event.peerId
+                val endedCallId = event.callId
+                val shouldEnd = callState == null
+                    || endedCallId == null
+                    || callState?.callId == endedCallId
+                    || (endedPeer != null && callState?.peerId == endedPeer)
+                if (shouldEnd) {
+                    WebRtcCallManagerHolder.end()
+                    callState = null
+                    showIncomingCallDialog = false
+                    pendingIncomingCall = null
+                    SrltcpAlertNotifier.cancelIncomingCall(context)
+                    showSnackbar("Call ended")
+                }
+            }
+            "peer_qr_refresh" -> {
+                val peer = event.peerId
+                val qr = event.content
+                if (peer != null && !qr.isNullOrBlank()) {
+                    updateContactQr(peer, qr)
+                }
             }
             "error" -> showSnackbar(event.error ?: "Unknown error")
         }
@@ -839,6 +878,7 @@ fun ChatScreen() {
             showConnectSheet -> showConnectSheet = false
             showPeersSheet -> showPeersSheet = false
             showSettingsSheet -> showSettingsSheet = false
+            activePeer != null -> showPeersSheet = true
             else -> (context as? ComponentActivity)?.moveTaskToBack(true)
         }
     }
@@ -993,6 +1033,33 @@ fun ChatScreen() {
                 )
             }
             activePeer?.let { peer ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(contactLabel(peer), fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                        Text(
+                            when {
+                                connectedPeer == peer -> "● Online"
+                                peerStatus[peer] == "reconnecting" -> "↻ Reconnecting"
+                                peerStatus[peer] == "paused" -> "⏸ Disconnected"
+                                else -> "○ Offline"
+                            },
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (connectedPeer == peer) {
+                        OutlinedButton(onClick = { softDisconnect(peer) }) {
+                            Icon(Icons.Default.LinkOff, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Disconnect", fontSize = 12.sp)
+                        }
+                    }
+                }
                 if (peerVerified[peer] != true) {
                     Card(
                         modifier = Modifier
@@ -1639,7 +1706,11 @@ fun ActiveCallOverlay(
     ) {
         Surface(modifier = Modifier.fillMaxSize()) {
             Column(
-                modifier = Modifier.fillMaxSize().padding(12.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.SpaceBetween,
             ) {
                 Column {
@@ -1659,17 +1730,19 @@ fun ActiveCallOverlay(
                     ) {
                         AndroidView(
                             factory = { ctx ->
-                                SurfaceViewRenderer(ctx).apply {
-                                    WebRtcCallManagerHolder.bindRemote(this)
-                                }
+                                SurfaceViewRenderer(ctx)
+                            },
+                            update = { renderer ->
+                                WebRtcCallManagerHolder.bindRemote(renderer)
                             },
                             modifier = Modifier.fillMaxSize(),
                         )
                         AndroidView(
                             factory = { ctx ->
-                                SurfaceViewRenderer(ctx).apply {
-                                    WebRtcCallManagerHolder.bindLocal(this)
-                                }
+                                SurfaceViewRenderer(ctx)
+                            },
+                            update = { renderer ->
+                                WebRtcCallManagerHolder.bindLocal(renderer)
                             },
                             modifier = Modifier
                                 .align(Alignment.BottomEnd)
@@ -1691,28 +1764,34 @@ fun ActiveCallOverlay(
                     }
                 }
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     OutlinedButton(
                         onClick = {
                             muted = !muted
                             WebRtcCallManagerHolder.setMute(muted)
                         },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp),
                     ) {
                         Icon(if (muted) Icons.Default.MicOff else Icons.Default.Mic, contentDescription = null)
-                        Spacer(modifier = Modifier.width(4.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
                         Text(if (muted) "Unmute" else "Mute")
                     }
                     Button(
                         onClick = onEnd,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                     ) {
                         Icon(Icons.Default.CallEnd, contentDescription = null)
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("End")
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("End call")
                     }
                 }
             }

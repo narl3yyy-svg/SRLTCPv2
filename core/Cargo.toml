@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "SRLTCP v0.2.13 core library — crypto, serial, P2P networking"
+description = "SRLTCP core library — crypto, serial, P2P networking"
 
 [lib]
 crate-type = ["lib", "cdylib", "staticlib"]
@@ -36,23 +36,25 @@ chrono.workspace = true
 cobs = "0.3"
 crc32fast = "1.4"
 
-# Crypto — hardware-accelerated via aws-lc-rs
+# Crypto — hardware-accelerated via aws-lc-rs (iroh/transitive + available for AEAD)
 aws-lc-rs = "1.12"
 ed25519-dalek = { version = "2.1", features = ["rand_core"] }
 x25519-dalek = { version = "2.0", features = ["static_secrets"] }
-aes-gcm = "0.10"
 sha2 = "0.10"
 hkdf = "0.12"
-# Post-quantum ML-KEM-768
+# Post-quantum ML-KEM-768 (Wycheproof/ACVP-tested; not third-party audited)
 ml-kem = { version = "0.3", features = ["getrandom"] }
+# Signal-spec Double Ratchet — pre-release; see docs/SECURITY.md residual risks
+double-ratchet-2 = "0.4.0-pre.2"
+zeroize = { version = "1", features = ["derive"] }
 
 # Networking — iroh NAT traversal (relay + hole punch)
 iroh = "1"
 iroh-tickets = "1"
 
-# QR code generation
+# QR code generation (PNG only — keep APK/desktop lean)
 qrcode = "0.14"
-image = "0.25"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 # Folder transfer compression (streaming, fast on low-end hardware)
 zstd = "0.13"
@@ -65,9 +67,6 @@ serialport = { version = "4.6", optional = true }
 
 # UniFFI bindings for Android/Kotlin
 uniffi = { version = "0.28", features = ["cli"] }
-double-ratchet-2 = "0.4.0-pre.2"
-hashbrown = "0.15"
-zeroize = "1"
 
 [[bin]]
 name = "uniffi-bindgen"

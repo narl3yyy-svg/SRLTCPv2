@@ -7,6 +7,7 @@ const ICE_SERVERS = [
 
 let peerConnection = null;
 let localStream = null;
+let remoteAudioStream = null;
 let pendingIncoming = null;
 let pendingIceCandidates = [];
 let callEndedNotified = false;
@@ -55,7 +56,14 @@ async function getMedia(isVideo) {
 
   if (wantMic) {
     try {
-      const a = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      const a = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+        video: false,
+      });
       a.getAudioTracks().forEach((t) => combined.addTrack(t));
     } catch (_) {
       recvOnlyAudio = true;
@@ -133,17 +141,27 @@ function showIncomingModal(show, info = null) {
   }
 }
 
-async function playVideoEl(el) {
+async function playMediaEl(el) {
   if (!el?.srcObject && !el?.src) return;
   try {
-    el.muted = el.id === 'local-video';
+    if (el.tagName === 'VIDEO') el.muted = el.id === 'local-video';
+    else el.muted = false;
     await el.play();
   } catch (_) {}
 }
 
+function resetRemoteAudio() {
+  const audioEl = document.getElementById('remote-audio');
+  if (audioEl) {
+    audioEl.pause?.();
+    audioEl.srcObject = null;
+  }
+  remoteAudioStream = null;
+}
+
 async function cleanupCall() {
   intentionalHangup = true;
-  callEndedNotified = false;
+  callEndedNotified = true;
   recvOnlyVideo = false;
   recvOnlyAudio = false;
   pendingIceCandidates = [];
@@ -151,28 +169,43 @@ async function cleanupCall() {
   peerConnection = null;
   localStream?.getTracks().forEach((t) => t.stop());
   localStream = null;
+  resetRemoteAudio();
   const rv = document.getElementById('remote-video');
   const lv = document.getElementById('local-video');
   if (rv) { rv.srcObject = null; rv.pause?.(); }
   if (lv) { lv.srcObject = null; lv.pause?.(); }
   showCallOverlay(false);
   showIncomingModal(false);
-  intentionalHangup = false;
 }
 
 function bindStreams(isVideo) {
   const lv = document.getElementById('local-video');
   const rv = document.getElementById('remote-video');
+  const audioEl = document.getElementById('remote-audio');
   if (lv && localStream?.getVideoTracks().length) {
     lv.srcObject = localStream;
-    playVideoEl(lv);
+    playMediaEl(lv);
   }
   if (!peerConnection) return;
   peerConnection.ontrack = (e) => {
-    if (!rv || !e.streams?.[0]) return;
-    rv.srcObject = e.streams[0];
-    rv.muted = false;
-    playVideoEl(rv);
+    const track = e.track;
+    if (!track) return;
+    if (track.kind === 'audio' && audioEl) {
+      if (!remoteAudioStream) {
+        remoteAudioStream = new MediaStream();
+        audioEl.srcObject = remoteAudioStream;
+      }
+      if (!remoteAudioStream.getTracks().some((t) => t.id === track.id)) {
+        remoteAudioStream.addTrack(track);
+      }
+      track.enabled = true;
+      audioEl.muted = false;
+      playMediaEl(audioEl);
+    } else if (track.kind === 'video' && rv && e.streams?.[0]) {
+      rv.srcObject = e.streams[0];
+      rv.muted = false;
+      playMediaEl(rv);
+    }
   };
   setCallVideoLayout(isVideo);
 }
@@ -206,6 +239,7 @@ async function addIceCandidateRaw(payload) {
 function createPeerConnection(peerId, callId, isVideo, invoke, onEnded) {
   peerConnection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
   pendingIceCandidates = [];
+  callEndedNotified = false;
 
   peerConnection.onicecandidate = (e) => {
     if (e.candidate) {
@@ -220,8 +254,8 @@ function createPeerConnection(peerId, callId, isVideo, invoke, onEnded) {
 
   peerConnection.onconnectionstatechange = () => {
     const state = peerConnection?.connectionState;
-    if (intentionalHangup) return;
-    if ((state === 'failed' || state === 'disconnected' || state === 'closed') && !callEndedNotified) {
+    if (intentionalHangup || callEndedNotified) return;
+    if (state === 'failed' || state === 'disconnected' || state === 'closed') {
       callEndedNotified = true;
       invoke('end_call', { peerId, callId }).catch(() => {});
       onEnded?.();
@@ -239,8 +273,14 @@ function callModeLabel(isVideo, gotVideo) {
   return 'Video call';
 }
 
+let hasActiveCall = () => false;
+
 async function startOutgoingCall(peerId, isVideo, invoke, peerLabel, onEnded) {
+  if (hasActiveCall()) {
+    throw new Error('Already in a call');
+  }
   await cleanupCall();
+  intentionalHangup = false;
   const callId = crypto.randomUUID();
   localStream = await getMedia(isVideo);
   const gotVideo = isVideo && (!!localStream.getVideoTracks().length || recvOnlyVideo);
@@ -264,6 +304,7 @@ async function answerIncomingCall(invoke, onEnded) {
   if (!pendingIncoming) throw new Error('No incoming call');
   const { peerId, callId, payload, isVideo, peerLabel } = pendingIncoming;
   showIncomingModal(false);
+  intentionalHangup = false;
   localStream = await getMedia(isVideo);
   const gotVideo = isVideo && (!!localStream.getVideoTracks().length || recvOnlyVideo);
   showCallOverlay(true, gotVideo);
@@ -302,7 +343,8 @@ async function handleIncomingCallSignal(p, invoke, activeCallRef, peerLabelFn, o
   if (signal === 'end' || signal === 'ended') {
     intentionalHangup = true;
     await cleanupCall();
-    onEnded?.();
+    activeCallRef.current = null;
+    onEnded?.(false);
     return null;
   }
 
@@ -395,5 +437,6 @@ window.SrltcpWebRTC = {
   setCallSettings,
   setLocalCameraAvailable,
   testMediaPermissions,
+  setHasActiveCall(fn) { hasActiveCall = fn; },
   get pendingIncoming() { return pendingIncoming; },
 };

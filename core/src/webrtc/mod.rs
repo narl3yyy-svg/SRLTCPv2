@@ -1,8 +1,10 @@
-//! WebRTC voice/video calling with E2EE.
+//! Call signaling types for voice/video.
 //!
-//! Uses SDP offer/answer exchange over the established encrypted P2P channel.
-//! Media streams are encrypted via inserted Double Ratchet keys (DTLS-SRTP
-//! provides transport encryption; application-layer E2EE wraps signaling).
+//! **Security note (honest):** application messages (SDP / ICE / hangup) are
+//! relayed as encrypted Double Ratchet payloads over iroh. **Media itself is not
+//! Double-Ratchet wrapped** — platform WebRTC uses STUN + DTLS-SRTP. Treat call
+//! content confidentiality as standard WebRTC transport security, not full
+//! app-layer E2EE.
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -32,6 +34,7 @@ pub struct IceCandidate {
     pub sdp_mline_index: Option<u16>,
 }
 
+/// Lightweight call session metadata (media is owned by platform WebRTC stacks).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CallSession {
     pub id: String,
@@ -54,21 +57,15 @@ impl CallSession {
         }
     }
 
-    pub fn create_offer(&mut self) -> Result<String, WebRtcError> {
+    pub fn mark_offering(&mut self) {
         self.state = CallState::Offering;
-        // Production: integrate webrtc-rs or platform WebRTC APIs
-        let sdp = format!(
-            "v=0\r\no=srltcp 0 0 IN IP4 0.0.0.0\r\ns=SRLTCP Call\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n"
-        );
-        self.local_sdp = Some(sdp.clone());
-        info!(call_id = %self.id, video = self.is_video, "call offer created");
-        Ok(sdp)
+        info!(call_id = %self.id, video = self.is_video, "call offering");
     }
 
     pub fn accept_answer(&mut self, sdp: &str) -> Result<(), WebRtcError> {
         self.remote_sdp = Some(sdp.to_string());
         self.state = CallState::Connected;
-        info!(call_id = %self.id, "call connected");
+        info!(call_id = %self.id, "call connected (signaling)");
         Ok(())
     }
 

@@ -26,7 +26,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Build desktop (linux-x86_64)
-        run: ./scripts/build-desktop.sh
+        run: |
+          ./scripts/build-desktop.sh
+          ls -lh dist/srltcp-desktop-linux-x86_64
+          file dist/srltcp-desktop-linux-x86_64
 
       - uses: actions/upload-artifact@v4
         with:
@@ -48,6 +51,7 @@ jobs:
           cp target/release/srltcp-desktop dist/srltcp-desktop-macos-aarch64
           cp target/x86_64-apple-darwin/release/srltcp-desktop dist/srltcp-desktop-macos-x86_64
           chmod +x dist/srltcp-desktop-macos-aarch64 dist/srltcp-desktop-macos-x86_64
+          ls -lh dist/srltcp-desktop-macos-*
 
       - uses: actions/upload-artifact@v4
         with:
@@ -148,32 +152,36 @@ jobs:
           body: |
             ## SRLTCP ${{ github.ref_name }}
 
-            Prebuilt desktop binaries and Android APK — no compiler required.
-            QR-only peer connection (no manual IP entry). Use `--rebuild` to compile from source.
+            Production-hardened private P2P messaging — **no compiler required**.
 
-            ### Desktop (download repo, then run)
+            ### Highlights (v0.3.0)
+            - Persistent long-term identity (desktop + Android)
+            - Smaller desktop binaries (~14 MB Linux, stripped + LTO)
+            - Slim arm64 Android release APK
+            - QR + SAS trust gate; Double Ratchet E2EE for chat
+
+            ### Desktop
             ```bash
             git clone https://github.com/narl3yyy-svg/SRLTCPv2.git
             cd SRLTCPv2
-            ./run.sh          # Linux/macOS
+            ./run.sh          # Linux/macOS — auto-downloads this release
             run.bat           # Windows
             ```
 
-            Launchers auto-download the matching prebuilt binary from this release.
-
             ### Android
             ```bash
-            adb install SRLTCPv2-<version>.apk
+            adb install SRLTCPv2-0.3.0.apk
             ```
+            Default APK is **arm64-v8a** (most modern phones).
 
-            ### Release assets
+            ### Assets
             | Platform | Asset |
             |----------|-------|
             | Linux x86_64 | `srltcp-desktop-linux-x86_64` |
             | macOS Apple Silicon | `srltcp-desktop-macos-aarch64` |
             | macOS Intel | `srltcp-desktop-macos-x86_64` |
             | Windows x86_64 | `srltcp-desktop-windows-x86_64.exe` |
-            | Android | `SRLTCPv2-${{ github.ref_name }}.apk` |
+            | Android (arm64) | `SRLTCPv2-0.3.0.apk` |
 
-            See [README.md](https://github.com/narl3yyy-svg/SRLTCPv2/blob/main/README.md) and [docs/BUILD.md](https://github.com/narl3yyy-svg/SRLTCPv2/blob/main/docs/BUILD.md).
+            See [SECURITY.md](https://github.com/narl3yyy-svg/SRLTCPv2/blob/main/docs/SECURITY.md) for residual risks.
           files: release/*

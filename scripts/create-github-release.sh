@@ -56,8 +56,12 @@ fi
 
 echo "[release] Pushing main and tag $TAG..."
 git push origin main
-git tag -a "$TAG" -m "SRLTCP $TAG" 2>/dev/null || git tag -f -a "$TAG" -m "SRLTCP $TAG"
-git push origin "$TAG" --force
+if git rev-parse "$TAG" >/dev/null 2>&1; then
+    echo "[release] Tag $TAG already exists locally — not rewriting."
+else
+    git tag -a "$TAG" -m "SRLTCP $TAG"
+fi
+git push origin "$TAG"
 
 echo "[release] Creating GitHub Release $TAG..."
 gh release create "$TAG" \

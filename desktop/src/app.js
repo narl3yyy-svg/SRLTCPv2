@@ -1,10 +1,10 @@
-// SRLTCP v0.2.31 Desktop Frontend
+// SRLTCP v0.3.0 Desktop Frontend
 
-const STORAGE_KEY = 'srltcp_v0.2.31';
+const STORAGE_KEY = 'srltcp_v0.3.0';
 const LEGACY_STORAGE_KEYS = [
   'srltcp_v0.2.16', 'srltcp_v0.2.24', 'srltcp_v0.2.25',
   'srltcp_v0.2.26', 'srltcp_v0.2.27', 'srltcp_v0.2.28', 'srltcp_v0.2.29',
-  'srltcp_v0.2.30',
+  'srltcp_v0.2.30', 'srltcp_v0.2.31', 'srltcp_v0.2.32',
 ];
 
 function loadState() {
@@ -241,6 +241,11 @@ async function refreshOwnQr() {
     } catch (_) {
       document.getElementById('qr-image').alt = 'QR image unavailable';
     }
+    try {
+      const pk = await invoke('get_public_key');
+      const fp = document.getElementById('local-fingerprint');
+      if (fp && pk) fp.textContent = pk.slice(0, 16) + '…' + pk.slice(-8);
+    } catch (_) {}
     const ticket = await invoke('get_iroh_ticket');
     document.getElementById('iroh-ticket').textContent =
       ticket || 'iroh ticket pending…';
@@ -252,7 +257,21 @@ async function refreshOwnQr() {
   }
 }
 
+function setupFirstRun() {
+  const banner = document.getElementById('first-run-banner');
+  const dismiss = document.getElementById('dismiss-first-run');
+  if (!banner) return;
+  if (!loadState().onboardingDone) {
+    banner.classList.remove('hidden');
+  }
+  dismiss?.addEventListener('click', () => {
+    saveState({ onboardingDone: true });
+    banner.classList.add('hidden');
+  });
+}
+
 async function init() {
+  setupFirstRun();
   try {
     await refreshOwnQr();
 
@@ -283,6 +302,7 @@ async function init() {
         mic: document.getElementById('call-setting-mic')?.checked ?? true,
         camera: !!hasCamera && (camEl?.checked ?? false),
       });
+      window.SrltcpWebRTC?.setHasActiveCall?.(() => !!activeCallRef.current);
     } catch (_) {}
 
     const existingPeers = await invoke('get_peers');
@@ -477,9 +497,23 @@ function handleEvent(p) {
         .then((c) => { if (c) { activeCall = c; activeCallRef.current = c; updateCallUI(); } })
         .catch((e) => toast(`Call error: ${e}`, true));
       break;
-    case 'call_ended':
-      onCallEndedLocal();
+    case 'call_ended': {
+      const endedPeer = pick(p, 'peer_id', 'peerId');
+      const endedCallId = pick(p, 'call_id', 'callId');
+      if (!activeCall
+        || (endedCallId && activeCall.callId === endedCallId)
+        || (endedPeer && activeCall.peer === endedPeer)
+        || (!endedCallId && !endedPeer)) {
+        onCallEndedLocal(false);
+      }
       break;
+    }
+    case 'peer_qr_refresh': {
+      const id = pick(p, 'peer_id', 'peerId');
+      const qr = p.qr || p.content || '';
+      if (id && qr) updateContactQr(id, qr);
+      break;
+    }
   }
 }
 
@@ -780,6 +814,17 @@ function updateCallUI() {
   updateInputState();
 }
 
+function updateContactQr(peerId, qr) {
+  // Only accept ticket refresh when Ed25519 peer id still matches (engine also enforces).
+  if (peerId && qr && !peerId.startsWith('peer:')) return;
+  const idx = savedContacts.findIndex(c => c.id === peerId);
+  if (idx >= 0) {
+    savedContacts[idx] = { ...savedContacts[idx], qr };
+    persistContacts();
+    invoke('register_saved_peer', { peerId, qr }).catch(() => {});
+  }
+}
+
 async function onCallEndedLocal(notifyRemote = false) {
   const call = activeCall;
   activeCall = null;
@@ -861,6 +906,12 @@ function appendMessage(content, direction, sender, opts = {}, persist = true) {
     img.src = convertFileSrc(opts.path);
     img.className = 'msg-media';
     img.alt = content;
+    img.onerror = () => {
+      img.replaceWith(Object.assign(document.createElement('div'), {
+        className: 'msg-text',
+        textContent: `🖼 ${content} (preview blocked — use Open location)`,
+      }));
+    };
     div.appendChild(img);
   } else if (opts.kind === 'video' && opts.path) {
     div.appendChild(buildVideoPlayer(opts.path, content));

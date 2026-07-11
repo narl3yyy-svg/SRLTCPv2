@@ -2,6 +2,8 @@ package com.srltcp.v2.webrtc
 
 import android.content.Context
 import android.media.AudioManager
+import android.os.Handler
+import android.os.Looper
 import org.json.JSONObject
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
@@ -28,6 +30,7 @@ import java.util.UUID
 
 class WebRtcCallManager(private val context: Context) {
     private val egl = EglBase.create()
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var factory: PeerConnectionFactory? = null
     private var peerConnection: PeerConnection? = null
     private var localAudio: AudioTrack? = null
@@ -37,6 +40,7 @@ class WebRtcCallManager(private val context: Context) {
     private var localRenderer: SurfaceViewRenderer? = null
     private var remoteRenderer: SurfaceViewRenderer? = null
     private val pendingIce = mutableListOf<IceCandidate>()
+    var onConnectionLost: (() -> Unit)? = null
     var recvOnlyVideo = false
         private set
     var recvOnlyAudio = false
@@ -46,6 +50,12 @@ class WebRtcCallManager(private val context: Context) {
         val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
         am.mode = AudioManager.MODE_IN_COMMUNICATION
         am.isSpeakerphoneOn = true
+    }
+
+    private fun disableCallAudio() {
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        am.mode = AudioManager.MODE_NORMAL
+        am.isSpeakerphoneOn = false
     }
 
     private fun ensureFactory() {
@@ -88,16 +98,23 @@ class WebRtcCallManager(private val context: Context) {
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", if (isVideo) "true" else "false"))
         }
-        pc.createOffer(object : SdpObserverAdapter() {
-            override fun onCreateSuccess(desc: SessionDescription?) {
-                desc ?: return
-                pc.setLocalDescription(SdpObserverAdapter(), desc)
-                onOffer(callId, desc.description)
-            }
-            override fun onCreateFailure(err: String?) {
-                throw RuntimeException("createOffer failed: $err")
-            }
-        }, constraints)
+        val createOffer = {
+            pc.createOffer(object : SdpObserverAdapter() {
+                override fun onCreateSuccess(desc: SessionDescription?) {
+                    desc ?: return
+                    pc.setLocalDescription(SdpObserverAdapter(), desc)
+                    onOffer(callId, desc.description)
+                }
+                override fun onCreateFailure(err: String?) {
+                    throw RuntimeException("createOffer failed: $err")
+                }
+            }, constraints)
+        }
+        if (isVideo && gotLocalVideo) {
+            mainHandler.postDelayed({ createOffer() }, 300)
+        } else {
+            createOffer()
+        }
         return callId
     }
 
@@ -138,16 +155,23 @@ class WebRtcCallManager(private val context: Context) {
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", if (isVideo) "true" else "false"))
         }
-        pc.createAnswer(object : SdpObserverAdapter() {
-            override fun onCreateSuccess(desc: SessionDescription?) {
-                desc ?: return
-                pc.setLocalDescription(SdpObserverAdapter(), desc)
-                onAnswer(desc.description)
-            }
-            override fun onCreateFailure(err: String?) {
-                throw RuntimeException("createAnswer failed: $err")
-            }
-        }, constraints)
+        val createAnswer = {
+            pc.createAnswer(object : SdpObserverAdapter() {
+                override fun onCreateSuccess(desc: SessionDescription?) {
+                    desc ?: return
+                    pc.setLocalDescription(SdpObserverAdapter(), desc)
+                    onAnswer(desc.description)
+                }
+                override fun onCreateFailure(err: String?) {
+                    throw RuntimeException("createAnswer failed: $err")
+                }
+            }, constraints)
+        }
+        if (isVideo && gotLocalVideo) {
+            mainHandler.postDelayed({ createAnswer() }, 300)
+        } else {
+            createAnswer()
+        }
     }
 
     fun handleAnswer(sdp: String) {
@@ -231,13 +255,20 @@ class WebRtcCallManager(private val context: Context) {
         remoteRenderer?.release()
         localRenderer = null
         remoteRenderer = null
+        disableCallAudio()
     }
 
     private fun addAudioTrack(pc: PeerConnection) {
         try {
-            val audioSource = factory!!.createAudioSource(MediaConstraints())
+            val audioConstraints = MediaConstraints().apply {
+                mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
+                mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
+                mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
+            }
+            val audioSource = factory!!.createAudioSource(audioConstraints)
             localAudio = factory!!.createAudioTrack("audio0", audioSource)
-            pc.addTrack(localAudio)
+            localAudio!!.setEnabled(true)
+            pc.addTrack(localAudio, listOf("stream0"))
         } catch (_: Exception) {
             recvOnlyAudio = true
             pc.addTransceiver(
@@ -258,7 +289,8 @@ class WebRtcCallManager(private val context: Context) {
             )
             videoCapturer!!.startCapture(640, 480, 24)
             localVideo = factory!!.createVideoTrack("video0", videoSource)
-            pc.addTrack(localVideo)
+            localVideo!!.setEnabled(true)
+            pc.addTrack(localVideo, listOf("stream0"))
             localRenderer?.let { localVideo?.addSink(it) }
             true
         } catch (_: Exception) {
@@ -292,7 +324,14 @@ class WebRtcCallManager(private val context: Context) {
                 }
             }
             override fun onSignalingChange(p0: PeerConnection.SignalingState?) {}
-            override fun onIceConnectionChange(p0: PeerConnection.IceConnectionState?) {}
+            override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
+                if (state == PeerConnection.IceConnectionState.FAILED
+                    || state == PeerConnection.IceConnectionState.DISCONNECTED
+                    || state == PeerConnection.IceConnectionState.CLOSED
+                ) {
+                    mainHandler.post { onConnectionLost?.invoke() }
+                }
+            }
             override fun onIceConnectionReceivingChange(p0: Boolean) {}
             override fun onIceGatheringChange(p0: PeerConnection.IceGatheringState?) {}
             override fun onIceCandidatesRemoved(p0: Array<out IceCandidate>?) {}
@@ -306,6 +345,7 @@ class WebRtcCallManager(private val context: Context) {
         remoteVideo?.removeSink(remoteRenderer)
         remoteVideo?.dispose()
         remoteVideo = track
+        track.setEnabled(true)
         remoteRenderer?.let { track.addSink(it) }
     }
 

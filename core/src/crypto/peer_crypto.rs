@@ -1,6 +1,7 @@
 //! Per-peer cryptographic state machine.
 
 use x25519_dalek::PublicKey;
+use zeroize::Zeroizing;
 
 use super::handshake::HybridKeyExchange;
 use super::identity::{compute_sas_with_transcript, Identity, IdentityError};
@@ -20,7 +21,7 @@ pub struct PeerCrypto {
     pub trust: TrustState,
     pub ratchet: Option<SessionRatchet>,
     transcript: HandshakeTranscript,
-    shared_secret: Option<Vec<u8>>,
+    shared_secret: Option<Zeroizing<Vec<u8>>>,
 }
 
 impl PeerCrypto {
@@ -122,14 +123,16 @@ impl PeerCrypto {
         self.remote_identity = remote_frame.identity;
         self.transcript.append_body(2, &remote_frame.body)?;
 
-        kex.initiator_finish(&remote_frame.body)
+        // initiator_finish only needs X25519||CT (32+1088); trailing ratchet pk (and
+        // legacy unused ML-KEM EK) are stripped first.
+        let kex_body = strip_ratchet_pk_for_kex(&remote_frame.body)?;
+        kex.initiator_finish(&kex_body)
             .map_err(|e| e.to_string())?;
 
         let secret = kex
-            .shared_secret()
-            .ok_or_else(|| "handshake incomplete".to_string())?
-            .to_vec();
-        self.shared_secret = Some(secret.clone());
+            .take_shared_secret()
+            .ok_or_else(|| "handshake incomplete".to_string())?;
+        self.shared_secret = Some(Zeroizing::new(secret.to_vec()));
 
         let bob_ratchet_pk = extract_bob_ratchet_pk(&remote_frame.body)?;
         let ratchet = SessionRatchet::init_initiator(&secret, &bob_ratchet_pk);
@@ -169,12 +172,11 @@ impl PeerCrypto {
 
         let secret = kex
             .shared_secret()
-            .ok_or_else(|| "responder handshake incomplete".to_string())?
-            .to_vec();
-        self.shared_secret = Some(secret.clone());
+            .ok_or_else(|| "responder handshake incomplete".to_string())?;
+        self.shared_secret = Some(Zeroizing::new(secret.to_vec()));
 
         let (ratchet, bob_pk) =
-            SessionRatchet::init_responder(&secret).map_err(|e| e.to_string())?;
+            SessionRatchet::init_responder(secret).map_err(|e| e.to_string())?;
         self.ratchet = Some(ratchet);
         let mut full_body = resp_body;
         full_body.extend_from_slice(bob_pk.as_bytes());
@@ -266,6 +268,20 @@ fn extract_bob_ratchet_pk(resp_body: &[u8]) -> Result<PublicKey, String> {
         <[u8; 32]>::try_from(&resp_body[start..])
             .map_err(|_| "invalid ratchet DH key".to_string())?,
     ))
+}
+
+/// Body for hybrid KEX finish: X25519(32) + ML-KEM CT(1088), without trailing fields.
+///
+/// Wire step-2 body layouts:
+/// - v0.3+: 32 + 1088 + ratchet_pk(32)
+/// - legacy: 32 + 1088 + unused_ek(1184) + ratchet_pk(32)
+fn strip_ratchet_pk_for_kex(resp_body: &[u8]) -> Result<Vec<u8>, String> {
+    const KEX_LEN: usize = 32 + 1088;
+    if resp_body.len() < KEX_LEN + RATCHET_PK_LEN {
+        return Err("handshake response too short for KEX + ratchet".into());
+    }
+    // Always take the fixed KEX prefix; trailing ratchet (and legacy EK) ignored here.
+    Ok(resp_body[..KEX_LEN].to_vec())
 }
 
 #[cfg(test)]

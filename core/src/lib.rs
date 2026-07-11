@@ -1,4 +1,4 @@
-//! SRLTCP v0.2.0 — Secure Reliable LAN/TCP/Serial P2P messaging core.
+//! SRLTCP core — secure reliable LAN/TCP/serial P2P messaging.
 
 pub mod crypto;
 pub mod qr_image;
@@ -10,7 +10,8 @@ pub mod transfer;
 pub mod webrtc;
 
 pub use crypto::{
-    compute_sas, parse_qr_payload, HybridKeyExchange, Identity, ParsedQr, SessionRatchet,
+    compute_sas, load_or_create_seed_file, parse_qr_payload, write_seed_file, HybridKeyExchange,
+    Identity, IdentitySeed, ParsedQr, SessionRatchet,
 };
 pub use qr_image::qr_png_data_url;
 pub use network::{IrohTransport, TransportKind};
@@ -308,9 +309,12 @@ fn engine_event_to_uniffi(event: EngineEvent) -> SrltcpEvent {
             error: None,
             auto_trusted: None,
         },
-        EngineEvent::CallEnded { call_id } => SrltcpEvent {
+        EngineEvent::CallEnded {
+            call_id,
+            peer_id,
+        } => SrltcpEvent {
             event_type: "call_ended".into(),
-            peer_id: None,
+            peer_id,
             message: None,
             content: None,
             sas: None,
@@ -319,6 +323,20 @@ fn engine_event_to_uniffi(event: EngineEvent) -> SrltcpEvent {
             progress: None,
             transport: None,
             call_id: Some(call_id),
+            error: None,
+            auto_trusted: None,
+        },
+        EngineEvent::PeerQrRefresh { peer_id, qr } => SrltcpEvent {
+            event_type: "peer_qr_refresh".into(),
+            peer_id: Some(peer_id),
+            message: None,
+            content: Some(qr),
+            sas: None,
+            transfer_id: None,
+            filename: None,
+            progress: None,
+            transport: None,
+            call_id: None,
             error: None,
             auto_trusted: None,
         },
@@ -355,10 +373,27 @@ pub struct SrltcpEngine {
 }
 
 impl SrltcpEngine {
+    /// Create engine with a new random identity (caller should persist via [`identity_seed_hex`]).
     pub fn new() -> Self {
+        Self::from_identity(Identity::generate())
+    }
+
+    /// Restore engine from a 64-char hex identity seed. Invalid/empty → fresh identity.
+    pub fn with_identity_seed(seed_hex: String) -> Self {
+        let identity = match IdentitySeed::from_hex(seed_hex.trim()) {
+            Ok(seed) => Identity::from_seed(&seed),
+            Err(e) => {
+                tracing::warn!(error = %e, "invalid identity seed — generating new");
+                Identity::generate()
+            }
+        };
+        Self::from_identity(identity)
+    }
+
+    fn from_identity(identity: Identity) -> Self {
         init_crypto();
         let runtime = Runtime::new().expect("tokio runtime");
-        let (engine, mut event_rx) = P2pEngine::new();
+        let (engine, mut event_rx) = P2pEngine::with_identity(identity);
         let events: Arc<StdMutex<VecDeque<SrltcpEvent>>> =
             Arc::new(StdMutex::new(VecDeque::with_capacity(64)));
         let events_for_task = events.clone();
@@ -377,6 +412,13 @@ impl SrltcpEngine {
             runtime,
             events,
         }
+    }
+
+    /// Hex-encoded 32-byte Ed25519 seed for secure platform storage.
+    pub fn identity_seed_hex(&self) -> String {
+        self.runtime.block_on(async {
+            self.inner.lock().await.identity().seed_hex()
+        })
     }
 
     pub fn poll_event(&self) -> Option<SrltcpEvent> {

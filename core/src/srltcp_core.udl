@@ -33,8 +33,13 @@ dictionary ConnectResult {
 };
 
 interface SrltcpEngine {
+    /// Fresh random identity — persist seed with identity_seed_hex().
     constructor();
+    /// Restore from 64-char hex seed (empty/invalid generates a new identity).
+    [Name=with_identity_seed] constructor(string seed_hex);
 
+    /// Export Ed25519 seed for platform-secure storage (hex).
+    string identity_seed_hex();
     string public_key_hex();
     string qr_payload();
     string qr_image_data_url();

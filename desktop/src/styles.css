@@ -14,7 +14,26 @@
   --warning: #fbbf24;
   --radius: 12px;
   --radius-sm: 8px;
-  --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color-scheme: dark light;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg-primary: #f4f5f8;
+    --bg-secondary: #ffffff;
+    --bg-tertiary: #e8eaf0;
+    --bg-elevated: #ffffff;
+    --accent: #5b4fd6;
+    --accent-hover: #4a3fc4;
+    --accent-dim: rgba(91, 79, 214, 0.12);
+    --text-primary: #12141a;
+    --text-secondary: #5c6478;
+    --border: #d5d9e3;
+    --success: #0d9f6e;
+    --danger: #d64545;
+    --warning: #c48900;
+  }
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -25,6 +44,32 @@ body {
   color: var(--text-primary);
   height: 100vh;
   overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+.hidden { display: none !important; }
+
+.first-run-banner {
+  background: var(--accent-dim);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+.first-run-banner strong { display: block; margin-bottom: 6px; font-size: 0.95rem; }
+.first-run-banner ol { margin: 8px 0 12px 1.1rem; color: var(--text-secondary); }
+.first-run-banner li { margin: 4px 0; }
+.first-run-banner .primary-btn { width: 100%; }
+
+/* Focus visibility for keyboard navigation */
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 #app { display: flex; height: 100vh; }
@@ -381,6 +426,14 @@ textarea:focus { border-color: var(--accent); }
   font-weight: 600;
 }
 
+#remote-audio {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .call-videos {
   position: relative;
   background: #000;
@@ -452,6 +505,7 @@ textarea:focus { border-color: var(--accent); }
 }
 
 .call-controls {
+  padding-bottom: env(safe-area-inset-bottom, 0);
   display: flex;
   justify-content: center;
   gap: 16px;

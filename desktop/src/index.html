@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SRLTCP v0.2.31</title>
+  <title>SRLTCP v0.3.0</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -13,7 +13,7 @@
         <div class="brand-icon">S</div>
         <div>
           <h1>SRLTCP</h1>
-          <span class="version">v0.2.31</span>
+          <span class="version">v0.3.0</span>
         </div>
       </header>
 
@@ -27,12 +27,26 @@
       <div class="sidebar-panels">
         <section id="panel-identity" class="panel active">
           <h2>Share Your Identity</h2>
-          <p class="hint">Your QR includes an iroh ticket — peers connect through NAT without port forwarding.</p>
+          <div id="first-run-banner" class="first-run-banner hidden">
+            <strong>Welcome to SRLTCP</strong>
+            <p>Private peer-to-peer messaging. No accounts. No central server.</p>
+            <ol>
+              <li>Share your QR with someone you trust</li>
+              <li>Paste their QR under <em>Add Peer</em></li>
+              <li>Compare the 6-digit code out of band — only trust if it matches</li>
+            </ol>
+            <button class="btn primary-btn" type="button" id="dismiss-first-run">Got it</button>
+          </div>
+          <p class="hint">Your QR includes an iroh ticket — peers connect through NAT without port forwarding. Your long-term identity is saved on this device.</p>
           <div class="qr-visual">
             <img id="qr-image" alt="Your QR code" />
           </div>
           <div class="qr-box"><code id="qr-payload">Loading…</code></div>
           <button class="btn secondary" id="copy-qr">Copy QR Payload</button>
+          <div class="endpoint-card">
+            <span class="endpoint-label">Your fingerprint</span>
+            <code id="local-fingerprint">…</code>
+          </div>
           <div class="endpoint-card">
             <span class="endpoint-label">iroh ticket</span>
             <code id="iroh-ticket">Detecting…</code>
@@ -90,9 +104,13 @@
           <input type="text" id="display-name" placeholder="Shown to peers after verification" />
           <button class="btn secondary" id="save-display-name">Save display name</button>
           <div class="settings-card">
+            <h3>Privacy notes</h3>
+            <p class="hint">Chat is end-to-end encrypted after SAS. Voice/video calls use WebRTC (DTLS-SRTP) — media is <strong>not</strong> Double-Ratchet wrapped. Chat history is stored locally unencrypted.</p>
+          </div>
+          <div class="settings-card">
             <h3>Update app</h3>
             <p class="hint">Stay on <code>main</code> and run:</p>
-            <code class="update-cmd">git pull && ./run.sh</code>
+            <code class="update-cmd">git pull && ./run.sh --pull</code>
             <button class="btn secondary" id="check-updates">How to update</button>
           </div>
           <div class="settings-card">
@@ -225,6 +243,7 @@
           <span class="call-voice-icon">🎙️</span>
           <p>Voice call active</p>
         </div>
+        <audio id="remote-audio" autoplay playsinline></audio>
         <video id="remote-video" class="call-video remote" autoplay playsinline></video>
         <video id="local-video" class="call-video local" autoplay playsinline muted></video>
       </div>

@@ -1,6 +1,8 @@
 package com.srltcp.v2
 
+import android.content.Context
 import android.util.Log
+import com.srltcp.v2.data.AppPreferences
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +20,7 @@ import uniffi.srltcp_core.initCrypto
 /**
  * Process-wide singleton holding the Rust P2P engine.
  * Survives Activity destruction; kept alive by Foreground Service.
+ * Uses a persisted Ed25519 seed so contacts remain valid across restarts.
  */
 object SrltcpEngineHolder {
     private const val TAG = "SrltcpEngineHolder"
@@ -30,6 +33,9 @@ object SrltcpEngineHolder {
     @Volatile
     private var starting = false
 
+    @Volatile
+    private var appContext: Context? = null
+
     private var scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val eventListeners = mutableSetOf<(SrltcpEvent) -> Unit>()
     @Volatile
@@ -37,6 +43,11 @@ object SrltcpEngineHolder {
 
     private fun ensureNativeLibrary() {
         System.setProperty("uniffi.component.srltcp_core.libraryOverride", "srltcp_core")
+    }
+
+    /** Call once from Application.onCreate with applicationContext. */
+    fun init(context: Context) {
+        appContext = context.applicationContext
     }
 
     /** Non-blocking — returns null until [awaitEngine] completes. */
@@ -81,7 +92,31 @@ object SrltcpEngineHolder {
         ensureNativeLibrary()
         Log.i(TAG, "Creating Rust SrltcpEngine via UniFFI")
         initCrypto()
-        val eng = SrltcpEngine()
+
+        val ctx = appContext
+        val prefs = ctx?.let { AppPreferences(it) }
+        val storedSeed = prefs?.identitySeedHex?.trim().orEmpty()
+        val eng = if (storedSeed.length == 64) {
+            Log.i(TAG, "Restoring persistent identity from encrypted storage")
+            SrltcpEngine.withIdentitySeed(storedSeed)
+        } else {
+            Log.i(TAG, "Generating new identity seed")
+            val fresh = SrltcpEngine()
+            val seed = fresh.identitySeedHex()
+            if (prefs != null && seed.length == 64) {
+                prefs.identitySeedHex = seed
+                Log.i(TAG, "Persisted new identity seed")
+            }
+            fresh
+        }
+        // Ensure seed is stored even when restoring (migration / re-save)
+        if (prefs != null) {
+            val seed = eng.identitySeedHex()
+            if (seed.length == 64 && prefs.identitySeedHex != seed) {
+                prefs.identitySeedHex = seed
+            }
+        }
+
         engine = eng
         starting = false
         polling = false
