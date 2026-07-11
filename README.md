@@ -4,13 +4,13 @@
 
 SRLTCP is privacy-first communication software: no accounts, no central servers, and end-to-end encryption with a human-verifiable SAS step before you trust a peer. A single Rust core powers the desktop (Tauri) and Android (Kotlin/Compose) clients, so crypto and protocol behavior stay consistent everywhere.
 
-**Current release: [v0.2.29](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.29)**
+**Current release: [v0.2.30](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.30)**
 
 ---
 
 ## Security status (read this)
 
-v0.2.29 fixes **contact persistence**, **SAS auto-save**, **startup reconnect without re-SAS**, **delete-contact UI cleanup**, **short display names**, and **Android crash/ANR** on cold start. Security docs now state honest residual risks (unaudited crypto, plaintext-at-rest chat). v0.2.27 fixed Android version label. v0.2.26 fixed Android startup ANR. v0.2.25 improved call stability and Android notifications. v0.2.24 fixed desktop stuck on "Connecting…". v0.2.22 fixed **Linux voice/video calls** and **Android infinite spinner**. v0.2.13+ uses **iroh** NAT traversal and **double-ratchet-2** E2EE with QR v4.
+v0.2.30 fixes **file transfer direction/previews**, **transfer reliability over iroh**, **saved-contact reconnect**, **call audio/hangup stability**, **video layout**, and **Android back navigation**. v0.2.29 added contact persistence, SAS auto-save, and startup reconnect without re-SAS. v0.2.13+ uses **iroh** NAT traversal and **double-ratchet-2** E2EE with QR v4. Security docs state honest residual risks (unaudited crypto, plaintext-at-rest chat).
 
 **What works today**
 
@@ -77,7 +77,7 @@ run.bat
 Install the APK from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest):
 
 ```bash
-adb install dist/SRLTCPv2-0.2.29.apk
+adb install dist/SRLTCPv2-0.2.30.apk
 ```
 
 Or build locally (JDK 17, Android SDK/NDK):
@@ -116,13 +116,13 @@ Saved verified contacts persist locally with per-peer chat history. On startup t
 | Voice / video calls (WebRTC) | ✓ | ✓ |
 | Foreground background service | — | ✓ |
 
-### v0.2.29 highlights
+### v0.2.30 highlights
 
-- Contact + per-peer chat persistence (desktop localStorage, Android SharedPreferences)
-- SAS auto-save on verify; remove contact clears UI and history
-- Startup reconnect to last active saved peer without re-SAS
-- Short display names (12-char pubkey fallback); Android cold-start ANR fixes
-- Honest security documentation in `docs/SECURITY.md`
+- File transfer direction fixed (sender preview only on send; receiver gets image/video)
+- Transfer chunks use trusted encrypted wire path; stale iroh sessions refreshed on reconnect
+- Saved-contact reconnect without false disconnect / user-paused blocking
+- Call audio, hangup stability, proportional video layout (desktop + Android)
+- Android back gesture dismisses SAS/sheets instead of trapping on verify screen
 
 ### v0.2.22 highlights
 
@@ -210,9 +210,9 @@ SRLTCP uses hybrid post-quantum key exchange, a double ratchet for forward secre
 Pushing a version tag triggers CI to publish desktop prebuilts and the Android APK:
 
 ```bash
-git tag -a v0.2.29 -m "SRLTCP v0.2.29"
+git tag -a v0.2.30 -m "SRLTCP v0.2.30"
 git push origin main
-git push origin v0.2.29
+git push origin v0.2.30
 ```
 
 ---

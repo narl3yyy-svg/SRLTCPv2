@@ -1,6 +1,6 @@
 # User Guide
 
-Using SRLTCP v0.2.29 for secure peer-to-peer messaging.
+Using SRLTCP v0.2.30 for secure peer-to-peer messaging.
 
 ## Getting Started
 
@@ -15,7 +15,7 @@ The launcher downloads a prebuilt binary from GitHub Releases. Use `./run.sh --r
 
 ### Android
 
-1. Download `SRLTCPv2-0.2.29.apk` from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest) or build locally (see [BUILD.md](BUILD.md))
+1. Download `SRLTCPv2-0.2.30.apk` from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest) or build locally (see [BUILD.md](BUILD.md))
 2. Open SRLTCP — the background service starts automatically
 3. A notification appears: "Listening for peers..."
 4. You can safely swipe the app away or press Home
@@ -24,7 +24,7 @@ The launcher downloads a prebuilt binary from GitHub Releases. Use `./run.sh --r
 
 ### QR Code + SAS (Required)
 
-SRLTCP v0.2.29 uses **QR v4** with an **iroh ticket** for NAT traversal — no port forwarding or WAN settings required. Paste the peer's QR and tap **Connect & Verify**.
+SRLTCP v0.2.30 uses **QR v4** with an **iroh ticket** for NAT traversal — no port forwarding or WAN settings required. Paste the peer's QR and tap **Connect & Verify**.
 
 1. **Share identity:** Copy or display your QR code. Send the payload to your peer.
 2. **Paste peer QR:** Open **Add Peer**, paste their QR payload, and click **Connect & Verify (QR + SAS)**.
@@ -125,8 +125,8 @@ Settings → Apps → SRLTCP → Force Stop
 | Problem | Solution |
 |---------|----------|
 | `run.sh` says no prebuilt | Install from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases) or use `--rebuild` |
-| Android app stuck on loading | Update to **v0.2.29+** (UI shows before engine init; work runs on IO thread) |
-| SAS confirm does nothing / crash | Both peers on **v0.2.29+**; initiator (who pasted QR) confirms first |
+| Android app stuck on loading | Update to **v0.2.30+** (UI shows before engine init; work runs on IO thread) |
+| SAS confirm does nothing / crash | Both peers on **v0.2.30+**; initiator (who pasted QR) confirms first |
 | No peers in Peers Online | Only connected peers appear there; check **Saved Contacts** and tap **Reconnect** |
 | Peer shows offline but is up | They may have disconnected from you; reconnect from Saved Contacts |
 | macOS relay/DNS errors in terminal | `export SRLTCP_DNS=10.0.50.1` (router IP from `scutil --dns`) then `./run.sh` |
@@ -134,9 +134,13 @@ Settings → Apps → SRLTCP → Force Stop
 | Voice call permission denied | Linux: Settings → **Test mic & camera**, allow portal prompt; retry call |
 | Video call, no local camera | Desktop receives remote video (recv-only); Android camera still works |
 | Video won't play | Use the Play button or native controls; on desktop try **Open** to play in your system player |
-| Transfer stuck | Wait for ACK progress; cancel and retry; both peers on v0.2.29+ |
+| Transfer stuck | Both peers on **v0.2.30+**; cancel and retry; reconnect saved contact if connection dropped mid-transfer |
+| Sender sees "received" file bubble | Update to **v0.2.30+** on both peers |
+| Reconnect to saved contact fails | **v0.2.30+** tears down stale sessions automatically; ensure peer is online with a recent QR saved |
+| Android back shows SAS screen | **v0.2.30+** — back dismisses SAS/sheets; swipe again moves app to background |
+| Call has no audio / hangup breaks UI | **v0.2.30+**; desktop: recv-only if no mic; Android: grant mic in Settings |
 | No serial ports listed | Plug in device, click **Refresh**; Linux: add user to `dialout` group |
-| Serial connect fails | Both peers on v0.2.29+; try another baud rate; check cable |
+| Serial connect fails | Both peers on v0.2.30+; try another baud rate; check cable |
 | SAS codes don't match | Possible MITM — do not trust the connection; retry |
 | Port already in use | Run `./cleanup.sh` then restart |
 | Android service stopped | Disable battery optimization for SRLTCP |

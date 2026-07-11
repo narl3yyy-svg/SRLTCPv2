@@ -384,24 +384,31 @@ textarea:focus { border-color: var(--accent); }
 .call-videos {
   position: relative;
   background: #000;
-  min-height: 320px;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: min(56vh, 480px);
+  min-height: 200px;
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
 }
 
 .call-videos .call-video.remote {
   width: 100%;
-  height: 360px;
-  object-fit: cover;
+  height: 100%;
+  max-height: min(56vh, 480px);
+  object-fit: contain;
+  background: #000;
 }
 
 .call-videos .call-video.local {
   position: absolute;
   bottom: 12px;
   right: 12px;
-  width: 140px;
-  height: 105px;
+  width: min(28%, 160px);
+  aspect-ratio: 3 / 4;
+  max-height: 120px;
   border: 2px solid var(--border);
   border-radius: 8px;
   object-fit: cover;
@@ -986,6 +993,16 @@ input:focus, select:focus { border-color: var(--accent); }
 .message.sent .meta { color: rgba(255,255,255,0.6); }
 
 .msg-media {
+  max-width: min(100%, 320px);
+  max-height: 280px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 8px;
+  display: block;
+}
+
+.msg-media-legacy {
   max-width: 100%;
   max-height: 220px;
   border-radius: 6px;

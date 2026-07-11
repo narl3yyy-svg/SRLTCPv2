@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.30 — Transfers, calls, reconnect, Android UX (2026-07-11)
+
+### Fixes
+
+- **File transfer direction** — Sender no longer shows received-side bubbles on upload complete (desktop + Android). Sender preview kept at pick time; receiver gets image/video preview when download completes.
+- **Transfer reliability** — File chunks use the same encrypted send path as chat (`send_wire_message`); stale iroh sessions torn down before redial; dead connections unregistered on loss.
+- **Saved contact reconnect** — Reconnect prep no longer marks peers user-paused or emits false disconnect events; fresh iroh dial; desktop re-registers saved peer + trust on success.
+- **Voice/video calls** — Remote audio unmuted on desktop; intentional hangup flag prevents UI races; Android handles `call_end`, enables communication audio mode, aspect-fit remote video PiP layout.
+- **Call/video layout** — Desktop overlay uses 16:9 aspect ratio with `object-fit: contain`; chat image previews sized proportionally.
+- **Android back gesture** — Back closes dialogs/sheets (including SAS) instead of leaving verify screen; moves app to background when nothing is open.
+
 ## v0.2.29 — Contacts, persistence, startup reconnect (2026-07-10)
 
 ### Fixes

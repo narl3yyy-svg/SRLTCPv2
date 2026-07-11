@@ -457,7 +457,65 @@ impl P2pEngine {
                 .collect()
         };
         for id in stale {
-            let _ = self.disconnect_peer(&id).await;
+            self.teardown_peer_session(&id, false).await;
+        }
+    }
+
+    /// Drop transport + session without marking user-paused (reconnect prep).
+    async fn teardown_peer_session(&self, peer_id: &str, user_initiated: bool) {
+        let resolved = self
+            .resolve_peer_id(peer_id)
+            .await
+            .unwrap_or_else(|_| peer_id.to_string());
+        self.cancel_peer_transfers(&resolved).await;
+
+        let transport = self
+            .peers
+            .read()
+            .await
+            .get(&resolved)
+            .map(|s| s.transport);
+
+        if let Some(kind) = transport {
+            match kind {
+                TransportKind::Serial => {
+                    if let Some(ref transport) = *self.serial.read().await {
+                        transport.shutdown().await;
+                    }
+                    *self.serial.write().await = None;
+                }
+                TransportKind::Lan | TransportKind::Wan | TransportKind::Relay => {
+                    self.iroh.read().await.unregister(&resolved).await;
+                    if peer_id != resolved {
+                        self.iroh.read().await.unregister(peer_id).await;
+                    }
+                }
+            }
+        } else {
+            self.iroh.read().await.unregister(&resolved).await;
+            if peer_id != resolved {
+                self.iroh.read().await.unregister(peer_id).await;
+            }
+        }
+
+        self.peers.write().await.remove(&resolved);
+        if peer_id != resolved {
+            self.peers.write().await.remove(peer_id);
+        }
+        self.handshake_wait.write().await.remove(&resolved);
+        if peer_id != resolved {
+            self.handshake_wait.write().await.remove(peer_id);
+        }
+
+        if user_initiated {
+            self.user_paused.write().await.insert(resolved.clone());
+            let _ = self
+                .event_tx
+                .send(EngineEvent::PeerDisconnected {
+                    peer_id: resolved,
+                    reason: "user disconnected".to_string(),
+                })
+                .await;
         }
     }
 
@@ -702,10 +760,9 @@ impl P2pEngine {
         let peer_id = iroh_peer_id(addr.id);
 
         if self.iroh.read().await.has_connection(&peer_id).await
-            && self.peers.read().await.contains_key(&peer_id)
+            || self.peers.read().await.contains_key(&peer_id)
         {
-            info!(%peer_id, "reusing existing iroh connection");
-            return Ok(peer_id);
+            self.teardown_peer_session(&peer_id, false).await;
         }
 
         let iroh = self.iroh.read().await;
@@ -844,45 +901,25 @@ impl P2pEngine {
     }
 
     pub async fn disconnect_peer(&self, peer_id: &str) -> Result<(), String> {
-        let resolved = self.resolve_peer_id(peer_id).await.unwrap_or_else(|_| peer_id.to_string());
-        self.cancel_peer_transfers(&resolved).await;
-        let transport = self
-            .peers
-            .read()
-            .await
-            .get(&resolved)
-            .map(|s| s.transport);
-
-        if let Some(kind) = transport {
-            match kind {
-                TransportKind::Serial => {
-                    if let Some(ref transport) = *self.serial.read().await {
-                        transport.shutdown().await;
-                    }
-                    *self.serial.write().await = None;
-                }
-                TransportKind::Lan | TransportKind::Wan | TransportKind::Relay => {
-                    self.iroh.read().await.unregister(&resolved).await;
-                }
-            }
-        }
-
-        self.peers.write().await.remove(&resolved);
-        self.handshake_wait.write().await.remove(&resolved);
-        self.user_paused.write().await.insert(resolved.clone());
-        let _ = self
-            .event_tx
-            .send(EngineEvent::PeerDisconnected {
-                peer_id: resolved,
-                reason: "user disconnected".to_string(),
-            })
-            .await;
+        self.teardown_peer_session(peer_id, true).await;
         Ok(())
     }
 
     async fn on_connection_lost(&self, peer_id: &str) {
         if self.user_paused.read().await.contains(peer_id) {
             return;
+        }
+        self.iroh.read().await.unregister(peer_id).await;
+        let aliases: Vec<String> = self
+            .peer_aliases
+            .read()
+            .await
+            .iter()
+            .filter(|(_, c)| *c == peer_id)
+            .map(|(a, _)| a.clone())
+            .collect();
+        for alias in aliases {
+            self.iroh.read().await.unregister(&alias).await;
         }
         self.cancel_peer_transfers(peer_id).await;
         let _ = self
@@ -905,8 +942,16 @@ impl P2pEngine {
             .map_err(|e| format!("invalid peer QR: {e}"))?;
 
         let canonical = peer_id_from_pubkey(&parsed.public_key);
+        self.user_paused.write().await.remove(&canonical);
         if self.is_peer_connected(&canonical).await && self.is_peer_trusted(&canonical).await {
             self.flush_pending_for_peer(&canonical).await;
+            let _ = self
+                .event_tx
+                .send(EngineEvent::PeerConnected {
+                    peer_id: canonical.clone(),
+                    transport: TransportKind::Relay,
+                })
+                .await;
             return Ok((canonical, String::new(), true));
         }
 
@@ -2075,15 +2120,32 @@ impl EngineInbound {
     }
 
     async fn send_app_message(&self, peer_id: &str, msg: ChatMessage) -> Result<(), String> {
-        if !self.iroh.read().await.has_connection(peer_id).await {
+        let resolved = resolve_session_peer(&self.peers, &self.peer_aliases, peer_id)
+            .await
+            .unwrap_or_else(|_| peer_id.to_string());
+        let transport = self
+            .peers
+            .read()
+            .await
+            .get(&resolved)
+            .map(|s| s.transport)
+            .ok_or_else(|| format!("peer not found: {resolved}"))?;
+        let connected = match transport {
+            TransportKind::Serial => self.serial.read().await.is_some(),
+            _ => {
+                self.iroh.read().await.has_connection(&resolved).await
+                    || self.iroh.read().await.has_connection(peer_id).await
+            }
+        };
+        if !connected {
             return Err("peer not connected".into());
         }
         let plaintext = msg.to_json().map_err(|e| e.to_string())?;
         let ciphertext = {
             let mut peers = self.peers.write().await;
             let session = peers
-                .get_mut(peer_id)
-                .ok_or_else(|| format!("peer not found: {peer_id}"))?;
+                .get_mut(&resolved)
+                .ok_or_else(|| format!("peer not found: {resolved}"))?;
             if !session.crypto.is_trusted() {
                 return Err("peer not trusted — confirm SAS first".into());
             }
@@ -2093,7 +2155,7 @@ impl EngineInbound {
             version: 3,
             ciphertext,
         };
-        self.send_raw_frame(peer_id, &WireFrame::Encrypted(payload))
+        self.send_raw_frame(&resolved, &WireFrame::Encrypted(payload))
             .await
     }
 

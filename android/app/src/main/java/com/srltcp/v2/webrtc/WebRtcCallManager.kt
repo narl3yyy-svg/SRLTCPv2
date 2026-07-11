@@ -1,6 +1,7 @@
 package com.srltcp.v2.webrtc
 
 import android.content.Context
+import android.media.AudioManager
 import org.json.JSONObject
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
@@ -18,6 +19,7 @@ import org.webrtc.RtpReceiver
 import org.webrtc.RtpTransceiver
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
+import org.webrtc.RendererCommon
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoCapturer
 import org.webrtc.VideoSource
@@ -40,6 +42,12 @@ class WebRtcCallManager(private val context: Context) {
     var recvOnlyAudio = false
         private set
 
+    private fun enableCallAudio() {
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        am.mode = AudioManager.MODE_IN_COMMUNICATION
+        am.isSpeakerphoneOn = true
+    }
+
     private fun ensureFactory() {
         if (factory != null) return
         PeerConnectionFactory.initialize(
@@ -58,6 +66,7 @@ class WebRtcCallManager(private val context: Context) {
         onOffer: (String, String) -> Unit,
     ): String {
         ensureFactory()
+        enableCallAudio()
         end()
         recvOnlyVideo = false
         recvOnlyAudio = false
@@ -100,6 +109,7 @@ class WebRtcCallManager(private val context: Context) {
         onAnswer: (String) -> Unit,
     ) {
         ensureFactory()
+        enableCallAudio()
         end()
         recvOnlyVideo = false
         recvOnlyAudio = false
@@ -185,6 +195,7 @@ class WebRtcCallManager(private val context: Context) {
         renderer.init(egl.eglBaseContext, null)
         renderer.setMirror(true)
         renderer.setEnableHardwareScaler(true)
+        renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL)
         localVideo?.addSink(renderer)
     }
 
@@ -193,6 +204,7 @@ class WebRtcCallManager(private val context: Context) {
         remoteRenderer = renderer
         renderer.init(egl.eglBaseContext, null)
         renderer.setEnableHardwareScaler(true)
+        renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
         remoteVideo?.addSink(renderer)
     }
 
@@ -272,8 +284,12 @@ class WebRtcCallManager(private val context: Context) {
                 stream?.videoTracks?.firstOrNull()?.let { attachRemote(it) }
             }
             override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {
-                val track = receiver?.track()
-                if (track is VideoTrack) attachRemote(track)
+                val track = receiver?.track() ?: return
+                if (track is VideoTrack) {
+                    attachRemote(track)
+                } else if (track.kind() == "audio") {
+                    track.setEnabled(true)
+                }
             }
             override fun onSignalingChange(p0: PeerConnection.SignalingState?) {}
             override fun onIceConnectionChange(p0: PeerConnection.IceConnectionState?) {}

@@ -14,6 +14,7 @@ import android.widget.MediaController
 import android.widget.VideoView
 import androidx.core.content.ContextCompat
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -217,11 +218,16 @@ fun ChatScreen() {
 
     fun endActiveCall() {
         val call = callState ?: return
+        callState = null
+        showIncomingCallDialog = false
+        pendingIncomingCall = null
+        WebRtcCallManagerHolder.end()
         scope.launch(Dispatchers.IO) {
-            SrltcpEngineHolder.awaitEngine().endCall(call.peerId, call.callId)
-            WebRtcCallManagerHolder.end()
-            withContext(Dispatchers.Main) { callState = null }
+            runCatching {
+                SrltcpEngineHolder.awaitEngine().endCall(call.peerId, call.callId)
+            }
         }
+        showSnackbar("Call ended")
     }
 
     fun startOutgoingCall(peer: String, video: Boolean) {
@@ -692,6 +698,10 @@ fun ChatScreen() {
                 val filename = event.filename ?: "file"
                 val wasOutgoing = transfers[id]?.isOutgoing ?: false
                 transfers.remove(id)
+                if (wasOutgoing) {
+                    showSnackbar("Upload complete: $filename")
+                    return@let
+                }
                 val explicitPath = event.message
                 val cachePath = File(context.cacheDir, filename)
                 val recvPath = File(context.filesDir, "received/$filename")
@@ -701,18 +711,19 @@ fun ChatScreen() {
                     cachePath.exists() -> cachePath.absolutePath
                     else -> null
                 }
+                val senderLabel = event.peerId?.let { contactLabel(it) } ?: "peer"
                 if (mediaPath != null) {
-                    addMediaMessage(mediaPath, filename, wasOutgoing, if (wasOutgoing) "You" else event.peerId ?: "peer")
+                    addMediaMessage(mediaPath, filename, false, senderLabel)
                 } else {
                     messages = messages + ChatMessage(
-                        content = if (wasOutgoing) "📤 Sent: $filename" else "📁 Received: $filename",
-                        isSent = wasOutgoing,
-                        sender = if (wasOutgoing) "You" else event.peerId ?: "peer",
+                        content = "📁 Received: $filename",
+                        isSent = false,
+                        sender = senderLabel,
                         kind = MessageKind.FILE,
                         mediaPath = recvPath.takeIf { it.exists() }?.absolutePath,
                     )
                 }
-                showSnackbar(if (wasOutgoing) "Upload complete: $filename" else "Download complete: $filename")
+                showSnackbar("Download complete: $filename")
             }
             "call_offer" -> {
                 val peer = event.peerId
@@ -748,7 +759,7 @@ fun ChatScreen() {
                     }
                 }
             }
-            "call_ended" -> {
+            "call_end", "call_ended" -> {
                 WebRtcCallManagerHolder.end()
                 callState = null
                 showIncomingCallDialog = false
@@ -805,6 +816,30 @@ fun ChatScreen() {
                     )
                 }
             }
+        }
+    }
+
+    BackHandler {
+        when {
+            showIncomingCallDialog -> {
+                showIncomingCallDialog = false
+                pendingIncomingCall?.let { call ->
+                    scope.launch(Dispatchers.IO) {
+                        SrltcpEngineHolder.awaitEngine()
+                            .sendCallSignal(call.peerId, call.callId, "end", "", call.isVideo)
+                    }
+                }
+                pendingIncomingCall = null
+            }
+            callState != null -> endActiveCall()
+            showSasDialog -> {
+                showSasDialog = false
+                sasPeerId = null
+            }
+            showConnectSheet -> showConnectSheet = false
+            showPeersSheet -> showPeersSheet = false
+            showSettingsSheet -> showSettingsSheet = false
+            else -> (context as? ComponentActivity)?.moveTaskToBack(true)
         }
     }
 
@@ -1616,9 +1651,11 @@ fun ActiveCallOverlay(
                     Text(peerLabel, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 if (call.isVideo) {
-                    Row(
-                        modifier = Modifier.weight(1f).fillMaxWidth().padding(vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
                     ) {
                         AndroidView(
                             factory = { ctx ->
@@ -1626,7 +1663,7 @@ fun ActiveCallOverlay(
                                     WebRtcCallManagerHolder.bindRemote(this)
                                 }
                             },
-                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                            modifier = Modifier.fillMaxSize(),
                         )
                         AndroidView(
                             factory = { ctx ->
@@ -1634,7 +1671,11 @@ fun ActiveCallOverlay(
                                     WebRtcCallManagerHolder.bindLocal(this)
                                 }
                             },
-                            modifier = Modifier.weight(0.45f).fillMaxHeight(),
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(8.dp)
+                                .width(120.dp)
+                                .height(160.dp),
                         )
                     }
                 } else {

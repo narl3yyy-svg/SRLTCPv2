@@ -10,6 +10,7 @@ let localStream = null;
 let pendingIncoming = null;
 let pendingIceCandidates = [];
 let callEndedNotified = false;
+let intentionalHangup = false;
 let callSettings = { mic: true, camera: false };
 let localCameraAvailable = false;
 let recvOnlyVideo = false;
@@ -141,6 +142,7 @@ async function playVideoEl(el) {
 }
 
 async function cleanupCall() {
+  intentionalHangup = true;
   callEndedNotified = false;
   recvOnlyVideo = false;
   recvOnlyAudio = false;
@@ -155,6 +157,7 @@ async function cleanupCall() {
   if (lv) { lv.srcObject = null; lv.pause?.(); }
   showCallOverlay(false);
   showIncomingModal(false);
+  intentionalHangup = false;
 }
 
 function bindStreams(isVideo) {
@@ -168,6 +171,7 @@ function bindStreams(isVideo) {
   peerConnection.ontrack = (e) => {
     if (!rv || !e.streams?.[0]) return;
     rv.srcObject = e.streams[0];
+    rv.muted = false;
     playVideoEl(rv);
   };
   setCallVideoLayout(isVideo);
@@ -216,6 +220,7 @@ function createPeerConnection(peerId, callId, isVideo, invoke, onEnded) {
 
   peerConnection.onconnectionstatechange = () => {
     const state = peerConnection?.connectionState;
+    if (intentionalHangup) return;
     if ((state === 'failed' || state === 'disconnected' || state === 'closed') && !callEndedNotified) {
       callEndedNotified = true;
       invoke('end_call', { peerId, callId }).catch(() => {});
@@ -294,7 +299,8 @@ async function handleIncomingCallSignal(p, invoke, activeCallRef, peerLabelFn, o
   const payload = p.payload || p.message || '';
   const isVideo = p.is_video ?? p.isVideo ?? p.auto_trusted ?? false;
 
-  if (signal === 'end') {
+  if (signal === 'end' || signal === 'ended') {
+    intentionalHangup = true;
     await cleanupCall();
     onEnded?.();
     return null;

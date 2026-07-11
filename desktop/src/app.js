@@ -1,9 +1,9 @@
-// SRLTCP v0.2.29 Desktop Frontend
+// SRLTCP v0.2.30 Desktop Frontend
 
-const STORAGE_KEY = 'srltcp_v0.2.29';
+const STORAGE_KEY = 'srltcp_v0.2.30';
 const LEGACY_STORAGE_KEYS = [
   'srltcp_v0.2.16', 'srltcp_v0.2.24', 'srltcp_v0.2.25',
-  'srltcp_v0.2.26', 'srltcp_v0.2.27', 'srltcp_v0.2.28',
+  'srltcp_v0.2.26', 'srltcp_v0.2.27', 'srltcp_v0.2.28', 'srltcp_v0.2.30',
 ];
 
 function loadState() {
@@ -130,25 +130,35 @@ async function reconnectContact(contact) {
     return;
   }
   try {
+    toast(`Reconnecting to ${contactLabel(contact.id)}…`);
     const result = await invoke('connect_and_verify', { remoteQr: contact.qr });
     const peerId = pick(result, 'peer_id', 'peerId');
     const autoTrusted = result?.auto_trusted ?? result?.autoTrusted;
     const err = result?.error || (result.sas?.startsWith?.('error:') ? result.sas : null);
     if (err) throw new Error(String(err).replace(/^error:\s*/i, '').trim());
-    if (peerId) {
-      migratePeerId(contact.id, peerId);
-      addPeerUnique(peerId);
-      connectedPeer = peerId;
-      connectedPeers.add(peerId);
-      peerStatus.set(peerId, 'online');
-      selectPeer(peerId);
-      if (autoTrusted) {
-        peerVerified.set(peerId, true);
-        await syncDisplayName(peerId);
-        toast('Reconnected to trusted peer');
-      } else {
-        showSasModal(peerId, pick(result, 'sas', 'Sas'));
-      }
+    if (!peerId) throw new Error('Reconnect failed — peer may be offline');
+    migratePeerId(contact.id, peerId);
+    addPeerUnique(peerId);
+    connectedPeer = peerId;
+    connectedPeers.add(peerId);
+    peerStatus.set(peerId, 'online');
+    const name = contact.name || shortPeer(peerId);
+    const existing = savedContacts.findIndex(c => c.id === peerId);
+    const entry = { id: peerId, name, verified: true, qr: contact.qr };
+    if (existing >= 0) savedContacts[existing] = { ...savedContacts[existing], ...entry };
+    else savedContacts.push(entry);
+    persistContacts();
+    await invoke('register_saved_peer', { peerId, qr: contact.qr }).catch(() => {});
+    await syncTrustedPubkeys();
+    selectPeer(peerId);
+    if (autoTrusted) {
+      peerVerified.set(peerId, true);
+      await syncDisplayName(peerId);
+      toast('Reconnected to trusted peer');
+    } else {
+      const sas = pick(result, 'sas', 'Sas');
+      if (sas) showSasModal(peerId, sas);
+      else toast('Connected — confirm SAS if prompted');
     }
   } catch (e) {
     toast(`Reconnect failed: ${e}`, true);
@@ -435,7 +445,12 @@ function handleEvent(p) {
       const peerId = pick(p, 'peer_id', 'peerId');
       const fname = p.filename || 'file';
       const fpath = p.path || p.message || '';
+      const wasOutgoing = transfers.get(tid)?.outgoing ?? false;
       removeTransfer(tid);
+      if (wasOutgoing) {
+        toast(`Upload complete: ${fname}`);
+        break;
+      }
       const kind = mediaKind(fname);
       const sender = shortPeer(peerId);
       if (peerId && peerId !== activePeer) selectPeer(peerId);
@@ -444,6 +459,7 @@ function handleEvent(p) {
       } else {
         appendMessage(`📁 ${fname}`, 'received', sender, { kind: 'file', path: fpath || null });
       }
+      toast(`Download complete: ${fname}`);
       break;
     }
     case 'transfer_cancelled':
