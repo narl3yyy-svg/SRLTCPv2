@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SRLTCP v0.3.1</title>
+  <title>SRLTCP v0.3.2</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -13,7 +13,7 @@
         <div class="brand-icon">S</div>
         <div>
           <h1>SRLTCP</h1>
-          <span class="version">v0.3.1</span>
+          <span class="version">v0.3.2</span>
         </div>
       </header>
 
@@ -149,10 +149,10 @@
               <option value="">System default</option>
             </select>
             <button class="btn secondary" id="refresh-audio-devices" type="button">Refresh audio devices</button>
-            <button class="btn secondary" id="test-media-perms" type="button">Test mic &amp; camera</button>
-            <p class="hint">Linux: allow PipeWire/portal permissions when prompted. Choose devices after granting access.</p>
+            <button class="btn primary-btn" id="test-media-perms" type="button">Grant / test mic &amp; camera</button>
+            <p class="hint" id="media-status-hint">Linux: click Grant above after restarting the app (v0.3.2+ auto-allows WebKit media). Needs PipeWire + xdg-desktop-portal. No browser-style popup — access is granted by the app.</p>
           </div>
-          <p class="hint settings-note">Voice/video use WebRTC (STUN) over encrypted signaling.</p>
+          <p class="hint settings-note">Voice/video use WebRTC (STUN) over encrypted signaling. Media is not Double-Ratchet E2EE.</p>
         </section>
       </div>
     </aside>

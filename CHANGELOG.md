@@ -1,12 +1,25 @@
 # Changelog
 
-## v0.3.1 — Android call UX, notifications, prebuilt launcher (2026-07-11)
+## v0.3.2 — Linux mic/camera WebKit permission (2026-07-11)
+
+### Critical
+
+- **Linux WebKitGTK getUserMedia** — auto-allow `permission-request` so mic/camera work without a browser-style popup (fixes silent `NotAllowedError` on Ubuntu/Arch).
+- **run.sh** — PipeWire/portal env hardened; quieter default `RUST_LOG`.
+
+### Notes
+
+- WebKit does **not** show a system permission dialog; the app grants media access when you click **Grant / test mic & camera** or start a call.
+- Requires PipeWire + wireplumber + xdg-desktop-portal (already typical on modern desktops).
+
+
+## v0.3.2 — Android call UX, notifications, prebuilt launcher (2026-07-11)
 
 ### Critical fixes
 
 - **Android release crash on open** — JNA R8 keep rules + iroh `ndk_context` init (shipped on main after v0.3.0).
 - **Android MasterKeys / WebRTC lambda / R8** — release APK builds and launches.
-- **GitHub Release includes Android APK** — slim arm64-v8a `SRLTCPv2-0.3.1.apk`.
+- **GitHub Release includes Android APK** — slim arm64-v8a `SRLTCPv2-0.3.2.apk`.
 - **`./run.sh` prebuilt download** — robust platform tag (`linux-x86_64` not distro ID), HTML rejection, fallback to latest GitHub Release when workspace version is ahead of CI.
 
 ### Calls & disconnect
@@ -25,7 +38,7 @@
 ### Other
 
 - Quieter desktop logs: suppress iroh QAD multi-path WARN spam (`RUST_LOG` default).
-- Version 0.3.1 across Cargo, Android, Tauri, docs.
+- Version 0.3.2 across Cargo, Android, Tauri, docs.
 
 ## v0.3.0 — Production hardening (2026-07-11)
 

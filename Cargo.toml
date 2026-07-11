@@ -7,12 +7,12 @@ members = [
 exclude = ["android"]
 
 [workspace.package]
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["SRLTCP Contributors"]
 repository = "https://github.com/narl3yyy-svg/SRLTCPv2"
-description = "Secure Reliable LAN/TCP/Serial P2P messaging — v0.3.1"
+description = "Secure Reliable LAN/TCP/Serial P2P messaging — v0.3.2"
 
 [workspace.dependencies]
 tokio = { version = "1.43", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "net", "fs"] }

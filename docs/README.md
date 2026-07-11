@@ -1,4 +1,4 @@
-# SRLTCP Documentation (v0.3.1)
+# SRLTCP Documentation (v0.3.2)
 
 | Doc | Description |
 |-----|-------------|

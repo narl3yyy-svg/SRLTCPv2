@@ -20,13 +20,16 @@ let recvOnlyAudio = false;
 function mediaErrorHelp(err) {
   const name = err?.name || '';
   if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
-    return 'Microphone/camera blocked. Linux: Settings → Test mic & camera, allow portal prompt, then retry.';
+    return 'Microphone/camera blocked by WebKit. Restart the app after updating (permission handler). Linux also needs: pipewire + wireplumber + xdg-desktop-portal running. Then Settings → Test mic & camera again.';
   }
   if (name === 'OverconstrainedError' || name === 'NotFoundError') {
     return 'Camera/mic not available — listen/watch-only mode will be used if possible.';
   }
   if (name === 'NotReadableError' || name === 'AbortError') {
     return 'Device busy or unavailable. Close other apps using the camera/mic.';
+  }
+  if (name === 'SecurityError') {
+    return 'Media blocked by security policy. Restart SRLTCP from ./run.sh (sets portal/PipeWire env).';
   }
   return err?.message || String(err);
 }

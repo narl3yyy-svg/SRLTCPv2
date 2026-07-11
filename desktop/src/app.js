@@ -1,10 +1,10 @@
-// SRLTCP v0.3.1 Desktop Frontend
+// SRLTCP v0.3.2 Desktop Frontend
 
-const STORAGE_KEY = 'srltcp_v0.3.1';
+const STORAGE_KEY = 'srltcp_v0.3.2';
 const LEGACY_STORAGE_KEYS = [
   'srltcp_v0.2.16', 'srltcp_v0.2.24', 'srltcp_v0.2.25',
   'srltcp_v0.2.26', 'srltcp_v0.2.27', 'srltcp_v0.2.28', 'srltcp_v0.2.29',
-  'srltcp_v0.2.30', 'srltcp_v0.2.31', 'srltcp_v0.2.32', 'srltcp_v0.3.0',
+  'srltcp_v0.2.30', 'srltcp_v0.2.31', 'srltcp_v0.2.32', 'srltcp_v0.3.0', 'srltcp_v0.3.1',
 ];
 
 function notifyDesktop(title, body) {
@@ -1201,10 +1201,15 @@ document.getElementById('copy-receive-dir')?.addEventListener('click', async () 
 });
 
 document.getElementById('test-media-perms')?.addEventListener('click', async () => {
+  const hint = document.getElementById('media-status-hint');
   try {
+    toast('Requesting mic/camera access…');
     const msg = await window.SrltcpWebRTC?.testMediaPermissions?.();
+    if (hint) hint.textContent = msg || 'Media test complete';
     toast(msg || 'Media test complete');
+    await refreshAudioDeviceSelects();
   } catch (e) {
+    if (hint) hint.textContent = String(e);
     toast(`Media test failed: ${e}`, true);
   }
 });

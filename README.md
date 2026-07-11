@@ -4,13 +4,13 @@
 
 SRLTCP is privacy-first communication software: no accounts, no central servers, and end-to-end encryption with a human-verifiable SAS step before you trust a peer. A single Rust core powers the desktop (Tauri) and Android (Kotlin/Compose) clients.
 
-**Current release: [v0.3.1](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.3.1)**
+**Current release: [v0.3.2](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.3.2)**
 
 ---
 
 ## Security status (read this)
 
-v0.3.1 focuses on **production hardening**:
+v0.3.2 focuses on **production hardening**:
 
 - **Persistent long-term identity** on desktop and Android (contacts survive restarts)
 - Secret **zeroization**, QR-refresh identity binding, serial receive-buffer DoS caps
@@ -71,7 +71,7 @@ run.bat
 Install the APK from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest) (default is **arm64-v8a**, modern phones):
 
 ```bash
-adb install dist/SRLTCPv2-0.3.1.apk
+adb install dist/SRLTCPv2-0.3.2.apk
 ```
 
 Or build locally (JDK 17, Android SDK/NDK):
@@ -147,9 +147,9 @@ Pushing a version tag triggers CI to publish desktop prebuilts and the Android A
 
 ```bash
 # Bump version in Cargo.toml + android versionName/versionCode, then:
-git tag -a v0.3.1 -m "SRLTCP v0.3.1"
+git tag -a v0.3.2 -m "SRLTCP v0.3.2"
 git push origin main
-git push origin v0.3.1
+git push origin v0.3.2
 ```
 
 ---

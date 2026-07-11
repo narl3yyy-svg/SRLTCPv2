@@ -480,15 +480,24 @@ fn main() {
             #[cfg(target_os = "linux")]
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.with_webview(|wv| {
-                    use webkit2gtk::{SettingsExt, WebViewExt};
-                    if let Some(settings) = wv.inner().settings() {
+                    use webkit2gtk::{PermissionRequestExt, SettingsExt, WebViewExt};
+                    let webview = wv.inner();
+                    if let Some(settings) = webview.settings() {
                         settings.set_enable_webrtc(true);
                         settings.set_enable_media_stream(true);
                         settings.set_enable_media(true);
                         settings.set_media_playback_requires_user_gesture(false);
                     }
+                    // Critical: WebKitGTK does NOT show a permission UI. If the app
+                    // never connects this signal, getUserMedia always fails with
+                    // NotAllowedError (no portal popup). Auto-allow for local SRLTCP.
+                    webview.connect_permission_request(|_wv, request| {
+                        tracing::info!("WebKit permission-request: allowing (media/device)");
+                        request.allow();
+                        true // handled
+                    });
                 });
-                tracing::info!("WebKit WebRTC/media settings applied");
+                tracing::info!("WebKit WebRTC/media + permission handler applied");
             }
 
             let recv_dir = app.path().app_data_dir().ok().map(|d| d.join("received"));

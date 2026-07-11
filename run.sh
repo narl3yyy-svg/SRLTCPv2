@@ -524,13 +524,21 @@ main() {
     if [[ "$(uname -s)" == "Linux" ]]; then
         # WebKitGTK media capture via xdg-desktop-portal + PipeWire
         export GTK_USE_PORTAL="${GTK_USE_PORTAL:-1}"
+        export GDK_DEBUG="${GDK_DEBUG:-portals}"
         export PIPEWIRE_RUNTIME_DIR="${PIPEWIRE_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}}"
-        # Allow portal permission prompts for mic/camera in the webview
+        export XDG_CURRENT_DESKTOP="${XDG_CURRENT_DESKTOP:-${XDG_SESSION_DESKTOP:-}}"
+        # WebKit sandbox blocks device access unless disabled for desktop apps
         export WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS="${WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS:-1}"
+        export WEBKIT_DISABLE_COMPOSITING_MODE="${WEBKIT_DISABLE_COMPOSITING_MODE:-0}"
         # Reduce GStreamer GstIntRange noise from WebKit device probing
         export GST_DEBUG="${GST_DEBUG:-*:0}"
+        # Ensure PipeWire session is reachable
+        if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
+            export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+        fi
     fi
-    RUST_LOG="${RUST_LOG:-info}" "$binary" &
+    # Default: quiet iroh QAD spam; override with RUST_LOG=info for full logs
+    RUST_LOG="${RUST_LOG:-info,iroh=error,iroh_quinn=error}" "$binary" &
     local app_pid=$!
     echo "$app_pid" > "$PID_FILE"
     ok "SRLTCP started (PID $app_pid, QUIC port $QUIC_PORT)"

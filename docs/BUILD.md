@@ -1,4 +1,4 @@
-# Build Instructions — SRLTCP v0.3.1
+# Build Instructions — SRLTCP v0.3.2
 
 ## Prerequisites
 
@@ -48,7 +48,7 @@ Override with `SRLTCP_DATA_DIR`.
 ./scripts/build-android.sh
 ```
 
-Produces `dist/SRLTCPv2-0.3.1.apk` (release, minified, arm64-v8a only).
+Produces `dist/SRLTCPv2-0.3.2.apk` (release, minified, arm64-v8a only).
 
 ### Universal multi-ABI APK
 
@@ -66,7 +66,7 @@ SRLTCP_UNIVERSAL_APK=1 ./scripts/build-android.sh
 
 ```bash
 adb uninstall com.srltcp.v2 2>/dev/null || true
-adb install dist/SRLTCPv2-0.3.1.apk
+adb install dist/SRLTCPv2-0.3.2.apk
 ```
 
 ## Cleanup
@@ -87,9 +87,9 @@ Pushing a version tag triggers `.github/workflows/release.yml`:
 - `SRLTCPv2-<version>.apk`
 
 ```bash
-git tag -a v0.3.1 -m "SRLTCP v0.3.1"
+git tag -a v0.3.2 -m "SRLTCP v0.3.2"
 git push origin main
-git push origin v0.3.1
+git push origin v0.3.2
 ```
 
 ## Rust Core
