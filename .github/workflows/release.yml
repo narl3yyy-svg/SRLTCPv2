@@ -170,7 +170,7 @@ jobs:
 
             ### Android
             ```bash
-            adb install SRLTCPv2-0.3.0.apk
+            adb install SRLTCPv2-0.3.1.apk
             ```
             Default APK is **arm64-v8a** (most modern phones).
 
@@ -181,7 +181,7 @@ jobs:
             | macOS Apple Silicon | `srltcp-desktop-macos-aarch64` |
             | macOS Intel | `srltcp-desktop-macos-x86_64` |
             | Windows x86_64 | `srltcp-desktop-windows-x86_64.exe` |
-            | Android (arm64) | `SRLTCPv2-0.3.0.apk` |
+            | Android (arm64) | `SRLTCPv2-0.3.1.apk` |
 
             See [SECURITY.md](https://github.com/narl3yyy-svg/SRLTCPv2/blob/main/docs/SECURITY.md) for residual risks.
           files: release/*

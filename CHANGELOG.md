@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.3.1 — Android call UX, notifications, prebuilt launcher (2026-07-11)
+
+### Critical fixes
+
+- **Android release crash on open** — JNA R8 keep rules + iroh `ndk_context` init (shipped on main after v0.3.0).
+- **Android MasterKeys / WebRTC lambda / R8** — release APK builds and launches.
+- **GitHub Release includes Android APK** — slim arm64-v8a `SRLTCPv2-0.3.1.apk`.
+- **`./run.sh` prebuilt download** — robust platform tag (`linux-x86_64` not distro ID), HTML rejection, fallback to latest GitHub Release when workspace version is ahead of CI.
+
+### Calls & disconnect
+
+- **Call ends both sides** when one peer hangs up or the transport drops.
+- **Android call UI** — always-visible End / Mute / Speaker bar (not covered by video or system nav).
+- **Disconnect peer** hangs up any active call first, then tears down the session (works even if the remote side still shows connected briefly).
+- **Speakerphone toggle** on Android during calls; improved voice-call audio mode.
+
+### Notifications & audio
+
+- **Android** — request `POST_NOTIFICATIONS` on first launch; high-priority message/call channels; full-screen intent for incoming calls.
+- **Desktop** — optional system notifications for messages; Settings toggle + permission button.
+- **Desktop audio devices** — choose microphone and speaker/output (where WebView supports `setSinkId`).
+
+### Other
+
+- Quieter desktop logs: suppress iroh QAD multi-path WARN spam (`RUST_LOG` default).
+- Version 0.3.1 across Cargo, Android, Tauri, docs.
+
 ## v0.3.0 — Production hardening (2026-07-11)
 
 ### Security

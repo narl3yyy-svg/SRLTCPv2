@@ -1,6 +1,6 @@
 # Architecture
 
-SRLTCP v0.3.0 system architecture.
+SRLTCP v0.3.1 system architecture.
 
 ## High-Level Overview
 
@@ -52,7 +52,7 @@ Central coordinator:
 - Encrypted wire frames (handshake + double ratchet payloads)
 - QR ticket refresh (bound to same Ed25519 identity)
 
-### Identity persistence (v0.3.0)
+### Identity persistence (v0.3.1)
 
 | Platform | Storage |
 |----------|---------|

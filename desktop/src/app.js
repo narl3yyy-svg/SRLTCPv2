@@ -1,11 +1,25 @@
-// SRLTCP v0.3.0 Desktop Frontend
+// SRLTCP v0.3.1 Desktop Frontend
 
-const STORAGE_KEY = 'srltcp_v0.3.0';
+const STORAGE_KEY = 'srltcp_v0.3.1';
 const LEGACY_STORAGE_KEYS = [
   'srltcp_v0.2.16', 'srltcp_v0.2.24', 'srltcp_v0.2.25',
   'srltcp_v0.2.26', 'srltcp_v0.2.27', 'srltcp_v0.2.28', 'srltcp_v0.2.29',
-  'srltcp_v0.2.30', 'srltcp_v0.2.31', 'srltcp_v0.2.32',
+  'srltcp_v0.2.30', 'srltcp_v0.2.31', 'srltcp_v0.2.32', 'srltcp_v0.3.0',
 ];
+
+function notifyDesktop(title, body) {
+  try {
+    if (!loadState().desktopNotifications) return;
+    if (typeof Notification === 'undefined') return;
+    if (Notification.permission === 'granted') {
+      new Notification(title, { body: body || '', silent: false });
+    } else if (Notification.permission !== 'denied') {
+      Notification.requestPermission().then((p) => {
+        if (p === 'granted') new Notification(title, { body: body || '' });
+      });
+    }
+  } catch (_) {}
+}
 
 function loadState() {
   for (const key of [STORAGE_KEY, ...LEGACY_STORAGE_KEYS]) {
@@ -204,6 +218,10 @@ async function syncDisplayName(broadcastTo) {
 }
 
 function softDisconnect(id) {
+  // End call on both sides when user disconnects
+  if (activeCall && activeCall.peer === id) {
+    onCallEndedLocal(true);
+  }
   invoke('disconnect_peer', { peerId: id }).catch((e) => toast(`Disconnect: ${e}`, true));
   clearTransfersForPeer(id);
   peers = peers.filter(p => p !== id);
@@ -273,9 +291,13 @@ function setupFirstRun() {
 async function init() {
   setupFirstRun();
   try {
+    const notifEl = document.getElementById('setting-desktop-notifications');
+    if (notifEl) notifEl.checked = loadState().desktopNotifications !== false;
     await refreshOwnQr();
 
     await refreshSerialPorts();
+    // Populate audio device lists (after optional permission)
+    refreshAudioDeviceSelects().catch(() => {});
 
     document.getElementById('display-name').value = displayName;
     if (displayName) await syncDisplayName(null);
@@ -340,6 +362,10 @@ function handleEvent(p) {
       break;
     case 'message':
       appendMessage(p.content, 'received', shortPeer(pick(p, 'sender', 'Sender')));
+      notifyDesktop(
+        `Message from ${contactLabel(pick(p, 'sender', 'Sender') || pick(p, 'peer_id', 'peerId'))}`,
+        (p.content || '').slice(0, 120),
+      );
       break;
     case 'peer_connected': {
       const id = pick(p, 'peer_id', 'peerId');
@@ -361,6 +387,10 @@ function handleEvent(p) {
     case 'peer_disconnected': {
       const id = pick(p, 'peer_id', 'peerId');
       const reason = p.reason || '';
+      // Peer drop must end local call UI/media (both sides)
+      if (activeCall && activeCall.peer === id) {
+        onCallEndedLocal(false);
+      }
       connectedPeers.delete(id);
       peers = peers.filter(pId => pId !== id);
       if (connectedPeer === id) connectedPeer = null;
@@ -1216,11 +1246,62 @@ document.getElementById('refresh-serial')?.addEventListener('click', async () =>
   toast('Serial devices refreshed');
 });
 
+async function refreshAudioDeviceSelects() {
+  const inputs = document.getElementById('audio-input-select');
+  const outputs = document.getElementById('audio-output-select');
+  if (!inputs || !outputs) return;
+  const savedIn = loadState().audioInputId || '';
+  const savedOut = loadState().audioOutputId || '';
+  try {
+    const { inputs: ins, outputs: outs } = await window.SrltcpWebRTC.listAudioDevices();
+    inputs.innerHTML = '<option value="">System default</option>'
+      + ins.map((d) => `<option value="${d.id}">${escapeHtml(d.label)}</option>`).join('');
+    outputs.innerHTML = '<option value="">System default</option>'
+      + outs.map((d) => `<option value="${d.id}">${escapeHtml(d.label)}</option>`).join('');
+    if (savedIn) inputs.value = savedIn;
+    if (savedOut) outputs.value = savedOut;
+    window.SrltcpWebRTC?.setCallSettings?.({
+      audioInputId: inputs.value,
+      audioOutputId: outputs.value,
+    });
+  } catch (_) {}
+}
+
 document.getElementById('call-setting-mic')?.addEventListener('change', (e) => {
   window.SrltcpWebRTC?.setCallSettings({ mic: e.target.checked });
 });
 document.getElementById('call-setting-camera')?.addEventListener('change', (e) => {
   window.SrltcpWebRTC?.setCallSettings({ camera: e.target.checked });
+});
+document.getElementById('audio-input-select')?.addEventListener('change', (e) => {
+  saveState({ audioInputId: e.target.value });
+  window.SrltcpWebRTC?.setCallSettings({ audioInputId: e.target.value });
+});
+document.getElementById('audio-output-select')?.addEventListener('change', (e) => {
+  saveState({ audioOutputId: e.target.value });
+  window.SrltcpWebRTC?.setCallSettings({ audioOutputId: e.target.value });
+});
+document.getElementById('refresh-audio-devices')?.addEventListener('click', async () => {
+  await refreshAudioDeviceSelects();
+  toast('Audio devices refreshed');
+});
+document.getElementById('setting-desktop-notifications')?.addEventListener('change', (e) => {
+  saveState({ desktopNotifications: e.target.checked });
+});
+document.getElementById('request-notification-perm')?.addEventListener('click', async () => {
+  try {
+    if (typeof Notification === 'undefined') {
+      toast('Notifications not available in this webview', true);
+      return;
+    }
+    const p = await Notification.requestPermission();
+    saveState({ desktopNotifications: p === 'granted' });
+    const el = document.getElementById('setting-desktop-notifications');
+    if (el) el.checked = p === 'granted';
+    toast(p === 'granted' ? 'Notifications enabled' : `Permission: ${p}`);
+  } catch (e) {
+    toast(`Notification permission failed: ${e}`, true);
+  }
 });
 
 document.getElementById('disconnect-btn').onclick = async () => {

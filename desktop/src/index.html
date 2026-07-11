@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SRLTCP v0.3.0</title>
+  <title>SRLTCP v0.3.1</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -13,7 +13,7 @@
         <div class="brand-icon">S</div>
         <div>
           <h1>SRLTCP</h1>
-          <span class="version">v0.3.0</span>
+          <span class="version">v0.3.1</span>
         </div>
       </header>
 
@@ -123,6 +123,14 @@
             </div>
           </div>
           <div class="settings-card">
+            <h3>Notifications</h3>
+            <label class="call-setting-row">
+              <input type="checkbox" id="setting-desktop-notifications" checked />
+              <span>Desktop notifications for messages &amp; calls</span>
+            </label>
+            <button class="btn-sm" id="request-notification-perm" type="button">Enable system notifications</button>
+          </div>
+          <div class="settings-card">
             <h3>Call settings</h3>
             <label class="call-setting-row">
               <input type="checkbox" id="call-setting-mic" checked />
@@ -132,8 +140,17 @@
               <input type="checkbox" id="call-setting-camera" />
               <span>Camera enabled</span>
             </label>
+            <label class="field-label" for="audio-input-select">Microphone device</label>
+            <select id="audio-input-select" class="settings-select">
+              <option value="">System default</option>
+            </select>
+            <label class="field-label" for="audio-output-select">Speaker / output</label>
+            <select id="audio-output-select" class="settings-select">
+              <option value="">System default</option>
+            </select>
+            <button class="btn secondary" id="refresh-audio-devices" type="button">Refresh audio devices</button>
             <button class="btn secondary" id="test-media-perms" type="button">Test mic &amp; camera</button>
-            <p class="hint">Linux: allow PipeWire/portal permissions when prompted.</p>
+            <p class="hint">Linux: allow PipeWire/portal permissions when prompted. Choose devices after granting access.</p>
           </div>
           <p class="hint settings-note">Voice/video use WebRTC (STUN) over encrypted signaling.</p>
         </section>

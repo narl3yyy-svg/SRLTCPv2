@@ -42,4 +42,5 @@ dist/**
 
 # Gradle
 .gradle/
-*.class
+*.classlogs/
+logs/

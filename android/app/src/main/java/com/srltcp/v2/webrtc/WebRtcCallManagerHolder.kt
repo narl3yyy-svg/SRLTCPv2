@@ -80,6 +80,10 @@ object WebRtcCallManagerHolder {
         manager?.setMute(muted)
     }
 
+    fun setSpeakerphone(on: Boolean) {
+        manager?.setSpeakerphone(on)
+    }
+
     fun end() {
         manager?.end()
         manager = null

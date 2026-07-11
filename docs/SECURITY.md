@@ -1,4 +1,4 @@
-# Security — SRLTCP v0.3.0
+# Security — SRLTCP v0.3.1
 
 ## Goals
 
@@ -7,7 +7,7 @@
 3. **Post-quantum hybrid KEX** — ML-KEM-768 + X25519 against harvest-now-decrypt-later.
 4. **Authenticated handshake** — Ed25519-signed frames bound to QR identity.
 5. **MITM detection** — SAS includes handshake transcript; users must verify before trust.
-6. **Stable identity** — Long-term Ed25519 seed persists across restarts (v0.3.0).
+6. **Stable identity** — Long-term Ed25519 seed persists across restarts (v0.3.1).
 
 ## Threat model
 
@@ -46,7 +46,7 @@ Saved verified contacts reconnect without re-SAS when the stored pubkey matches 
 | **Trust store** | Local, mutable by the app process. Device compromise = impersonation until re-verified. |
 | **Legacy JSON wire** | Still accepted for frame deserialize (migration); prefer postcard `SR` frames. |
 
-## v0.3.0 hardening summary
+## v0.3.1 hardening summary
 
 - Persistent identity (desktop + Android)
 - `Zeroizing` / `Zeroize` on hybrid shared secrets and identity seeds
@@ -58,7 +58,7 @@ Saved verified contacts reconnect without re-SAS when the stored pubkey matches 
 
 ## Verdict
 
-Design is modern and layered for stated goals. v0.3.0 is a material step toward daily-driver usability (stable identity, size, honesty). **Still experimental** for high-threat targets until independent audit of crypto crates and engine review.
+Design is modern and layered for stated goals. v0.3.1 is a material step toward daily-driver usability (stable identity, size, honesty). **Still experimental** for high-threat targets until independent audit of crypto crates and engine review.
 
 ## Reporting
 

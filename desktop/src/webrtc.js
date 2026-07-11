@@ -12,7 +12,7 @@ let pendingIncoming = null;
 let pendingIceCandidates = [];
 let callEndedNotified = false;
 let intentionalHangup = false;
-let callSettings = { mic: true, camera: false };
+let callSettings = { mic: true, camera: false, audioInputId: '', audioOutputId: '' };
 let localCameraAvailable = false;
 let recvOnlyVideo = false;
 let recvOnlyAudio = false;
@@ -56,17 +56,30 @@ async function getMedia(isVideo) {
 
   if (wantMic) {
     try {
+      const audioConstraints = {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      };
+      if (callSettings.audioInputId) {
+        audioConstraints.deviceId = { exact: callSettings.audioInputId };
+      }
       const a = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
+        audio: audioConstraints,
         video: false,
       });
       a.getAudioTracks().forEach((t) => combined.addTrack(t));
     } catch (_) {
-      recvOnlyAudio = true;
+      // Fallback without deviceId if exact device failed
+      try {
+        const a = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          video: false,
+        });
+        a.getAudioTracks().forEach((t) => combined.addTrack(t));
+      } catch (__) {
+        recvOnlyAudio = true;
+      }
     }
   } else if (isVideo) {
     recvOnlyAudio = true;
@@ -178,6 +191,15 @@ async function cleanupCall() {
   showIncomingModal(false);
 }
 
+async function applyOutputDevice(el) {
+  if (!el || !callSettings.audioOutputId) return;
+  if (typeof el.setSinkId === 'function') {
+    try {
+      await el.setSinkId(callSettings.audioOutputId);
+    } catch (_) {}
+  }
+}
+
 function bindStreams(isVideo) {
   const lv = document.getElementById('local-video');
   const rv = document.getElementById('remote-video');
@@ -186,6 +208,7 @@ function bindStreams(isVideo) {
     lv.srcObject = localStream;
     playMediaEl(lv);
   }
+  if (audioEl) applyOutputDevice(audioEl);
   if (!peerConnection) return;
   peerConnection.ontrack = (e) => {
     const track = e.track;
@@ -200,6 +223,7 @@ function bindStreams(isVideo) {
       }
       track.enabled = true;
       audioEl.muted = false;
+      applyOutputDevice(audioEl);
       playMediaEl(audioEl);
     } else if (track.kind === 'video' && rv && e.streams?.[0]) {
       rv.srcObject = e.streams[0];
@@ -390,9 +414,40 @@ function toggleCamera() {
   return track.enabled;
 }
 
-function setCallSettings({ mic, camera }) {
+function setCallSettings({ mic, camera, audioInputId, audioOutputId }) {
   if (mic !== undefined) callSettings.mic = mic;
   if (camera !== undefined) callSettings.camera = camera && localCameraAvailable;
+  if (audioInputId !== undefined) callSettings.audioInputId = audioInputId || '';
+  if (audioOutputId !== undefined) {
+    callSettings.audioOutputId = audioOutputId || '';
+    const audioEl = document.getElementById('remote-audio');
+    applyOutputDevice(audioEl);
+  }
+}
+
+/** List mics/speakers after a brief getUserMedia so labels are available. */
+async function listAudioDevices() {
+  try {
+    if (!navigator.mediaDevices?.enumerateDevices) return { inputs: [], outputs: [] };
+    // Probe once so browser fills in device labels
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      s.getTracks().forEach((t) => t.stop());
+    } catch (_) {}
+    const all = await navigator.mediaDevices.enumerateDevices();
+    return {
+      inputs: all.filter((d) => d.kind === 'audioinput').map((d) => ({
+        id: d.deviceId,
+        label: d.label || `Microphone ${d.deviceId.slice(0, 6)}`,
+      })),
+      outputs: all.filter((d) => d.kind === 'audiooutput').map((d) => ({
+        id: d.deviceId,
+        label: d.label || `Speaker ${d.deviceId.slice(0, 6)}`,
+      })),
+    };
+  } catch (_) {
+    return { inputs: [], outputs: [] };
+  }
 }
 
 function setLocalCameraAvailable(available) {
@@ -434,6 +489,7 @@ window.SrltcpWebRTC = {
   cleanupCall,
   toggleMute,
   toggleCamera,
+  listAudioDevices,
   setCallSettings,
   setLocalCameraAvailable,
   testMediaPermissions,

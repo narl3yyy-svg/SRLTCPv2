@@ -123,15 +123,16 @@ detect_arch() {
     esac
 }
 
+# Release asset platform id (must match GitHub Release names, not distro ID).
 platform_tag() {
-    local os arch
-    os="$(detect_os)"
+    local arch
     arch="$(detect_arch)"
-    if [[ "$os" == "macos" ]]; then
-        echo "macos-${arch}"
-    else
-        echo "linux-${arch}"
-    fi
+    case "$(uname -s)" in
+        Darwin) echo "macos-${arch}" ;;
+        Linux) echo "linux-${arch}" ;;
+        MINGW*|MSYS*|CYGWIN*) echo "windows-${arch}" ;;
+        *) echo "linux-${arch}" ;;
+    esac
 }
 
 ensure_rust() {
@@ -232,6 +233,10 @@ validate_binary_file() {
     [[ -f "$bin" ]] || return 1
     [[ -s "$bin" ]] || return 1
     [[ -x "$bin" ]] || chmod +x "$bin" 2>/dev/null || true
+    # Reject HTML error pages from failed GitHub downloads
+    if head -c 64 "$bin" 2>/dev/null | grep -qiE '<!DOCTYPE|<html'; then
+        return 1
+    fi
     local size
     size=$(stat -c%s "$bin" 2>/dev/null || stat -f%z "$bin" 2>/dev/null || echo 0)
     [[ "$size" -gt 1048576 ]] || return 1
@@ -299,14 +304,19 @@ download_prebuilt_once() {
     platform="$(platform_tag)"
     dir="dist/bin/${platform}"
     dest="${dir}/srltcp-desktop"
+    # Strip leading v if present
+    tag_version="${tag_version#v}"
 
     mkdir -p "$dir"
     url="https://github.com/${REPO}/releases/download/v${tag_version}/srltcp-desktop-${platform}"
+    log "GET $url"
 
     if http_download "$url" "$dest" 2>/dev/null && validate_binary_file "$dest"; then
         chmod +x "$dest"
+        # Also stage flat name used by some scripts
+        cp -f "$dest" "dist/srltcp-desktop-${platform}" 2>/dev/null || true
         mark_prebuilt_version "$platform" "$dest"
-        ok "Downloaded prebuilt v${tag_version}: $dest"
+        ok "Downloaded prebuilt v${tag_version}: $dest ($(du -h "$dest" | cut -f1))"
         printf '%s' "$dest"
         return 0
     fi
@@ -315,8 +325,22 @@ download_prebuilt_once() {
     return 1
 }
 
+# Resolve newest published release tag from GitHub API (fallback when local Cargo version is ahead of CI).
+latest_release_version() {
+    local json tag
+    if ! command -v curl &>/dev/null; then
+        return 1
+    fi
+    json=$(curl -fsSL --connect-timeout 10 \
+        "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null) || return 1
+    tag=$(printf '%s' "$json" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+    tag="${tag#v}"
+    [[ -n "$tag" ]] || return 1
+    printf '%s' "$tag"
+}
+
 download_prebuilt() {
-    local platform attempt bin
+    local platform attempt bin latest
     platform="$(platform_tag)"
 
     if [[ "$USE_PREBUILT" != true ]] || [[ "$FORCE_REBUILD" == true ]]; then
@@ -331,12 +355,33 @@ download_prebuilt() {
     log "Downloading prebuilt for ${platform} (v${VERSION})..."
     for ((attempt = 1; attempt <= PREBUILT_RETRIES; attempt++)); do
         bin="$(download_prebuilt_once "$VERSION")" && return 0
+        # Mid-retry: try latest published release if local version not up yet
+        if [[ "$attempt" -eq 2 ]] || [[ "$attempt" -eq 6 ]]; then
+            latest="$(latest_release_version || true)"
+            if [[ -n "$latest" && "$latest" != "$VERSION" ]]; then
+                warn "Trying latest published release v${latest} (workspace is v${VERSION})..."
+                bin="$(download_prebuilt_once "$latest")" && {
+                    VERSION="$latest"
+                    return 0
+                }
+            fi
+        fi
         if [[ "$attempt" -lt "$PREBUILT_RETRIES" ]]; then
             warn "Prebuilt v${VERSION} not published yet (${attempt}/${PREBUILT_RETRIES}) — CI may still be running..."
             warn "Check: https://github.com/${REPO}/actions — retrying in ${PREBUILT_RETRY_SECS}s"
             sleep "$PREBUILT_RETRY_SECS"
         fi
     done
+
+    # Final fallback: latest release once more
+    latest="$(latest_release_version || true)"
+    if [[ -n "$latest" ]]; then
+        warn "Final attempt: latest release v${latest}"
+        bin="$(download_prebuilt_once "$latest")" && {
+            VERSION="$latest"
+            return 0
+        }
+    fi
 
     warn "Prebuilt not available for ${platform} at v${VERSION} after ${PREBUILT_RETRIES} attempts."
     return 1

@@ -49,13 +49,31 @@ class WebRtcCallManager(private val context: Context) {
     private fun enableCallAudio() {
         val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
         am.mode = AudioManager.MODE_IN_COMMUNICATION
+        @Suppress("DEPRECATION")
         am.isSpeakerphoneOn = true
+        // Ensure call volume path is active
+        try {
+            am.requestAudioFocus(
+                null,
+                AudioManager.STREAM_VOICE_CALL,
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT,
+            )
+        } catch (_: Exception) {
+        }
     }
 
     private fun disableCallAudio() {
         val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
         am.mode = AudioManager.MODE_NORMAL
+        @Suppress("DEPRECATION")
         am.isSpeakerphoneOn = false
+    }
+
+    fun setSpeakerphone(on: Boolean) {
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        am.mode = AudioManager.MODE_IN_COMMUNICATION
+        @Suppress("DEPRECATION")
+        am.isSpeakerphoneOn = on
     }
 
     private fun ensureFactory() {

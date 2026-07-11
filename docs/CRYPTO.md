@@ -1,10 +1,10 @@
-# Cryptography — SRLTCP v0.3.0
+# Cryptography — SRLTCP v0.3.1
 
 ## Overview
 
 SRLTCP implements end-to-end encryption on the wire. The hybrid handshake runs interactively between peers; application data is encrypted with **double-ratchet-2** (Signal-spec) before leaving the device. SAS codes use a canonical handshake transcript (step bodies 1→2→3) so both peers derive identical values.
 
-Long-term **Ed25519** identity seeds are persistent across app restarts (v0.3.0).
+Long-term **Ed25519** identity seeds are persistent across app restarts (v0.3.1).
 
 ## Primitives
 

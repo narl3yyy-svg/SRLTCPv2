@@ -1,4 +1,4 @@
-//! SRLTCP v0.3.0 Desktop — Tauri v2 backend with graceful shutdown.
+//! SRLTCP v0.3.1 Desktop — Tauri v2 backend with graceful shutdown.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -422,7 +422,10 @@ fn install_shutdown_handler(engine: Arc<Mutex<P2pEngine>>, shutting_down: Arc<At
 
 fn main() {
     srltcp_core::init_crypto();
-    srltcp_core::init_logging("info");
+    // Quiet iroh QAD "IPv4 address varies by destination" spam (harmless multi-path noise)
+    let log_filter = std::env::var("RUST_LOG")
+        .unwrap_or_else(|_| "info,iroh=error,iroh_quinn=error".into());
+    srltcp_core::init_logging(&log_filter);
 
     let identity = load_persistent_identity();
     tracing::info!(pk = %identity.public_key_hex(), "local identity ready");

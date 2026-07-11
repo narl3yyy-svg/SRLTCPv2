@@ -216,18 +216,28 @@ fun ChatScreen() {
         }
     }
 
-    fun endActiveCall() {
+    fun endActiveCall(notifyRemote: Boolean = true) {
         val call = callState ?: return
         callState = null
         showIncomingCallDialog = false
         pendingIncomingCall = null
         WebRtcCallManagerHolder.end()
-        scope.launch(Dispatchers.IO) {
-            runCatching {
-                SrltcpEngineHolder.awaitEngine().endCall(call.peerId, call.callId)
+        SrltcpAlertNotifier.cancelIncomingCall(context)
+        if (notifyRemote) {
+            scope.launch(Dispatchers.IO) {
+                runCatching {
+                    SrltcpEngineHolder.awaitEngine().endCall(call.peerId, call.callId)
+                }
             }
         }
         showSnackbar("Call ended")
+    }
+
+    /** Tear down local call when peer drops or we disconnect — always ends local media. */
+    fun endCallIfPeer(peerId: String?, notifyRemote: Boolean = false) {
+        val call = callState ?: return
+        if (peerId != null && call.peerId != peerId) return
+        endActiveCall(notifyRemote = notifyRemote)
     }
 
     fun startOutgoingCall(peer: String, video: Boolean) {
@@ -382,8 +392,12 @@ fun ChatScreen() {
     }
 
     fun softDisconnect(peerId: String) {
+        // Hang up both sides if a call is active with this peer
+        endCallIfPeer(peerId, notifyRemote = true)
         scope.launch(Dispatchers.IO) {
-            SrltcpEngineHolder.awaitEngine().disconnectPeer(peerId)
+            runCatching {
+                SrltcpEngineHolder.awaitEngine().disconnectPeer(peerId)
+            }
         }
         transfers.clear()
         peers.remove(peerId)
@@ -659,6 +673,8 @@ fun ChatScreen() {
                 }
             }
             "peer_disconnected" -> event.peerId?.let { id ->
+                // One peer leaving must end the call on this device too
+                endCallIfPeer(id, notifyRemote = false)
                 transfers.clear()
                 peers.remove(id)
                 if (connectedPeer == id) connectedPeer = null
@@ -753,6 +769,7 @@ fun ChatScreen() {
                 if (peer != null && callId != null) {
                     val payload = event.message ?: ""
                     val isVideo = event.autoTrusted == true
+                    SrltcpAlertNotifier.notifyIncomingCall(context, contactLabel(peer), isVideo)
                     if (callState != null || pendingIncomingCall != null) {
                         scope.launch(Dispatchers.IO) {
                             SrltcpEngineHolder.awaitEngine().sendCallSignal(peer, callId, "end", "", isVideo)
@@ -886,6 +903,20 @@ fun ChatScreen() {
     DisposableEffect(Unit) {
         SrltcpEngineHolder.addEventListener(eventListener)
         onDispose { SrltcpEngineHolder.removeEventListener(eventListener) }
+    }
+
+    // Prompt once for notification permission so alerts work in background
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+        SrltcpAlertNotifier.ensureChannels(context)
     }
 
     if (!engineReady) {
@@ -1705,98 +1736,125 @@ fun ActiveCallOverlay(
     onEnd: () -> Unit,
 ) {
     var muted by remember { mutableStateOf(false) }
+    var speakerOn by remember { mutableStateOf(true) }
     Dialog(
-        onDismissRequest = {},
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        onDismissRequest = { /* force explicit End — do not dismiss by back alone */ },
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false,
+        ),
     ) {
-        Surface(modifier = Modifier.fillMaxSize()) {
-            Column(
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.surface,
+        ) {
+            // Box so controls stay pinned above system nav / video
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .statusBarsPadding()
-                    .navigationBarsPadding()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.SpaceBetween,
+                    .navigationBarsPadding(),
             ) {
-                Column {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 12.dp)
+                        .padding(top = 12.dp, bottom = 88.dp),
+                ) {
                     Text(
                         if (call.isVideo) "Video call" else "Voice call",
                         fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
+                        fontSize = 18.sp,
                     )
-                    Text(peerLabel, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                if (call.isVideo) {
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                            .padding(vertical = 8.dp),
-                    ) {
-                        AndroidView(
-                            factory = { ctx ->
-                                SurfaceViewRenderer(ctx)
-                            },
-                            update = { renderer ->
-                                WebRtcCallManagerHolder.bindRemote(renderer)
-                            },
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                        AndroidView(
-                            factory = { ctx ->
-                                SurfaceViewRenderer(ctx)
-                            },
-                            update = { renderer ->
-                                WebRtcCallManagerHolder.bindLocal(renderer)
-                            },
+                    Text(peerLabel, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    if (call.isVideo) {
+                        Box(
                             modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .padding(8.dp)
-                                .width(120.dp)
-                                .height(160.dp),
-                        )
-                    }
-                } else {
-                    Box(
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.Call, contentDescription = null, modifier = Modifier.size(72.dp))
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text("Voice call active", fontSize = 14.sp)
+                                .weight(1f)
+                                .fillMaxWidth(),
+                        ) {
+                            AndroidView(
+                                factory = { ctx -> SurfaceViewRenderer(ctx) },
+                                update = { WebRtcCallManagerHolder.bindRemote(it) },
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                            AndroidView(
+                                factory = { ctx -> SurfaceViewRenderer(ctx) },
+                                update = { WebRtcCallManagerHolder.bindLocal(it) },
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(8.dp)
+                                    .width(110.dp)
+                                    .height(148.dp),
+                            )
+                        }
+                    } else {
+                        Box(
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(Icons.Default.Call, contentDescription = null, modifier = Modifier.size(80.dp))
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text("Voice call in progress", fontSize = 15.sp)
+                            }
                         }
                     }
                 }
-                Row(
+                // Always-visible control bar
+                Surface(
                     modifier = Modifier
+                        .align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .padding(bottom = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        .padding(12.dp),
+                    tonalElevation = 8.dp,
+                    shadowElevation = 8.dp,
+                    shape = MaterialTheme.shapes.large,
                 ) {
-                    OutlinedButton(
-                        onClick = {
-                            muted = !muted
-                            WebRtcCallManagerHolder.setMute(muted)
-                        },
+                    Row(
                         modifier = Modifier
-                            .weight(1f)
-                            .heightIn(min = 48.dp),
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Icon(if (muted) Icons.Default.MicOff else Icons.Default.Mic, contentDescription = null)
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(if (muted) "Unmute" else "Mute")
-                    }
-                    Button(
-                        onClick = onEnd,
-                        modifier = Modifier
-                            .weight(1f)
-                            .heightIn(min = 48.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                    ) {
-                        Icon(Icons.Default.CallEnd, contentDescription = null)
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("End call")
+                        OutlinedButton(
+                            onClick = {
+                                muted = !muted
+                                WebRtcCallManagerHolder.setMute(muted)
+                            },
+                            modifier = Modifier.weight(1f).heightIn(min = 52.dp),
+                        ) {
+                            Icon(if (muted) Icons.Default.MicOff else Icons.Default.Mic, null)
+                            Spacer(Modifier.width(4.dp))
+                            Text(if (muted) "Unmute" else "Mute", fontSize = 12.sp)
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                speakerOn = !speakerOn
+                                WebRtcCallManagerHolder.setSpeakerphone(speakerOn)
+                            },
+                            modifier = Modifier.weight(1f).heightIn(min = 52.dp),
+                        ) {
+                            Icon(
+                                if (speakerOn) Icons.Default.VolumeUp else Icons.Default.VolumeDown,
+                                contentDescription = null,
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(if (speakerOn) "Speaker" else "Earpiece", fontSize = 12.sp)
+                        }
+                        Button(
+                            onClick = onEnd,
+                            modifier = Modifier.weight(1f).heightIn(min = 52.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error,
+                            ),
+                        ) {
+                            Icon(Icons.Default.CallEnd, contentDescription = "End call")
+                            Spacer(Modifier.width(4.dp))
+                            Text("End", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
