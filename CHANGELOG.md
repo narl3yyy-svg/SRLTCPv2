@@ -13,7 +13,7 @@
 - Requires PipeWire + wireplumber + xdg-desktop-portal (already typical on modern desktops).
 
 
-## v0.3.2 — Android call UX, notifications, prebuilt launcher (2026-07-11)
+## v0.3.1 — Android call UX, notifications, prebuilt launcher (2026-07-11)
 
 ### Critical fixes
 
