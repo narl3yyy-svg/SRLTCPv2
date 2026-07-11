@@ -12,7 +12,6 @@ use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 use iroh_tickets::Ticket;
 use iroh_tickets::endpoint::EndpointTicket;
 use thiserror::Error;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 

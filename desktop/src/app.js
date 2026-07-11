@@ -1,9 +1,10 @@
-// SRLTCP v0.2.30 Desktop Frontend
+// SRLTCP v0.2.31 Desktop Frontend
 
-const STORAGE_KEY = 'srltcp_v0.2.30';
+const STORAGE_KEY = 'srltcp_v0.2.31';
 const LEGACY_STORAGE_KEYS = [
   'srltcp_v0.2.16', 'srltcp_v0.2.24', 'srltcp_v0.2.25',
-  'srltcp_v0.2.26', 'srltcp_v0.2.27', 'srltcp_v0.2.28', 'srltcp_v0.2.30',
+  'srltcp_v0.2.26', 'srltcp_v0.2.27', 'srltcp_v0.2.28', 'srltcp_v0.2.29',
+  'srltcp_v0.2.30',
 ];
 
 function loadState() {

@@ -30,7 +30,7 @@ detect_platform() {
 }
 
 platform="$(detect_platform)"
-echo "[desktop] Building SRLTCP v${VERSION} for ${platform}..."
+echo "[desktop] Building SRLTCP v${VERSION} for ${platform}..." >&2
 
 cd "$ROOT_DIR"
 
@@ -62,6 +62,6 @@ cp -f "$src" "$DIST_DIR/bin/${platform}/$(basename "$src")"
 chmod +x "$DIST_DIR/$dest_name" "$DIST_DIR/bin/${platform}/$(basename "$src")" 2>/dev/null || true
 echo "$VERSION" > "$DIST_DIR/bin/${platform}/.prebuilt-version"
 
-echo "[desktop] ✓ Prebuilt ready (v${VERSION}):"
-echo "  $DIST_DIR/$dest_name"
-echo "  $DIST_DIR/bin/${platform}/$(basename "$src")"
+echo "[desktop] ✓ Prebuilt ready (v${VERSION}):" >&2
+echo "  $DIST_DIR/$dest_name" >&2
+echo "  $DIST_DIR/bin/${platform}/$(basename "$src")" >&2

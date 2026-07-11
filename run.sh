@@ -349,8 +349,29 @@ build_from_source() {
     elif [[ "$(uname -s)" == "Darwin" ]]; then
         check_macos_deps || warn "Xcode tools missing — build may fail."
     fi
-    cargo build --release -p srltcp-desktop 2>&1 | tee -a "$LOG_FILE"
+    # Must not write to stdout — resolve_binary captures stdout as the binary path.
+    cargo build --release -p srltcp-desktop 2>&1 | tee -a "$LOG_FILE" >&2
     ok "Build complete."
+}
+
+# Return first valid binary on disk (ignores --rebuild flag; used after local compile).
+find_staged_binary() {
+    local platform candidates=()
+    platform="$(platform_tag)"
+    candidates=(
+        "dist/bin/${platform}/srltcp-desktop"
+        "dist/srltcp-desktop-${platform}"
+        "target/release/srltcp-desktop"
+    )
+    local candidate
+    for candidate in "${candidates[@]}"; do
+        if validate_binary_file "$candidate"; then
+            printf '%s' "$candidate"
+            return 0
+        fi
+    done
+    echo ""
+    return 1
 }
 
 resolve_binary() {
@@ -359,9 +380,26 @@ resolve_binary() {
 
     if [[ "$FORCE_REBUILD" == true ]]; then
         ensure_rust
-        build_from_source
-        printf '%s' "target/release/srltcp-desktop"
-        return 0
+        if [[ -x "$SCRIPT_DIR/scripts/build-desktop.sh" ]]; then
+            "$SCRIPT_DIR/scripts/build-desktop.sh" >&2 || {
+                err "Build failed. See docs/BUILD.md for dependencies."
+                exit 1
+            }
+        else
+            build_from_source
+            local platform
+            platform="$(platform_tag)"
+            mkdir -p "dist/bin/${platform}"
+            cp -f target/release/srltcp-desktop "dist/bin/${platform}/srltcp-desktop" 2>/dev/null || true
+            echo "$VERSION" > "$(prebuilt_version_file "$platform")" 2>/dev/null || true
+        fi
+        bin="$(find_staged_binary)"
+        if [[ -n "$bin" ]]; then
+            printf '%s' "$bin"
+            return 0
+        fi
+        err "Build finished but binary not found — check target/release/ and dist/"
+        exit 1
     fi
 
     bin="$(find_binary)"
@@ -378,12 +416,12 @@ resolve_binary() {
 
     warn "No GitHub prebuilt for v${VERSION} yet — building locally..."
     if [[ -x "$SCRIPT_DIR/scripts/build-desktop.sh" ]]; then
-        "$SCRIPT_DIR/scripts/build-desktop.sh" || {
+        "$SCRIPT_DIR/scripts/build-desktop.sh" >&2 || {
             err "Local build failed. Install deps (Rust, webkit2gtk) or wait for CI:"
             err "  https://github.com/${REPO}/releases/tag/v${VERSION}"
             exit 1
         }
-        bin="$(find_binary)"
+        bin="$(find_staged_binary)"
         if [[ -n "$bin" ]]; then
             printf '%s' "$bin"
             return 0
@@ -427,8 +465,10 @@ main() {
     binary="$(resolve_binary)"
 
     if ! validate_binary_file "$binary"; then
-        err "Binary missing or invalid at $binary"
-        err "Try: $0 --rebuild"
+        err "Binary missing or invalid."
+        err "  Path tried: ${binary:-<empty>}"
+        err "  Expected: dist/bin/$(platform_tag)/srltcp-desktop (v${VERSION})"
+        err "Try: $0 --rebuild   or   ./scripts/build-desktop.sh"
         exit 1
     fi
 

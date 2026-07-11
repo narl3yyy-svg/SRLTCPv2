@@ -4,13 +4,13 @@
 
 SRLTCP is privacy-first communication software: no accounts, no central servers, and end-to-end encryption with a human-verifiable SAS step before you trust a peer. A single Rust core powers the desktop (Tauri) and Android (Kotlin/Compose) clients, so crypto and protocol behavior stay consistent everywhere.
 
-**Current release: [v0.2.30](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.30)**
+**Current release: [v0.2.31](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.2.31)**
 
 ---
 
 ## Security status (read this)
 
-v0.2.30 fixes **file transfer direction/previews**, **transfer reliability over iroh**, **saved-contact reconnect**, **call audio/hangup stability**, **video layout**, and **Android back navigation**. v0.2.29 added contact persistence, SAS auto-save, and startup reconnect without re-SAS. v0.2.13+ uses **iroh** NAT traversal and **double-ratchet-2** E2EE with QR v4. Security docs state honest residual risks (unaudited crypto, plaintext-at-rest chat).
+v0.2.31 fixes **`./run.sh --rebuild`** (Linux desktop launcher) and ensures **GitHub prebuilt** `srltcp-desktop-linux-x86_64` works. v0.2.30 fixed file transfers, calls, reconnect, and Android back navigation. v0.2.29 added contact persistence and SAS auto-save. v0.2.13+ uses **iroh** NAT traversal and **double-ratchet-2** E2EE with QR v4.
 
 **What works today**
 
@@ -77,7 +77,7 @@ run.bat
 Install the APK from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest):
 
 ```bash
-adb install dist/SRLTCPv2-0.2.30.apk
+adb install dist/SRLTCPv2-0.2.31.apk
 ```
 
 Or build locally (JDK 17, Android SDK/NDK):
@@ -116,11 +116,15 @@ Saved verified contacts persist locally with per-peer chat history. On startup t
 | Voice / video calls (WebRTC) | ✓ | ✓ |
 | Foreground background service | — | ✓ |
 
+### v0.2.31 highlights
+
+- `./run.sh --rebuild` fixed on Linux (no more "Binary missing or invalid" after successful compile)
+- GitHub Release asset `srltcp-desktop-linux-x86_64` — `./run.sh` auto-downloads when local dist is stale
+- `build-desktop.sh` stages to `dist/bin/linux-x86_64/srltcp-desktop` with version stamp
+
 ### v0.2.30 highlights
 
-- File transfer direction fixed (sender preview only on send; receiver gets image/video)
-- Transfer chunks use trusted encrypted wire path; stale iroh sessions refreshed on reconnect
-- Saved-contact reconnect without false disconnect / user-paused blocking
+- File transfer direction fixed; transfer reliability over iroh; saved-contact reconnect
 - Call audio, hangup stability, proportional video layout (desktop + Android)
 - Android back gesture dismisses SAS/sheets instead of trapping on verify screen
 
@@ -210,9 +214,9 @@ SRLTCP uses hybrid post-quantum key exchange, a double ratchet for forward secre
 Pushing a version tag triggers CI to publish desktop prebuilts and the Android APK:
 
 ```bash
-git tag -a v0.2.30 -m "SRLTCP v0.2.30"
+git tag -a v0.2.31 -m "SRLTCP v0.2.31"
 git push origin main
-git push origin v0.2.30
+git push origin v0.2.31
 ```
 
 ---

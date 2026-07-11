@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.2.31 — Linux launcher & prebuilt fix (2026-07-11)
+
+### Fixes
+
+- **`./run.sh --rebuild` broken** — Cargo build log was captured as the binary path (stdout pollution via `tee`). Build output now goes to stderr; `--rebuild` stages via `build-desktop.sh` and launches `dist/bin/linux-x86_64/srltcp-desktop`.
+- **Local fallback build** — Auto-build after failed GitHub download uses `find_staged_binary()` instead of version-gated `find_binary()`.
+- **Clearer errors** — "Binary missing or invalid" now shows the path tried and suggests `build-desktop.sh`.
+- **CI / release** — `srltcp-desktop-linux-x86_64` published on GitHub Releases (v0.2.30+); `build-desktop.sh` logs to stderr so scripts stay pipe-safe.
+
 ## v0.2.30 — Transfers, calls, reconnect, Android UX (2026-07-11)
 
 ### Fixes
