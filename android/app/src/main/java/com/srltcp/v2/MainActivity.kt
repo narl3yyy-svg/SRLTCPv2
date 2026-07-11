@@ -1258,9 +1258,14 @@ fun ChatScreen() {
                             scope.launch {
                                 try {
                                     WebRtcCallManagerHolder.handleSignal(
-                                        context, call.peerId, call.callId, "offer",
-                                        call.sdp, call.isVideo,
-                                    ) { state -> callState = state }
+                                        context = context,
+                                        peerId = call.peerId,
+                                        callId = call.callId,
+                                        signal = "offer",
+                                        payload = call.sdp,
+                                        isVideo = call.isVideo,
+                                        onState = { state -> callState = state },
+                                    )
                                 } catch (e: Exception) {
                                     showSnackbar("Answer failed: ${e.message ?: e}")
                                     scope.launch(Dispatchers.IO) {

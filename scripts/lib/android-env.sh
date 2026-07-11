@@ -71,7 +71,12 @@ write_local_properties() {
 
 verify_jni_libs() {
     local jni_dir="$1"
-    local abis=("arm64-v8a" "armeabi-v7a" "x86_64")
+    # Slim default is arm64-only; universal builds may include more ABIs.
+    if [[ "${SRLTCP_UNIVERSAL_APK:-0}" == "1" ]]; then
+        local abis=("arm64-v8a" "armeabi-v7a" "x86_64")
+    else
+        local abis=("arm64-v8a")
+    fi
     local missing=()
     for abi in "${abis[@]}"; do
         if [[ ! -f "$jni_dir/$abi/libsrltcp_core.so" ]]; then
