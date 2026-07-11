@@ -5660,6 +5660,7 @@ dependencies = [
  "image",
  "iroh",
  "iroh-tickets",
+ "jni 0.21.1",
  "ml-kem",
  "postcard",
  "qrcode",

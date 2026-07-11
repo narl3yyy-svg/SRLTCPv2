@@ -9,6 +9,9 @@ pub mod serial;
 pub mod transfer;
 pub mod webrtc;
 
+#[cfg(target_os = "android")]
+pub mod android_init;
+
 pub use crypto::{
     compute_sas, load_or_create_seed_file, parse_qr_payload, write_seed_file, HybridKeyExchange,
     Identity, IdentitySeed, ParsedQr, SessionRatchet,

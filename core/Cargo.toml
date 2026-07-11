@@ -13,7 +13,7 @@ name = "srltcp_core"
 [features]
 default = ["desktop"]
 desktop = ["dep:serialport"]
-android = []
+android = ["dep:jni"]
 
 [dependencies]
 tokio.workspace = true
@@ -64,6 +64,9 @@ postcard = { version = "1", features = ["alloc"] }
 
 # Serial transport (desktop only)
 serialport = { version = "4.6", optional = true }
+
+# Android JNI (ndk_context install for iroh DNS)
+jni = { version = "0.21", optional = true }
 
 # UniFFI bindings for Android/Kotlin
 uniffi = { version = "0.28", features = ["cli"] }
