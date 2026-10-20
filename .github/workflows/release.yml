@@ -144,44 +144,48 @@ jobs:
           ls -la release/
           test -n "$(ls -A release/ 2>/dev/null)" || { echo "No release assets found"; exit 1; }
 
+      - name: Write release notes
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Section for this version from CHANGELOG.md (up to the next "## v" heading)
+          awk -v v="## v${VERSION} " 'index($0, v) == 1 {on=1; next} on && /^## v/ {exit} on {print}' CHANGELOG.md > changes.md
+          {
+            echo "## SRLTCP v${VERSION}"
+            echo
+            echo "Private P2P messaging over iroh (NAT traversal) and serial — prebuilt binaries below."
+            echo
+            if [[ -s changes.md ]]; then cat changes.md; echo; fi
+            echo "### Desktop"
+            echo '```bash'
+            echo "git clone https://github.com/narl3yyy-svg/SRLTCPv2.git"
+            echo "cd SRLTCPv2"
+            echo "./run.sh          # Linux/macOS — builds locally with Rust, or downloads this release"
+            echo "run.bat           # Windows"
+            echo '```'
+            echo
+            echo "### Android"
+            echo '```bash'
+            echo "adb install SRLTCPv2-${VERSION}.apk"
+            echo '```'
+            echo "Default APK is **arm64-v8a** (most modern phones)."
+            echo
+            echo "### Assets"
+            echo "| Platform | Asset |"
+            echo "|----------|-------|"
+            echo "| Linux x86_64 | \`srltcp-desktop-linux-x86_64\` |"
+            echo "| macOS Apple Silicon | \`srltcp-desktop-macos-aarch64\` |"
+            echo "| macOS Intel | \`srltcp-desktop-macos-x86_64\` |"
+            echo "| Windows x86_64 | \`srltcp-desktop-windows-x86_64.exe\` |"
+            echo "| Android (arm64) | \`SRLTCPv2-${VERSION}.apk\` |"
+            echo
+            echo "See [SECURITY.md](https://github.com/narl3yyy-svg/SRLTCPv2/blob/main/docs/SECURITY.md) for residual risks."
+          } > release-notes.md
+          cat release-notes.md
+
       - uses: softprops/action-gh-release@v2
         with:
           make_latest: true
           fail_on_unmatched_files: false
           generate_release_notes: true
-          body: |
-            ## SRLTCP ${{ github.ref_name }}
-
-            Production-hardened private P2P messaging — **no compiler required**.
-
-            ### Highlights (v0.3.0)
-            - Persistent long-term identity (desktop + Android)
-            - Smaller desktop binaries (~14 MB Linux, stripped + LTO)
-            - Slim arm64 Android release APK
-            - QR + SAS trust gate; Double Ratchet E2EE for chat
-
-            ### Desktop
-            ```bash
-            git clone https://github.com/narl3yyy-svg/SRLTCPv2.git
-            cd SRLTCPv2
-            ./run.sh          # Linux/macOS — auto-downloads this release
-            run.bat           # Windows
-            ```
-
-            ### Android
-            ```bash
-            adb install SRLTCPv2-0.3.2.apk
-            ```
-            Default APK is **arm64-v8a** (most modern phones).
-
-            ### Assets
-            | Platform | Asset |
-            |----------|-------|
-            | Linux x86_64 | `srltcp-desktop-linux-x86_64` |
-            | macOS Apple Silicon | `srltcp-desktop-macos-aarch64` |
-            | macOS Intel | `srltcp-desktop-macos-x86_64` |
-            | Windows x86_64 | `srltcp-desktop-windows-x86_64.exe` |
-            | Android (arm64) | `SRLTCPv2-0.3.2.apk` |
-
-            See [SECURITY.md](https://github.com/narl3yyy-svg/SRLTCPv2/blob/main/docs/SECURITY.md) for residual risks.
+          body_path: release-notes.md
           files: release/*
