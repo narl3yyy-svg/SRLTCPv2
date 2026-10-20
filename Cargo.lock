@@ -5641,12 +5641,13 @@ dependencies = [
 
 [[package]]
 name = "srltcp-core"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "aws-lc-rs",
  "base64 0.22.1",
+ "bincode",
  "bytes",
  "chrono",
  "cobs",
@@ -5684,7 +5685,7 @@ dependencies = [
 
 [[package]]
 name = "srltcp-desktop"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",

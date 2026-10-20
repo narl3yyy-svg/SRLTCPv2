@@ -1,6 +1,6 @@
 # User Guide
 
-Using SRLTCP v0.3.2 for secure peer-to-peer messaging.
+Using SRLTCP v0.4.0 for secure peer-to-peer messaging.
 
 ## Getting Started
 
@@ -36,12 +36,16 @@ SRLTCP uses **QR v4** with an **iroh ticket** for NAT traversal — no port forw
 
 ### Serial Cable (Desktop, Optional)
 
-1. Connect a serial/USB cable between two machines
-2. Open **Add Peer** → **Serial cable (optional)**
-3. Select the port (e.g., `/dev/ttyUSB0` or `COM3`) and click **Connect Serial**
-4. Complete SAS verification with QR exchange
+Works with a direct USB-serial cable or a pair of serial radio modems — no network needed.
 
-Supported baud rates: 115200 (default), 230400, 460800, 921600.
+1. Connect the cable (or radios) between the two machines
+2. On **both** machines open **Add Peer** → **Serial cable (optional)**, pick the port
+   (e.g. `/dev/ttyUSB0` or `COM3`) and the **same baud rate**
+3. On machine **A**, click **Connect Serial** with the *Peer QR* box empty (it waits)
+4. On machine **B**, paste A's QR payload into *Peer QR*, then click **Connect Serial**
+5. Both screens show a 6-digit SAS code — confirm only if they match
+
+Baud rates: 9600–921600 (115200 default; 57600 for SiK radios).
 
 Click **↻ Refresh** in the serial section if your device was plugged in after the app started. If no ports appear, check the cable and (on Linux) add your user to the `dialout` group.
 
@@ -141,7 +145,7 @@ Settings → Apps → SRLTCP → Force Stop
 | Android back shows SAS screen | **v0.3.2+** — back dismisses SAS/sheets; swipe again moves app to background |
 | Call has no audio / hangup breaks UI | **v0.3.2+**; desktop: recv-only if no mic; Android: grant mic in Settings |
 | No serial ports listed | Plug in device, click **Refresh**; Linux: add user to `dialout` group |
-| Serial connect fails | Both peers on v0.3.2+; try another baud rate; check cable |
+| Serial connect fails | Both peers on v0.4.0+ and set to the same baud rate; check cable |
 | SAS codes don't match | Possible MITM — do not trust the connection; retry |
 | Port already in use | Run `./cleanup.sh` then restart |
 | Android service stopped | Disable battery optimization for SRLTCP |

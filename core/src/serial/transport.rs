@@ -1,26 +1,27 @@
 //! Async serial port transport with COBS framing and reliability layer.
+//!
+//! One link task owns the [`ReliabilityLayer`]: it fragments outbound messages into
+//! frames, feeds inbound bytes from a blocking reader thread through COBS/CRC decoding,
+//! sends ACKs, retransmits on timeout and reassembles messages. A writer thread does the
+//! blocking port writes. Dropping the transport (or [`SerialTransport::shutdown`]) stops all
+//! three and closes the port.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-
-#[cfg(all(not(target_os = "android"), feature = "desktop"))]
-use std::io::{Read, Write};
-
-use bytes::{Bytes, BytesMut};
-use tokio::sync::{mpsc, RwLock};
-#[cfg(all(not(target_os = "android"), feature = "desktop"))]
-use tokio::sync::Mutex;
-use tracing::{info, warn};
-#[cfg(all(not(target_os = "android"), feature = "desktop"))]
-use tracing::debug;
-
-#[cfg(all(not(target_os = "android"), feature = "desktop"))]
 use std::time::Duration;
 
-#[cfg(all(not(target_os = "android"), feature = "desktop"))]
-use serialport::SerialPort;
+use bytes::{Bytes, BytesMut};
+use tokio::sync::mpsc;
+use tracing::{info, warn};
 
-use super::frame::Frame;
+use super::frame::{Frame, MAX_PAYLOAD_SIZE};
 use super::reliability::ReliabilityLayer;
+
+/// Largest reassembled message accepted from the link.
+pub const MAX_MESSAGE_BYTES: usize = 32 * 1024 * 1024;
+const FRAG_MORE: u8 = 0x01;
+const FRAG_LAST: u8 = 0x00;
+const FRAGMENT_DATA: usize = MAX_PAYLOAD_SIZE - 1;
 
 /// Serial transport configuration.
 #[derive(Debug, Clone)]
@@ -36,9 +37,19 @@ impl Default for SerialConfig {
         Self {
             port_name: "/dev/ttyUSB0".to_string(),
             baud_rate: 115200,
-            rto_ms: 200,
+            rto_ms: 400,
             window_size: 8,
         }
+    }
+}
+
+impl SerialConfig {
+    /// Retransmission timeout scaled to the line rate: a full window of max-size frames must
+    /// fit on the wire before we consider a frame lost.
+    pub fn effective_rto(&self) -> Duration {
+        let bytes_per_sec = (self.baud_rate.max(1200) / 10) as u64;
+        let window_ms = (self.window_size as u64 * (MAX_PAYLOAD_SIZE as u64 + 32) * 1000) / bytes_per_sec;
+        Duration::from_millis(self.rto_ms.max(window_ms + 200))
     }
 }
 
@@ -54,27 +65,29 @@ pub enum SerialEvent {
 /// Managed serial transport with graceful shutdown.
 pub struct SerialTransport {
     config: SerialConfig,
-    running: Arc<RwLock<bool>>,
+    running: Arc<AtomicBool>,
     event_tx: mpsc::Sender<SerialEvent>,
-    write_tx: Arc<tokio::sync::Mutex<Option<mpsc::Sender<Bytes>>>>,
-    #[cfg(all(not(target_os = "android"), feature = "desktop"))]
-    port: Arc<Mutex<Option<Box<dyn SerialPort>>>>,
+    outbound_tx: std::sync::Mutex<Option<mpsc::Sender<Bytes>>>,
 }
 
 impl SerialTransport {
     pub fn new(config: SerialConfig) -> (Self, mpsc::Receiver<SerialEvent>) {
         let (event_tx, event_rx) = mpsc::channel(256);
-
         let transport = Self {
             config,
-            running: Arc::new(RwLock::new(false)),
+            running: Arc::new(AtomicBool::new(false)),
             event_tx,
-            write_tx: Arc::new(tokio::sync::Mutex::new(None)),
-            #[cfg(all(not(target_os = "android"), feature = "desktop"))]
-            port: Arc::new(Mutex::new(None)),
+            outbound_tx: std::sync::Mutex::new(None),
         };
-
         (transport, event_rx)
+    }
+
+    pub fn port_name(&self) -> &str {
+        &self.config.port_name
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
     }
 
     pub async fn start(&self) -> Result<(), String> {
@@ -85,147 +98,211 @@ impl SerialTransport {
 
         #[cfg(all(not(target_os = "android"), feature = "desktop"))]
         {
-            let mut running = self.running.write().await;
-            if *running {
+            use std::io::{Read, Write};
+
+            if self.running.load(Ordering::SeqCst) {
                 return Ok(());
             }
-
-            let port = serialport::new(&self.config.port_name, self.config.baud_rate)
+            let mut reader_port = serialport::new(&self.config.port_name, self.config.baud_rate)
                 .timeout(Duration::from_millis(100))
                 .open()
                 .map_err(|e| format!("failed to open {}: {e}", self.config.port_name))?;
-
+            let mut writer_port = reader_port
+                .try_clone()
+                .map_err(|e| format!("failed to clone {}: {e}", self.config.port_name))?;
             info!(port = %self.config.port_name, baud = self.config.baud_rate, "serial port opened");
+            self.running.store(true, Ordering::SeqCst);
 
-            let port_arc = Arc::new(Mutex::new(port));
-            {
-                let mut guard = self.port.lock().await;
-                *guard = None;
-            }
-
-            let (write_tx, mut write_rx) = mpsc::channel::<Bytes>(256);
-            *self.write_tx.lock().await = Some(write_tx);
-
-            let running_w = self.running.clone();
-            let port_write = port_arc.clone();
-            tokio::spawn(async move {
-                while *running_w.read().await {
-                    match write_rx.recv().await {
-                        Some(data) => {
-                            let mut guard = port_write.lock().await;
-                            if let Err(e) = guard.write_all(&data) {
-                                warn!(error = %e, "serial write failed");
-                                break;
-                            }
-                            let _ = guard.flush();
-                        }
-                        None => break,
-                    }
-                }
-            });
-
+            // Reader thread: raw bytes → link task.
+            let (raw_tx, raw_rx) = mpsc::channel::<Vec<u8>>(256);
             let running_r = self.running.clone();
-            let event_tx = self.event_tx.clone();
-            let port_name_r = self.config.port_name.clone();
-            let port_read = port_arc.clone();
-            let rto = self.config.rto_ms;
-            let window = self.config.window_size;
-            tokio::task::spawn_blocking(move || {
-                let mut reader = SerialReader::new(rto, window);
+            let err_tx = self.event_tx.clone();
+            std::thread::spawn(move || {
                 let mut buf = [0u8; 4096];
-                while *running_r.blocking_read() {
-                    let n = {
-                        let mut guard = port_read.blocking_lock();
-                        match guard.read(&mut buf) {
-                            Ok(0) => break,
-                            Ok(n) => n,
-                            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
-                            Err(e) => {
-                                let _ = event_tx.blocking_send(SerialEvent::Error(format!(
-                                    "serial read error: {e}"
-                                )));
+                while running_r.load(Ordering::SeqCst) {
+                    match reader_port.read(&mut buf) {
+                        Ok(0) => continue,
+                        Ok(n) => {
+                            if raw_tx.blocking_send(buf[..n].to_vec()).is_err() {
                                 break;
                             }
                         }
-                    };
-                    let output = reader.feed(&buf[..n]);
-                    for payload in output.delivered {
-                        let _ = event_tx.blocking_send(SerialEvent::DataReceived(payload));
-                    }
-                    for frame in output
-                        .responses
-                        .iter()
-                        .chain(output.retransmits.iter())
-                    {
-                        let encoded = frame.encode();
-                        let mut guard = port_read.blocking_lock();
-                        let _ = guard.write_all(&encoded);
-                        let _ = guard.flush();
+                        Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut
+                            || e.kind() == std::io::ErrorKind::Interrupted => continue,
+                        Err(e) => {
+                            let _ = err_tx.blocking_send(SerialEvent::Error(format!("serial read error: {e}")));
+                            break;
+                        }
                     }
                 }
-                let _ = event_tx.blocking_send(SerialEvent::Disconnected {
-                    port: port_name_r,
-                    reason: "connection closed".to_string(),
-                });
             });
 
-            *running = true;
-            drop(running);
+            // Writer thread: encoded frames → port. Ends when the link task drops its sender.
+            let (wire_tx, wire_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+            std::thread::spawn(move || {
+                for bytes in wire_rx {
+                    if let Err(e) = writer_port.write_all(&bytes).and_then(|_| writer_port.flush()) {
+                        warn!(error = %e, "serial write failed");
+                        break;
+                    }
+                }
+            });
+
+            let (outbound_tx, outbound_rx) = mpsc::channel::<Bytes>(64);
+            *self.outbound_tx.lock().expect("serial lock") = Some(outbound_tx);
+
+            let link = LinkConfig {
+                port: self.config.port_name.clone(),
+                rto: self.config.effective_rto(),
+                window: self.config.window_size,
+            };
+            let running = self.running.clone();
+            let event_tx = self.event_tx.clone();
+            tokio::spawn(async move {
+                let reason = run_link(link.clone(), raw_rx, outbound_rx, wire_tx, event_tx.clone(), running.clone()).await;
+                running.store(false, Ordering::SeqCst);
+                let _ = event_tx.send(SerialEvent::Disconnected { port: link.port, reason }).await;
+            });
 
             let _ = self
                 .event_tx
-                .send(SerialEvent::Connected {
-                    port: self.config.port_name.clone(),
-                })
+                .send(SerialEvent::Connected { port: self.config.port_name.clone() })
                 .await;
-
             Ok(())
         }
     }
 
+    /// Queue one message (any size up to [`MAX_MESSAGE_BYTES`]) for reliable delivery.
     pub async fn send(&self, data: Bytes) -> Result<(), String> {
-        if !*self.running.read().await {
-            return Err("transport not running".to_string());
+        if !self.running.load(Ordering::SeqCst) {
+            return Err("serial transport not running".to_string());
         }
-        let tx = self.write_tx.lock().await;
-        let Some(ref write_tx) = *tx else {
-            return Err("serial writer not ready".to_string());
-        };
-        write_tx
-            .send(data)
+        if data.len() > MAX_MESSAGE_BYTES {
+            return Err(format!("message too large for serial link ({} bytes)", data.len()));
+        }
+        let tx = self
+            .outbound_tx
+            .lock()
+            .expect("serial lock")
+            .clone()
+            .ok_or_else(|| "serial writer not ready".to_string())?;
+        tx.send(data)
             .await
-            .map_err(|e| format!("write channel closed: {e}"))
+            .map_err(|_| "serial link closed".to_string())
     }
 
     pub async fn shutdown(&self) {
-        let mut running = self.running.write().await;
-        if !*running {
+        if !self.running.swap(false, Ordering::SeqCst) {
             return;
         }
-        *running = false;
-
         info!(port = %self.config.port_name, "serial transport shutting down");
+        // Dropping the outbound sender ends the link task, which drops the writer channel;
+        // the reader thread exits on its next 100 ms read timeout. Both port handles close.
+        self.outbound_tx.lock().expect("serial lock").take();
+    }
+}
 
-        #[cfg(all(not(target_os = "android"), feature = "desktop"))]
-        {
-            let mut guard = self.port.lock().await;
-            if let Some(port) = guard.take() {
-                drop(port);
-                debug!("serial port closed");
+impl Drop for SerialTransport {
+    fn drop(&mut self) {
+        self.running.store(false, Ordering::SeqCst);
+    }
+}
+
+#[derive(Clone)]
+pub struct LinkConfig {
+    pub port: String,
+    pub rto: Duration,
+    pub window: usize,
+}
+
+/// Split a message into link fragments: `[FRAG_MORE|FRAG_LAST][data…]`.
+fn fragment(msg: &[u8]) -> Vec<Bytes> {
+    if msg.is_empty() {
+        return vec![Bytes::from_static(&[FRAG_LAST])];
+    }
+    let chunks: Vec<&[u8]> = msg.chunks(FRAGMENT_DATA).collect();
+    let last = chunks.len() - 1;
+    chunks
+        .into_iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let mut b = BytesMut::with_capacity(c.len() + 1);
+            b.extend_from_slice(&[if i == last { FRAG_LAST } else { FRAG_MORE }]);
+            b.extend_from_slice(c);
+            b.freeze()
+        })
+        .collect()
+}
+
+/// Drive one serial link until the port closes, the peer stops acknowledging, or the
+/// transport is shut down. Returns the disconnect reason. Generic over the byte pipes so it
+/// can be tested without hardware.
+pub async fn run_link(
+    cfg: LinkConfig,
+    mut raw_rx: mpsc::Receiver<Vec<u8>>,
+    mut outbound_rx: mpsc::Receiver<Bytes>,
+    wire_tx: std::sync::mpsc::Sender<Vec<u8>>,
+    event_tx: mpsc::Sender<SerialEvent>,
+    running: Arc<AtomicBool>,
+) -> String {
+    let mut reader = SerialReader::new(cfg.rto.as_millis() as u64, cfg.window);
+    let mut pending: std::collections::VecDeque<Bytes> = std::collections::VecDeque::new();
+    let mut reassembly: Vec<u8> = Vec::new();
+    let mut tick = tokio::time::interval(Duration::from_millis(50));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    loop {
+        while let Some(frag) = pending.front() {
+            match reader.prepare_send(frag.clone()) {
+                Some(frame) => {
+                    if wire_tx.send(frame.encode()).is_err() {
+                        return "serial writer stopped".into();
+                    }
+                    pending.pop_front();
+                }
+                None => break,
             }
         }
 
-        let _ = self
-            .event_tx
-            .send(SerialEvent::Disconnected {
-                port: self.config.port_name.clone(),
-                reason: "graceful shutdown".to_string(),
-            })
-            .await;
-    }
-
-    pub fn is_running(&self) -> Arc<RwLock<bool>> {
-        self.running.clone()
+        tokio::select! {
+            raw = raw_rx.recv() => {
+                let Some(raw) = raw else { return "serial port closed".into() };
+                let out = reader.feed(&raw);
+                for frame in out.responses.iter().chain(out.retransmits.iter()) {
+                    let _ = wire_tx.send(frame.encode());
+                }
+                for payload in out.delivered {
+                    let Some((&flag, data)) = payload.split_first() else { continue };
+                    if reassembly.len() + data.len() > MAX_MESSAGE_BYTES {
+                        warn!("serial message exceeds limit — dropping");
+                        reassembly.clear();
+                        continue;
+                    }
+                    reassembly.extend_from_slice(data);
+                    if flag == FRAG_LAST {
+                        let msg = Bytes::from(std::mem::take(&mut reassembly));
+                        if event_tx.send(SerialEvent::DataReceived(msg)).await.is_err() {
+                            return "engine stopped".into();
+                        }
+                    }
+                }
+            }
+            msg = outbound_rx.recv(), if pending.len() < cfg.window * 4 => {
+                let Some(msg) = msg else { return "graceful shutdown".into() };
+                pending.extend(fragment(&msg));
+            }
+            _ = tick.tick() => {
+                for frame in reader.poll() {
+                    let _ = wire_tx.send(frame.encode());
+                }
+                if reader.link_failed() {
+                    return "link lost — peer stopped acknowledging".into();
+                }
+                if !running.load(Ordering::SeqCst) {
+                    return "graceful shutdown".into();
+                }
+            }
+        }
     }
 }
 
@@ -247,6 +324,10 @@ impl SerialReader {
 
     pub fn feed(&mut self, data: &[u8]) -> ReaderOutput {
         self.rx_buffer.extend_from_slice(data);
+        // Garbage without delimiters must not grow the buffer forever.
+        if self.rx_buffer.len() > 4 * super::frame::MAX_FRAME_SIZE && !self.rx_buffer.contains(&0) {
+            self.rx_buffer.clear();
+        }
         let mut delivered = Vec::new();
         let mut responses = Vec::new();
 
@@ -273,6 +354,16 @@ impl SerialReader {
     pub fn prepare_send(&mut self, payload: Bytes) -> Option<Frame> {
         self.reliability.prepare_send(payload)
     }
+
+    /// Timer-driven retransmits.
+    pub fn poll(&mut self) -> Vec<Frame> {
+        self.reliability.poll_retransmits()
+    }
+
+    /// A frame exhausted its retries — the link is unusable.
+    pub fn link_failed(&self) -> bool {
+        self.reliability.has_failed()
+    }
 }
 
 pub struct ReaderOutput {
@@ -282,15 +373,14 @@ pub struct ReaderOutput {
 }
 
 fn extract_frame(buf: &mut BytesMut) -> Option<Vec<u8>> {
-    if let Some(pos) = buf.iter().position(|&b| b == 0x00) {
+    loop {
+        let pos = buf.iter().position(|&b| b == 0x00)?;
         let frame = buf[..pos].to_vec();
         let _ = buf.split_to(pos + 1);
-        if frame.is_empty() {
-            return None;
+        // Skip empty frames (line noise / back-to-back delimiters) instead of stopping.
+        if !frame.is_empty() {
+            return Some(frame);
         }
-        Some(frame)
-    } else {
-        None
     }
 }
 
@@ -359,6 +449,79 @@ mod tests {
         let extracted = extract_frame(&mut buf);
         assert!(extracted.is_some());
         assert!(buf.is_empty());
+    }
+
+    /// Two links joined by an in-memory cable that drops every 7th frame in each direction.
+    #[tokio::test]
+    async fn link_survives_frame_loss_and_reassembles() {
+        fn spawn_end(
+            raw_rx: mpsc::Receiver<Vec<u8>>,
+        ) -> (mpsc::Sender<Bytes>, std::sync::mpsc::Receiver<Vec<u8>>, mpsc::Receiver<SerialEvent>) {
+            let (out_tx, out_rx) = mpsc::channel(64);
+            let (wire_tx, wire_rx) = std::sync::mpsc::channel();
+            let (ev_tx, ev_rx) = mpsc::channel(64);
+            let cfg = LinkConfig { port: "test".into(), rto: Duration::from_millis(150), window: 8 };
+            tokio::spawn(run_link(cfg, raw_rx, out_rx, wire_tx, ev_tx, Arc::new(AtomicBool::new(true))));
+            (out_tx, wire_rx, ev_rx)
+        }
+        fn lossy_pipe(from: std::sync::mpsc::Receiver<Vec<u8>>, to: mpsc::Sender<Vec<u8>>) {
+            std::thread::spawn(move || {
+                for (i, frame) in from.into_iter().enumerate() {
+                    if i % 7 == 3 {
+                        continue;
+                    }
+                    if to.blocking_send(frame).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        let (a_raw_tx, a_raw_rx) = mpsc::channel(256);
+        let (b_raw_tx, b_raw_rx) = mpsc::channel(256);
+        let (a_out, a_wire, _a_ev) = spawn_end(a_raw_rx);
+        let (_b_out, b_wire, mut b_ev) = spawn_end(b_raw_rx);
+        lossy_pipe(a_wire, b_raw_tx);
+        lossy_pipe(b_wire, a_raw_tx);
+
+        let msgs: Vec<Vec<u8>> = vec![
+            b"small".to_vec(),
+            vec![],
+            (0..30_000u32).map(|i| (i % 255) as u8).collect(),
+            vec![0u8; FRAGMENT_DATA],
+        ];
+        for m in &msgs {
+            a_out.send(Bytes::from(m.clone())).await.unwrap();
+        }
+        for want in &msgs {
+            let got = tokio::time::timeout(Duration::from_secs(20), async {
+                loop {
+                    if let Some(SerialEvent::DataReceived(d)) = b_ev.recv().await {
+                        return d;
+                    }
+                }
+            })
+            .await
+            .expect("message not delivered");
+            assert_eq!(&got[..], &want[..]);
+        }
+    }
+
+    #[test]
+    fn fragments_cover_message_exactly() {
+        let msg = vec![9u8; FRAGMENT_DATA * 2 + 5];
+        let frags = fragment(&msg);
+        assert_eq!(frags.len(), 3);
+        assert!(frags.iter().all(|f| f.len() <= MAX_PAYLOAD_SIZE));
+        assert_eq!(frags[2][0], FRAG_LAST);
+        assert_eq!(frags.iter().map(|f| f.len() - 1).sum::<usize>(), msg.len());
+    }
+
+    #[test]
+    fn rto_scales_with_baud() {
+        let slow = SerialConfig { baud_rate: 9600, ..Default::default() };
+        let fast = SerialConfig { baud_rate: 921_600, ..Default::default() };
+        assert!(slow.effective_rto() > fast.effective_rto());
+        assert!(fast.effective_rto() >= Duration::from_millis(400));
     }
 
     #[test]

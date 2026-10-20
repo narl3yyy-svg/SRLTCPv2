@@ -44,22 +44,15 @@ if [[ -f "$PID_FILE" ]]; then
     rm -f "$PID_FILE"
 fi
 
-# Kill any remaining srltcp-desktop processes
-if pgrep -f "srltcp-desktop" &>/dev/null; then
-    log "Killing remaining srltcp-desktop processes..."
-    pkill -TERM -f "srltcp-desktop" 2>/dev/null || true
+# Kill any remaining srltcp-desktop processes (exact process name only — never editors or
+# shells whose command line merely mentions the path)
+if pgrep -x "srltcp-desktop" &>/dev/null; then
+    log "Stopping remaining srltcp-desktop processes..."
+    pkill -TERM -x "srltcp-desktop" 2>/dev/null || true
     sleep 2
-    pkill -9 -f "srltcp-desktop" 2>/dev/null || true
+    pkill -KILL -x "srltcp-desktop" 2>/dev/null || true
 fi
-
-# Release QUIC port if held
-QUIC_PORT="${SRLTCP_PORT:-9473}"
-if command -v fuser &>/dev/null; then
-    fuser -k "${QUIC_PORT}/udp" 2>/dev/null || true
-    fuser -k "${QUIC_PORT}/tcp" 2>/dev/null || true
-elif command -v lsof &>/dev/null; then
-    lsof -ti:"${QUIC_PORT}" | xargs -r kill -9 2>/dev/null || true
-fi
+# iroh binds ephemeral UDP ports owned by the process above, so nothing else to release.
 
 # Remove temp/state files
 rm -f "$SCRIPT_DIR/.srltcp.pid"

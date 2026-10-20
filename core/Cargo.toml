@@ -2,6 +2,7 @@
 name = "srltcp-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "SRLTCP core library — crypto, serial, P2P networking"
@@ -46,6 +47,8 @@ hkdf = "0.12"
 ml-kem = { version = "0.3", features = ["getrandom"] }
 # Signal-spec Double Ratchet — pre-release; see docs/SECURITY.md residual risks
 double-ratchet-2 = "0.4.0-pre.2"
+# Snapshot/restore ratchet state around decrypt (same major version double-ratchet-2 uses)
+bincode = "1"
 zeroize = { version = "1", features = ["derive"] }
 
 # Networking — iroh NAT traversal (relay + hole punch)

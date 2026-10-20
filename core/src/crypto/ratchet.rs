@@ -88,19 +88,34 @@ impl SessionRatchet {
         })
     }
 
+    /// Decrypt one message. Corrupt, forged or replayed input returns an error and leaves the
+    /// session state untouched.
+    ///
+    /// `double-ratchet-2` panics (`expect`/`unwrap`) on authentication failure, malformed
+    /// headers and too many skipped keys, and mutates its chains before the AEAD check. We
+    /// snapshot the state, contain the panic, and roll back — otherwise a single bad frame from
+    /// a peer would abort the process or desynchronise the session.
     pub fn decrypt(&mut self, envelope: &RatchetEnvelope) -> Result<Vec<u8>, RatchetError> {
         let ad = b"srltcp-v3";
-        let header = Header::<PublicKey>::from(envelope.header_bytes.as_slice());
-        let plaintext = self.inner.ratchet_decrypt(
-            &header,
-            &envelope.ciphertext,
-            &envelope.nonce,
-            ad,
-        );
-        if !self.is_initiator {
-            self.send_ready = true;
+        let snapshot =
+            bincode::serialize(&self.inner).map_err(|e| RatchetError::Encode(e.to_string()))?;
+        let result = quiet_catch_unwind(|| {
+            let header = Header::<PublicKey>::from(envelope.header_bytes.as_slice());
+            self.inner
+                .ratchet_decrypt(&header, &envelope.ciphertext, &envelope.nonce, ad)
+        });
+        match result {
+            Ok(plaintext) => {
+                if !self.is_initiator {
+                    self.send_ready = true;
+                }
+                Ok(plaintext)
+            }
+            Err(()) => {
+                self.inner = bincode::deserialize(&snapshot).map_err(|_| RatchetError::InvalidState)?;
+                Err(RatchetError::DecryptFailed)
+            }
         }
-        Ok(plaintext)
     }
 
     /// Legacy bytes wrapper for wire migration: postcard-encoded envelope.
@@ -114,6 +129,27 @@ impl SessionRatchet {
             .map_err(|_| RatchetError::DecryptFailed)?;
         self.decrypt(&env)
     }
+}
+
+thread_local! {
+    static SUPPRESS_PANIC_OUTPUT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `f`, turning a panic into `Err(())` without printing the panic message for it.
+fn quiet_catch_unwind<R>(f: impl FnOnce() -> R) -> Result<R, ()> {
+    static HOOK: std::sync::Once = std::sync::Once::new();
+    HOOK.call_once(|| {
+        let default = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if !SUPPRESS_PANIC_OUTPUT.with(|s| s.get()) {
+                default(info);
+            }
+        }));
+    });
+    SUPPRESS_PANIC_OUTPUT.with(|s| s.set(true));
+    let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    SUPPRESS_PANIC_OUTPUT.with(|s| s.set(false));
+    out.map_err(|_| ())
 }
 
 fn derive_ratchet_sk(shared_secret: &[u8]) -> [u8; 32] {
@@ -146,5 +182,39 @@ mod tests {
         let env_a = alice.encrypt(b"second").unwrap();
         let _ = bob.decrypt(&env_a).unwrap();
         let _ = header;
+    }
+
+    #[test]
+    fn tampered_ciphertext_is_rejected_without_breaking_session() {
+        let secret = [3u8; 32];
+        let (mut bob, bob_pk) = SessionRatchet::init_responder(&secret).unwrap();
+        let mut alice = SessionRatchet::init_initiator(&secret, &bob_pk);
+
+        let mut bad = alice.encrypt(b"first").unwrap();
+        bad.ciphertext[0] ^= 0xff;
+        assert!(bob.decrypt(&bad).is_err());
+        assert!(!bob.can_send(), "failed decrypt must not open the responder send chain");
+
+        // Garbage header bytes must not panic either.
+        let junk = RatchetEnvelope { header_bytes: vec![1, 2, 3], ciphertext: vec![0; 40], nonce: [0; 12] };
+        assert!(bob.decrypt(&junk).is_err());
+        assert!(bob.decrypt_from_bytes(b"not postcard").is_err());
+
+        // Session still works afterwards.
+        let good = alice.encrypt(b"second").unwrap();
+        assert_eq!(bob.decrypt(&good).unwrap(), b"second");
+        assert!(bob.can_send());
+    }
+
+    #[test]
+    fn replayed_message_is_rejected() {
+        let secret = [4u8; 32];
+        let (mut bob, bob_pk) = SessionRatchet::init_responder(&secret).unwrap();
+        let mut alice = SessionRatchet::init_initiator(&secret, &bob_pk);
+        let env = alice.encrypt(b"once").unwrap();
+        assert_eq!(bob.decrypt(&env).unwrap(), b"once");
+        assert!(bob.decrypt(&env).is_err(), "replay must fail");
+        let next = alice.encrypt(b"twice").unwrap();
+        assert_eq!(bob.decrypt(&next).unwrap(), b"twice");
     }
 }

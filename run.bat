@@ -1,13 +1,11 @@
 @echo off
-REM SRLTCP — Download and Run (Windows)
+REM SRLTCP — Build (or download) and Run (Windows)
 setlocal EnableDelayedExpansion
 
 cd /d "%~dp0"
 
 set PID_FILE=%~dp0.srltcp.pid
 set LOG_FILE=%~dp0.srltcp.log
-set QUIC_PORT=%SRLTCP_PORT%
-if "%QUIC_PORT%"=="" set QUIC_PORT=9473
 set REPO=narl3yyy-svg/SRLTCPv2
 set PLATFORM=windows-x86_64
 
@@ -38,10 +36,17 @@ set PREBUILT=dist\bin\%PLATFORM%\srltcp-desktop.exe
 set FORCE_REBUILD=0
 set USE_PREBUILT=1
 
+set FORCE_PREBUILT=0
 if "%1"=="--rebuild" set FORCE_REBUILD=1
 if "%1"=="--no-prebuilt" set USE_PREBUILT=0
+if "%1"=="--prebuilt" set FORCE_PREBUILT=1
 
 if "%FORCE_REBUILD%"=="1" goto :build
+REM Default: build this checkout when Rust is installed, so you run the current source
+if "%FORCE_PREBUILT%"=="0" (
+    where cargo >nul 2>&1
+    if !ERRORLEVEL! equ 0 goto :build
+)
 
 if "%USE_PREBUILT%"=="1" (
     if exist "%PREBUILT%" (
@@ -72,10 +77,10 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-echo [SRLTCP] Building ^(may take a few minutes^)...
-cargo build --release -p srltcp-desktop >> "%LOG_FILE%" 2>&1
+echo [SRLTCP] Building ^(first build takes several minutes^)...
+cargo build --release -p srltcp-desktop
 if %ERRORLEVEL% neq 0 (
-    echo [SRLTCP] Build failed. Check %LOG_FILE%
+    echo [SRLTCP] Build failed - see the compiler output above.
     exit /b 1
 )
 echo [SRLTCP] Build complete.

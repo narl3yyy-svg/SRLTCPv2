@@ -12,8 +12,8 @@ android {
         applicationId = "com.srltcp.v2"
         minSdk = 26
         targetSdk = 35
-        versionCode = 302
-        versionName = "0.3.2"
+        versionCode = 400
+        versionName = "0.4.0"
         // Default slim APK: modern phones only. Set SRLTCP_UNIVERSAL_APK=1 for multi-ABI.
         ndk {
             if (System.getenv("SRLTCP_UNIVERSAL_APK") == "1") {

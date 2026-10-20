@@ -9,7 +9,10 @@ let peerConnection = null;
 let localStream = null;
 let remoteAudioStream = null;
 let pendingIncoming = null;
+// Remote ICE that arrived before our RTCPeerConnection / remote description existed.
+// Entries are { callId, data }; the caller trickles ICE before the callee clicks Answer.
 let pendingIceCandidates = [];
+let currentCallId = null;
 let callEndedNotified = false;
 let intentionalHangup = false;
 let callSettings = { mic: true, camera: false, audioInputId: '', audioOutputId: '' };
@@ -181,6 +184,7 @@ async function cleanupCall() {
   recvOnlyVideo = false;
   recvOnlyAudio = false;
   pendingIceCandidates = [];
+  currentCallId = null;
   peerConnection?.close();
   peerConnection = null;
   localStream?.getTracks().forEach((t) => t.stop());
@@ -239,33 +243,36 @@ function bindStreams(isVideo) {
 
 async function flushPendingIce() {
   if (!peerConnection?.remoteDescription) return;
-  const pending = pendingIceCandidates.splice(0);
-  for (const c of pending) {
-    try { await peerConnection.addIceCandidate(c); } catch (_) {}
+  const mine = pendingIceCandidates.filter((c) => c.callId === currentCallId);
+  pendingIceCandidates = pendingIceCandidates.filter((c) => c.callId !== currentCallId);
+  for (const c of mine) {
+    try { await peerConnection.addIceCandidate(new RTCIceCandidate(c.data)); } catch (_) {}
   }
 }
 
-async function addIceCandidateRaw(payload) {
-  if (!payload || !peerConnection) return;
+async function addIceCandidateRaw(payload, callId) {
+  if (!payload) return;
   let data;
   try {
     data = typeof payload === 'string' ? JSON.parse(payload) : payload;
   } catch (_) {
     return;
   }
-  const candidate = new RTCIceCandidate(data);
-  if (!peerConnection.remoteDescription) {
-    pendingIceCandidates.push(candidate);
+  if (!peerConnection || !peerConnection.remoteDescription || callId !== currentCallId) {
+    // Bounded buffer: only keep candidates for at most a couple of pending calls.
+    if (pendingIceCandidates.length < 200) pendingIceCandidates.push({ callId, data });
     return;
   }
   try {
-    await peerConnection.addIceCandidate(candidate);
+    await peerConnection.addIceCandidate(new RTCIceCandidate(data));
   } catch (_) {}
 }
 
 function createPeerConnection(peerId, callId, isVideo, invoke, onEnded) {
   peerConnection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-  pendingIceCandidates = [];
+  currentCallId = callId;
+  // Keep early ICE for this call only.
+  pendingIceCandidates = pendingIceCandidates.filter((c) => c.callId === callId);
   callEndedNotified = false;
 
   peerConnection.onicecandidate = (e) => {
@@ -357,6 +364,7 @@ async function declineIncomingCall(invoke) {
   const { peerId, callId, isVideo } = pendingIncoming;
   showIncomingModal(false);
   pendingIncoming = null;
+  pendingIceCandidates = pendingIceCandidates.filter((c) => c.callId !== callId);
   await invoke('send_call_signal', { peerId, callId, signal: 'end', payload: '', isVideo });
 }
 
@@ -382,17 +390,20 @@ async function handleIncomingCallSignal(p, invoke, activeCallRef, peerLabelFn, o
     }
     const peerLabel = peerLabelFn?.(peerId) || peerId;
     showIncomingModal(true, { peerId, callId, payload, isVideo, peerLabel });
+    if (typeof notifyDesktop === 'function') {
+      notifyDesktop(isVideo ? 'Incoming video call' : 'Incoming voice call', peerLabel);
+    }
     return null;
   }
 
-  if (signal === 'answer' && peerConnection) {
+  if (signal === 'answer' && peerConnection && callId === currentCallId) {
     await peerConnection.setRemoteDescription({ type: 'answer', sdp: payload });
     await flushPendingIce();
     return activeCallRef.current;
   }
 
   if (signal === 'ice' && payload) {
-    await addIceCandidateRaw(payload);
+    await addIceCandidateRaw(payload, callId);
     return null;
   }
 

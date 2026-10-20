@@ -29,7 +29,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
 
 use tokio::runtime::Runtime;
-use tokio::sync::Mutex;
 
 /// Library version string.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -247,6 +246,25 @@ fn engine_event_to_uniffi(event: EngineEvent) -> SrltcpEvent {
             error: None,
             auto_trusted: None,
         },
+        EngineEvent::TransferFailed {
+            id,
+            filename,
+            peer_id,
+            reason,
+        } => SrltcpEvent {
+            event_type: "transfer_failed".into(),
+            peer_id: Some(peer_id),
+            message: Some(reason.clone()),
+            content: None,
+            sas: None,
+            transfer_id: Some(id),
+            filename: Some(filename),
+            progress: None,
+            transport: None,
+            call_id: None,
+            error: Some(reason),
+            auto_trusted: None,
+        },
         EngineEvent::CallSignaling {
             call_id,
             peer_id,
@@ -370,9 +388,15 @@ uniffi::include_scaffolding!("srltcp_core");
 
 /// UniFFI-exported P2P engine wrapper.
 pub struct SrltcpEngine {
-    inner: Arc<Mutex<P2pEngine>>,
+    inner: P2pEngine,
     runtime: Runtime,
     events: Arc<StdMutex<VecDeque<SrltcpEvent>>>,
+}
+
+impl Default for SrltcpEngine {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SrltcpEngine {
@@ -411,7 +435,7 @@ impl SrltcpEngine {
         });
 
         Self {
-            inner: Arc::new(Mutex::new(engine)),
+            inner: engine,
             runtime,
             events,
         }
@@ -420,7 +444,7 @@ impl SrltcpEngine {
     /// Hex-encoded 32-byte Ed25519 seed for secure platform storage.
     pub fn identity_seed_hex(&self) -> String {
         self.runtime.block_on(async {
-            self.inner.lock().await.identity().seed_hex()
+            self.inner.identity().seed_hex()
         })
     }
 
@@ -438,18 +462,18 @@ impl SrltcpEngine {
 
     pub fn public_key_hex(&self) -> String {
         self.runtime.block_on(async {
-            self.inner.lock().await.public_key_hex()
+            self.inner.public_key_hex()
         })
     }
 
     pub fn qr_payload(&self) -> String {
         let inner = self.inner.clone();
         self.runtime.block_on(async move {
-            match inner.lock().await.qr_payload_async().await {
+            match inner.qr_payload_async().await {
                 Ok(payload) => payload,
                 Err(e) => {
                     tracing::warn!(error = %e, "QR v4 unavailable, returning identity-only fallback");
-                    inner.lock().await.qr_payload()
+                    inner.qr_payload()
                 }
             }
         })
@@ -457,14 +481,14 @@ impl SrltcpEngine {
 
     pub fn is_ready(&self) -> bool {
         self.runtime.block_on(async {
-            self.inner.lock().await.is_ready().await
+            self.inner.is_ready().await
         })
     }
 
     pub fn wait_until_ready(&self, timeout_secs: u64) {
         let inner = self.inner.clone();
         self.runtime.block_on(async {
-            if let Err(e) = inner.lock().await.wait_until_ready(timeout_secs).await {
+            if let Err(e) = inner.wait_until_ready(timeout_secs).await {
                 tracing::error!(error = %e, "wait_until_ready failed");
             }
         })
@@ -478,7 +502,7 @@ impl SrltcpEngine {
     pub fn confirm_peer_trusted(&self, peer_id: String) {
         let inner = self.inner.clone();
         self.runtime.block_on(async move {
-            if let Err(e) = inner.lock().await.confirm_peer_trusted(&peer_id).await {
+            if let Err(e) = inner.confirm_peer_trusted(&peer_id).await {
                 tracing::error!(error = %e, "confirm_peer_trusted failed");
             }
         });
@@ -486,19 +510,19 @@ impl SrltcpEngine {
 
     pub fn is_peer_trusted(&self, peer_id: String) -> bool {
         self.runtime.block_on(async {
-            self.inner.lock().await.is_peer_trusted(&peer_id).await
+            self.inner.is_peer_trusted(&peer_id).await
         })
     }
 
     pub fn is_peer_connected(&self, peer_id: String) -> bool {
         self.runtime.block_on(async {
-            self.inner.lock().await.is_peer_connected(&peer_id).await
+            self.inner.is_peer_connected(&peer_id).await
         })
     }
 
     pub fn iroh_ticket(&self) -> Option<String> {
         self.runtime.block_on(async {
-            self.inner.lock().await.iroh_ticket().await.ok()
+            self.inner.iroh_ticket().await.ok()
         })
     }
 
@@ -511,8 +535,7 @@ impl SrltcpEngine {
         self.runtime.block_on(async {
             match self
                 .inner
-                .lock()
-                .await
+                
                 .connect_and_verify(&remote_qr)
                 .await
             {
@@ -542,7 +565,7 @@ impl SrltcpEngine {
     pub fn start(&self, quic_port: u16) {
         let inner = self.inner.clone();
         self.runtime.spawn(async move {
-            if let Err(e) = inner.lock().await.start(quic_port).await {
+            if let Err(e) = inner.start(quic_port).await {
                 tracing::error!(error = %e, "engine start failed");
             }
         });
@@ -551,7 +574,7 @@ impl SrltcpEngine {
     pub fn connect_serial(&self, port_name: String, baud_rate: u32) {
         let inner = self.inner.clone();
         self.runtime.spawn(async move {
-            if let Err(e) = inner.lock().await.connect_serial(&port_name, baud_rate).await {
+            if let Err(e) = inner.connect_serial(&port_name, baud_rate).await {
                 tracing::error!(error = %e, "serial connect failed");
             }
         });
@@ -560,7 +583,7 @@ impl SrltcpEngine {
     pub fn connect_quic(&self, addr: String) {
         let inner = self.inner.clone();
         self.runtime.spawn(async move {
-            if let Err(e) = inner.lock().await.connect_quic(&addr).await {
+            if let Err(e) = inner.connect_quic(&addr).await {
                 tracing::error!(error = %e, "quic connect failed");
             }
         });
@@ -569,7 +592,7 @@ impl SrltcpEngine {
     pub fn load_trusted_pubkeys(&self, pubkeys: Vec<String>) {
         let inner = self.inner.clone();
         self.runtime.block_on(async move {
-            inner.lock().await.load_trusted_pubkeys(pubkeys).await;
+            inner.load_trusted_pubkeys(pubkeys).await;
         });
     }
 
@@ -577,8 +600,7 @@ impl SrltcpEngine {
         let inner = self.inner.clone();
         self.runtime.block_on(async move {
             inner
-                .lock()
-                .await
+                
                 .set_receive_dir(PathBuf::from(path))
                 .await;
         });
@@ -587,7 +609,7 @@ impl SrltcpEngine {
     pub fn disconnect_peer(&self, peer_id: String) {
         let inner = self.inner.clone();
         self.runtime.spawn(async move {
-            if let Err(e) = inner.lock().await.disconnect_peer(&peer_id).await {
+            if let Err(e) = inner.disconnect_peer(&peer_id).await {
                 tracing::error!(error = %e, "disconnect failed");
             }
         });
@@ -597,8 +619,7 @@ impl SrltcpEngine {
         self.runtime.block_on(async {
             match self
                 .inner
-                .lock()
-                .await
+                
                 .handshake_with(&peer_id, &remote_qr)
                 .await
             {
@@ -612,7 +633,7 @@ impl SrltcpEngine {
         let inner = self.inner.clone();
         let events = self.events.clone();
         self.runtime.spawn(async move {
-            if let Err(e) = inner.lock().await.send_message(&peer_id, &content).await {
+            if let Err(e) = inner.send_message(&peer_id, &content).await {
                 tracing::error!(error = %e, "send failed");
                 if let Ok(mut q) = events.lock() {
                     q.push_back(SrltcpEvent {
@@ -636,7 +657,7 @@ impl SrltcpEngine {
 
     pub fn send_file(&self, peer_id: String, file_path: String) -> TransferInfo {
         self.runtime.block_on(async {
-            match self.inner.lock().await.send_file(&peer_id, &file_path).await {
+            match self.inner.send_file(&peer_id, &file_path).await {
                 Ok((transfer_id, filename, progress)) => TransferInfo {
                     transfer_id,
                     filename: filename.clone(),
@@ -659,8 +680,7 @@ impl SrltcpEngine {
     pub fn start_voice_call(&self, peer_id: String) -> String {
         self.runtime.block_on(async {
             self.inner
-                .lock()
-                .await
+                
                 .start_call(&peer_id, false)
                 .await
                 .unwrap_or_else(|e| format!("error: {e}"))
@@ -670,8 +690,7 @@ impl SrltcpEngine {
     pub fn start_video_call(&self, peer_id: String) -> String {
         self.runtime.block_on(async {
             self.inner
-                .lock()
-                .await
+                
                 .start_call(&peer_id, true)
                 .await
                 .unwrap_or_else(|e| format!("error: {e}"))
@@ -681,7 +700,7 @@ impl SrltcpEngine {
     pub fn end_call(&self, peer_id: String, call_id: String) {
         let inner = self.inner.clone();
         self.runtime.spawn(async move {
-            if let Err(e) = inner.lock().await.end_call(&peer_id, &call_id).await {
+            if let Err(e) = inner.end_call(&peer_id, &call_id).await {
                 tracing::error!(error = %e, "end call failed");
             }
         });
@@ -698,8 +717,7 @@ impl SrltcpEngine {
         let inner = self.inner.clone();
         self.runtime.spawn(async move {
             if let Err(e) = inner
-                .lock()
-                .await
+                
                 .send_call_signal(&peer_id, &call_id, &signal, &payload, is_video)
                 .await
             {
@@ -711,7 +729,7 @@ impl SrltcpEngine {
     pub fn cancel_transfer(&self, transfer_id: String) {
         let inner = self.inner.clone();
         self.runtime.spawn(async move {
-            if let Err(e) = inner.lock().await.cancel_transfer(&transfer_id).await {
+            if let Err(e) = inner.cancel_transfer(&transfer_id).await {
                 tracing::error!(error = %e, "cancel transfer failed");
             }
         });
@@ -720,46 +738,46 @@ impl SrltcpEngine {
     pub fn register_saved_peer(&self, peer_id: String, qr: String) {
         let inner = self.inner.clone();
         self.runtime.block_on(async move {
-            inner.lock().await.register_saved_peer(&peer_id, &qr).await;
+            inner.register_saved_peer(&peer_id, &qr).await;
         });
     }
 
     pub fn set_display_name(&self, name: String) {
         let inner = self.inner.clone();
         self.runtime.block_on(async move {
-            inner.lock().await.set_display_name(&name).await;
+            inner.set_display_name(&name).await;
         });
     }
 
     pub fn get_peer_display_name(&self, peer_id: String) -> Option<String> {
         self.runtime.block_on(async {
-            self.inner.lock().await.get_display_name(&peer_id).await
+            self.inner.get_display_name(&peer_id).await
         })
     }
 
     pub fn broadcast_profile(&self, peer_id: String) {
         let inner = self.inner.clone();
         self.runtime.block_on(async move {
-            let _ = inner.lock().await.broadcast_profile(&peer_id).await;
+            let _ = inner.broadcast_profile(&peer_id).await;
         });
     }
 
     pub fn shutdown(&self) {
         let inner = self.inner.clone();
         self.runtime.block_on(async {
-            inner.lock().await.shutdown().await;
+            inner.shutdown().await;
         });
     }
 
     pub fn is_running(&self) -> bool {
         self.runtime.block_on(async {
-            self.inner.lock().await.is_running().await
+            self.inner.is_running().await
         })
     }
 
     pub fn connected_peers(&self) -> Vec<String> {
         self.runtime.block_on(async {
-            self.inner.lock().await.connected_peers().await
+            self.inner.connected_peers().await
         })
     }
 

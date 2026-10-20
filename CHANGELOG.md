@@ -1,5 +1,75 @@
 # Changelog
 
+## v0.4.0 — Reliability & security fix release (2026-10-20)
+
+Update both peers. The wire format is unchanged, so v0.3.x peers can still chat and send files; serial and the reconnect fixes need v0.4.0 on both ends.
+
+### Security
+
+- **Remote crash fixed** — a corrupt, forged or replayed ciphertext made the Double Ratchet
+  library panic, and with `panic = "abort"` that killed the app. Decryption failures are now
+  contained, rejected, and the session state is rolled back.
+- **Path traversal fixed** — received file names like `../../.bashrc` could be written outside
+  the downloads folder. Names are reduced to a single safe file name.
+- **No unauthenticated messages** — the legacy plaintext-JSON fallback let any connection inject
+  chat messages with a spoofed sender. Removed; the sender of every message is now the identity
+  proven by the handshake, not the field the peer claims.
+- **Trust gate on receive** — messages from a peer who has not passed the SAS check are held
+  (not shown) until you confirm the code, and dropped if you reject it.
+- **Hostile transfer offers rejected** — absurd chunk counts/sizes no longer allocate gigabytes.
+
+### Connections
+
+- **Reconnect works** — after a disconnect, the old connection's shutdown no longer tears down
+  the new one ("peer not found").
+- **Simultaneous dialing converges** — when both apps (re)connect at the same moment, both sides
+  deterministically keep the same connection and the same handshake (previously both failed, or
+  ended with different keys / SAS codes).
+- **No global engine lock** — the desktop and Android wrappers no longer serialize every call
+  behind one mutex (a slow connect froze messaging); fixed a deadlock in `qr_payload()` on Android.
+- One auto-reconnect loop per contact (the UI and engine no longer race), with a final
+  "offline" state when the peer stays unreachable. Messages to a verified offline contact queue
+  and deliver on reconnect.
+
+### Serial
+
+- **Serial links actually work** — the transport wrote raw bytes the receiver could not decode.
+  Messages are now fragmented into COBS/CRC frames with ACK/retransmit, and the RTO scales with
+  baud rate. A reliability bug that released un-ACKed frames is fixed.
+- The port is released on disconnect (reconnect no longer fails with "device busy").
+- **Pair over serial in the app**: paste the peer QR, pick port and baud rate, Connect, compare SAS.
+
+### File transfer
+
+- Streams from and to disk (no longer loads whole files into RAM on both sides); 64 KiB chunks
+  over iroh, windowed sending with timed resends instead of re-sending the same chunks every
+  20 ms, and per-chunk ACKs instead of ever-growing ACK lists (which were quadratic in file size).
+- SHA-256 verified before the file appears; new `transfer_failed` event; cancel works from
+  either side and only affects that peer's transfers; empty files work.
+
+### Desktop UI
+
+- Incoming messages and files go to the sender's chat (they were saved into whichever chat was open).
+- Contacts are named after the peer's display name (they were saved with *your* name).
+- The QR stored with a contact is the one that resolved to that peer (a stale QR could be
+  attached to the wrong contact).
+- Call ICE candidates that arrive before you press Answer are kept — calls connect reliably.
+- Events during startup are no longer lost; removed contacts stop being auto-trusted.
+
+### Build & launch
+
+- `./run.sh` / `run.bat` build **this checkout** by default (incremental) instead of downloading
+  the old Release binary; `--prebuilt` keeps the old behaviour. Clear error for Rust older than
+  1.91 (required by iroh).
+- Release profile uses thin LTO (lower peak memory for the final link) and `panic = "unwind"`.
+- `cleanup.sh` no longer kills unrelated processes by port or by command-line substring.
+
+### Tests
+
+- New two-peer end-to-end tests over real iroh (pair, chat both ways, 1.5 MB transfer, reconnect,
+  simultaneous reconnect, unverified-peer hold) and over a virtual serial cable (socat), plus
+  unit tests for tampered/replayed ciphertext, hostile offers, filename sanitizing and lossy links.
+
 ## v0.3.2 — Linux mic/camera WebKit permission (2026-07-11)
 
 ### Critical

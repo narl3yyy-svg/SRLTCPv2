@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SRLTCP — Download and Run (Linux/macOS)
+# SRLTCP — Build (or download) and Run (Linux/macOS)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,7 +10,6 @@ source "$SCRIPT_DIR/scripts/lib/version.sh"
 
 PID_FILE="$SCRIPT_DIR/.srltcp.pid"
 LOG_FILE="$SCRIPT_DIR/.srltcp.log"
-QUIC_PORT="${SRLTCP_PORT:-9473}"
 VERSION="$(get_workspace_version "$SCRIPT_DIR")"
 REPO="narl3yyy-svg/SRLTCPv2"
 
@@ -27,24 +26,26 @@ err()  { echo -e "${RED}[SRLTCP]${NC} $*" >&2; }
 
 FORCE_REBUILD=false
 USE_PREBUILT=true
+FORCE_PREBUILT=false
 GIT_PULL=false
-PREBUILT_RETRIES="${SRLTCP_PREBUILT_RETRIES:-18}"
+PREBUILT_RETRIES="${SRLTCP_PREBUILT_RETRIES:-3}"
 PREBUILT_RETRY_SECS="${SRLTCP_PREBUILT_RETRY_SECS:-10}"
 
 usage() {
-    echo "Usage: $0 [--pull] [--rebuild] [--no-prebuilt]"
-    echo "  (default)      Launch prebuilt binary (local or downloaded from Releases)"
+    echo "Usage: $0 [--pull] [--rebuild] [--prebuilt] [--no-prebuilt]"
+    echo "  (default)      Build this checkout locally (incremental, needs Rust) and launch;"
+    echo "                 falls back to a GitHub Release binary if Rust is not installed"
     echo "  --pull         git pull --ff-only from origin/main before launch"
-    echo "  --rebuild      Compile from source, then launch (developers only)"
-    echo "  --no-prebuilt  Skip GitHub download (use local dist/ only)"
-    echo ""
-    echo "Prebuilt download retries: ${PREBUILT_RETRIES}x every ${PREBUILT_RETRY_SECS}s while CI publishes."
+    echo "  --rebuild      Always compile from source (installs Rust via rustup if missing)"
+    echo "  --prebuilt     Skip compiling; use/download the Release binary for this version"
+    echo "  --no-prebuilt  Never download from GitHub"
 }
 
 for arg in "$@"; do
     case "$arg" in
         --pull) GIT_PULL=true ;;
         --rebuild) FORCE_REBUILD=true ;;
+        --prebuilt) FORCE_PREBUILT=true ;;
         --no-prebuilt) USE_PREBUILT=false ;;
         -h|--help) usage; exit 0 ;;
         *) err "Unknown option: $arg"; usage; exit 1 ;;
@@ -86,10 +87,6 @@ cleanup() {
             fi
         fi
         rm -f "$PID_FILE"
-    fi
-    if [[ "$(uname -s)" == "Linux" ]] && command -v fuser &>/dev/null; then
-        fuser -k "${QUIC_PORT}/udp" 2>/dev/null || true
-        fuser -k "${QUIC_PORT}/tcp" 2>/dev/null || true
     fi
     ok "Shutdown complete — ports and resources released."
     exit 0
@@ -419,9 +416,61 @@ find_staged_binary() {
     return 1
 }
 
+have_rust() {
+    if [[ -f "$HOME/.cargo/env" ]]; then
+        # shellcheck source=/dev/null
+        source "$HOME/.cargo/env"
+    fi
+    command -v cargo &>/dev/null
+}
+
+# Incremental local build of this checkout (a no-op in seconds when nothing changed).
+rust_too_old() {
+    local have major minor
+    have="$(rustc --version 2>/dev/null | awk '{print $2}')"
+    major="${have%%.*}"; minor="${have#*.}"; minor="${minor%%.*}"
+    [[ -n "$major" && -n "$minor" ]] || return 1
+    (( major < 1 || (major == 1 && minor < 91) ))
+}
+
+build_local() {
+    if rust_too_old; then
+        err "Rust $(rustc --version | awk '{print $2}') is too old — SRLTCP needs 1.91 or newer."
+        err "Update with:  rustup update stable"
+        return 1
+    fi
+    log "Building SRLTCP v${VERSION} from this checkout (first build takes several minutes)..."
+    if [[ "$(uname -s)" == "Linux" ]]; then
+        check_linux_deps || { err "Missing build dependencies (see above)."; return 1; }
+    elif [[ "$(uname -s)" == "Darwin" ]]; then
+        check_macos_deps || { err "Xcode command line tools missing (see above)."; return 1; }
+    fi
+    if ! "$SCRIPT_DIR/scripts/build-desktop.sh" >&2; then
+        err "Build failed — the full compiler output is above."
+        err "Common fixes: rustup update stable · install the packages listed in docs/BUILD.md ·"
+        err "close other apps if the final link step ran out of memory."
+        return 1
+    fi
+}
+
 resolve_binary() {
     local bin platform
     platform="$(platform_tag)"
+
+    # Default: run what is in this checkout, not an older Release binary.
+    if [[ "$FORCE_REBUILD" != true && "$FORCE_PREBUILT" != true ]] && have_rust; then
+        if build_local; then
+            bin="$(find_staged_binary)"
+            if [[ -n "$bin" ]]; then
+                printf '%s' "$bin"
+                return 0
+            fi
+        fi
+        if [[ "$USE_PREBUILT" != true ]]; then
+            exit 1
+        fi
+        warn "Falling back to the published Release binary for v${VERSION}..."
+    fi
 
     if [[ "$FORCE_REBUILD" == true ]]; then
         ensure_rust
@@ -541,7 +590,7 @@ main() {
     RUST_LOG="${RUST_LOG:-info,iroh=error,iroh_quinn=error}" "$binary" &
     local app_pid=$!
     echo "$app_pid" > "$PID_FILE"
-    ok "SRLTCP started (PID $app_pid, QUIC port $QUIC_PORT)"
+    ok "SRLTCP started (PID $app_pid)"
     log "Press Ctrl+C or close the window to shut down."
     echo ""
 

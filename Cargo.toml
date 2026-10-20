@@ -7,12 +7,14 @@ members = [
 exclude = ["android"]
 
 [workspace.package]
-version = "0.3.2"
+version = "0.4.0"
 edition = "2021"
+# iroh 1.x requires 1.91
+rust-version = "1.91"
 license = "MIT OR Apache-2.0"
 authors = ["SRLTCP Contributors"]
 repository = "https://github.com/narl3yyy-svg/SRLTCPv2"
-description = "Secure Reliable LAN/TCP/Serial P2P messaging — v0.3.2"
+description = "Secure Reliable LAN/TCP/Serial P2P messaging — v0.4.0"
 
 [workspace.dependencies]
 tokio = { version = "1.43", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "net", "fs"] }
@@ -31,13 +33,16 @@ base64 = "0.22"
 uuid = { version = "1.11", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 
-# Size-optimized release binaries (desktop + Android native)
+# Size-optimized release binaries (desktop + Android native).
+# Thin LTO keeps peak memory/time of the final link low on 8–16 GB machines.
+# panic = "unwind" is required: the ratchet contains library panics on bad ciphertext
+# (see crypto/ratchet.rs) and UniFFI converts panics into errors instead of aborting.
 [profile.release]
-lto = true
-codegen-units = 1
+lto = "thin"
+codegen-units = 4
 strip = true
 opt-level = "s"
-panic = "abort"
+panic = "unwind"
 
 # Even smaller for Android jniLibs when built with --profile release
 [profile.release-size]

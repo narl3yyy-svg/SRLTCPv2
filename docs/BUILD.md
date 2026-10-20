@@ -1,10 +1,10 @@
-# Build Instructions — SRLTCP v0.3.2
+# Build Instructions — SRLTCP v0.4.0
 
 ## Prerequisites
 
 | Component | Requirement |
 |-----------|-------------|
-| Rust | 1.85+ (only needed for `--rebuild` or developer builds) |
+| Rust | 1.91+ (`rustup update stable`; `./run.sh` builds from source when Rust is installed) |
 | Desktop Linux | `webkit2gtk-4.1`, `gtk3`, `libudev-dev`, `base-devel` |
 | Android SDK | API 35 (`sdkmanager "platforms;android-35"`) |
 | Android NDK | r27+ (`sdkmanager "ndk;27.2.12479018"`) |
@@ -14,19 +14,30 @@
 ## Desktop (End Users)
 
 ```bash
-./run.sh          # Linux/macOS — downloads prebuilt, no compile
+./run.sh          # Linux/macOS — builds this checkout (incremental) and launches
 run.bat           # Windows
 ```
 
-Launchers use prebuilt binaries from GitHub Releases. Compile only when needed:
+With Rust installed the launchers compile your local checkout, so you always run the
+source you have; without Rust they fall back to the matching GitHub Release binary.
 
 ```bash
-./run.sh --rebuild                              # Build + launch
+./run.sh --prebuilt                             # Use the Release binary instead
 cargo build --release -p srltcp-desktop         # Manual rebuild
-./scripts/build-desktop.sh                      # Stage prebuilt in dist/
+./scripts/build-desktop.sh                      # Stage the binary in dist/ (git-ignored)
 ```
 
-Release builds use LTO + strip (`Cargo.toml` `[profile.release]`).
+Release builds use thin LTO + strip (`Cargo.toml` `[profile.release]`), which keeps the
+final link under ~2.5 GB of RAM. If a build stops near the end (e.g. 908/910) with
+`signal: 9` / `Killed`, the linker ran out of memory: close other apps and re-run.
+
+### Tests
+
+```bash
+cargo test -p srltcp-core                                   # unit + integration
+cargo test -p srltcp-core --test engine_e2e -- --ignored    # two peers over iroh (network)
+cargo test -p srltcp-core --test serial_e2e -- --ignored    # serial over a socat pty pair
+```
 
 Ctrl+C or closing the window triggers graceful shutdown.
 

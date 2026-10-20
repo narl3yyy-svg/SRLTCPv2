@@ -1,4 +1,4 @@
-//! SRLTCP v0.3.1 Desktop — Tauri v2 backend with graceful shutdown.
+//! SRLTCP Desktop — Tauri v2 backend with graceful shutdown.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -10,10 +10,10 @@ use std::time::Duration;
 use srltcp_core::crypto::{load_or_create_seed_file, Identity};
 use srltcp_core::p2p::{EngineEvent, P2pEngine};
 use tauri::{Emitter, Manager, State};
-use tokio::sync::Mutex;
 
 struct AppState {
-    engine: Arc<Mutex<P2pEngine>>,
+    /// Cloneable handle; the engine is internally synchronized, so commands run concurrently.
+    engine: P2pEngine,
     shutting_down: Arc<AtomicBool>,
 }
 
@@ -66,28 +66,28 @@ fn load_persistent_identity() -> Identity {
     }
 }
 
-async fn graceful_shutdown(engine: Arc<Mutex<P2pEngine>>) {
+async fn graceful_shutdown(engine: P2pEngine) {
     let _ = tokio::time::timeout(Duration::from_secs(5), async {
-        engine.lock().await.shutdown().await;
+        engine.shutdown().await;
     })
     .await;
 }
 
 #[tauri::command]
 async fn get_public_key(state: State<'_, AppState>) -> Result<String, String> {
-    Ok(state.engine.lock().await.public_key_hex())
+    Ok(state.engine.public_key_hex())
 }
 
 #[tauri::command]
 async fn get_qr_payload(state: State<'_, AppState>) -> Result<String, String> {
-    let engine = state.engine.lock().await;
+    let engine = &state.engine;
     engine.wait_until_ready(30).await?;
     engine.qr_payload_async().await
 }
 
 #[tauri::command]
 async fn get_qr_image(state: State<'_, AppState>) -> Result<String, String> {
-    let payload = state.engine.lock().await.qr_payload_async().await?;
+    let payload = state.engine.qr_payload_async().await?;
     srltcp_core::qr_png_data_url(&payload)
 }
 
@@ -104,23 +104,40 @@ async fn connect_serial(
 ) -> Result<(), String> {
     state
         .engine
-        .lock()
-        .await
+        
         .connect_serial(&port_name, baud_rate)
         .await
 }
 
+/// Open a serial port and run the SAS handshake against the pasted peer QR.
+#[tauri::command]
+async fn verify_serial(
+    state: State<'_, AppState>,
+    port_name: String,
+    baud_rate: u32,
+    remote_qr: String,
+) -> Result<serde_json::Value, String> {
+    let (peer_id, sas, auto_trusted) = state
+        .engine
+        .connect_serial_and_verify(&port_name, baud_rate, &remote_qr)
+        .await?;
+    Ok(serde_json::json!({
+        "peer_id": peer_id,
+        "sas": sas,
+        "auto_trusted": auto_trusted,
+    }))
+}
+
 #[tauri::command]
 async fn get_iroh_ticket(state: State<'_, AppState>) -> Result<Option<String>, String> {
-    Ok(state.engine.lock().await.iroh_ticket().await.ok())
+    Ok(state.engine.iroh_ticket().await.ok())
 }
 
 #[tauri::command]
 async fn confirm_peer_trusted(state: State<'_, AppState>, peer_id: String) -> Result<(), String> {
     state
         .engine
-        .lock()
-        .await
+        
         .confirm_peer_trusted(&peer_id)
         .await
 }
@@ -130,7 +147,7 @@ async fn connect_and_verify(
     state: State<'_, AppState>,
     remote_qr: String,
 ) -> Result<serde_json::Value, String> {
-    let engine = state.engine.lock().await;
+    let engine = &state.engine;
     engine.wait_until_ready(30).await?;
     let (peer_id, sas, auto_trusted) = engine.connect_and_verify(&remote_qr).await?;
     Ok(serde_json::json!({
@@ -142,12 +159,12 @@ async fn connect_and_verify(
 
 #[tauri::command]
 async fn engine_is_ready(state: State<'_, AppState>) -> Result<bool, String> {
-    Ok(state.engine.lock().await.is_ready().await)
+    Ok(state.engine.is_ready().await)
 }
 
 #[tauri::command]
 async fn wait_for_engine(state: State<'_, AppState>) -> Result<(), String> {
-    state.engine.lock().await.wait_until_ready(30).await
+    state.engine.wait_until_ready(30).await
 }
 
 #[tauri::command]
@@ -155,13 +172,13 @@ async fn load_trusted_pubkeys(
     state: State<'_, AppState>,
     pubkeys: Vec<String>,
 ) -> Result<(), String> {
-    state.engine.lock().await.load_trusted_pubkeys(pubkeys).await;
+    state.engine.load_trusted_pubkeys(pubkeys).await;
     Ok(())
 }
 
 #[tauri::command]
 async fn disconnect_peer(state: State<'_, AppState>, peer_id: String) -> Result<(), String> {
-    state.engine.lock().await.disconnect_peer(&peer_id).await
+    state.engine.disconnect_peer(&peer_id).await
 }
 
 #[tauri::command]
@@ -172,8 +189,7 @@ async fn handshake(
 ) -> Result<String, String> {
     state
         .engine
-        .lock()
-        .await
+        
         .handshake_with(&peer_id, &remote_qr)
         .await
 }
@@ -186,8 +202,7 @@ async fn send_message(
 ) -> Result<(), String> {
     state
         .engine
-        .lock()
-        .await
+        
         .send_message(&peer_id, &content)
         .await
 }
@@ -200,8 +215,7 @@ async fn send_file(
 ) -> Result<serde_json::Value, String> {
     let (transfer_id, filename, progress) = state
         .engine
-        .lock()
-        .await
+        
         .send_file(&peer_id, &file_path)
         .await?;
     Ok(serde_json::json!({
@@ -213,17 +227,17 @@ async fn send_file(
 
 #[tauri::command]
 async fn get_peers(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    Ok(state.engine.lock().await.connected_peers().await)
+    Ok(state.engine.connected_peers().await)
 }
 
 #[tauri::command]
 async fn start_voice_call(state: State<'_, AppState>, peer_id: String) -> Result<String, String> {
-    state.engine.lock().await.start_call(&peer_id, false).await
+    state.engine.start_call(&peer_id, false).await
 }
 
 #[tauri::command]
 async fn start_video_call(state: State<'_, AppState>, peer_id: String) -> Result<String, String> {
-    state.engine.lock().await.start_call(&peer_id, true).await
+    state.engine.start_call(&peer_id, true).await
 }
 
 #[tauri::command]
@@ -237,8 +251,7 @@ async fn send_call_signal(
 ) -> Result<(), String> {
     state
         .engine
-        .lock()
-        .await
+        
         .send_call_signal(&peer_id, &call_id, &signal, &payload, is_video)
         .await
 }
@@ -249,12 +262,12 @@ async fn end_call(
     peer_id: String,
     call_id: String,
 ) -> Result<(), String> {
-    state.engine.lock().await.end_call(&peer_id, &call_id).await
+    state.engine.end_call(&peer_id, &call_id).await
 }
 
 #[tauri::command]
 async fn cancel_transfer(state: State<'_, AppState>, transfer_id: String) -> Result<(), String> {
-    state.engine.lock().await.cancel_transfer(&transfer_id).await
+    state.engine.cancel_transfer(&transfer_id).await
 }
 
 #[tauri::command]
@@ -263,19 +276,19 @@ async fn register_saved_peer(
     peer_id: String,
     qr: String,
 ) -> Result<(), String> {
-    state.engine.lock().await.register_saved_peer(&peer_id, &qr).await;
+    state.engine.register_saved_peer(&peer_id, &qr).await;
     Ok(())
 }
 
 #[tauri::command]
 async fn set_display_name(state: State<'_, AppState>, name: String) -> Result<(), String> {
-    state.engine.lock().await.set_display_name(&name).await;
+    state.engine.set_display_name(&name).await;
     Ok(())
 }
 
 #[tauri::command]
 async fn broadcast_profile(state: State<'_, AppState>, peer_id: String) -> Result<(), String> {
-    state.engine.lock().await.broadcast_profile(&peer_id).await
+    state.engine.broadcast_profile(&peer_id).await
 }
 
 #[tauri::command]
@@ -343,8 +356,7 @@ fn reveal_in_folder(path: String) -> Result<(), String> {
 async fn get_receive_dir(state: State<'_, AppState>) -> Result<String, String> {
     Ok(state
         .engine
-        .lock()
-        .await
+        
         .receive_dir()
         .await
         .to_string_lossy()
@@ -396,7 +408,7 @@ fn has_local_camera() -> bool {
     }
 }
 
-fn install_shutdown_handler(engine: Arc<Mutex<P2pEngine>>, shutting_down: Arc<AtomicBool>) {
+fn install_shutdown_handler(engine: P2pEngine, shutting_down: Arc<AtomicBool>) {
     #[cfg(unix)]
     {
         std::thread::spawn(move || {
@@ -404,12 +416,12 @@ fn install_shutdown_handler(engine: Arc<Mutex<P2pEngine>>, shutting_down: Arc<At
             use signal_hook::iterator::Signals;
 
             let mut signals = Signals::new([SIGTERM, SIGINT]).expect("signal handler");
-            for _ in signals.forever() {
-                if shutting_down.swap(true, Ordering::SeqCst) {
-                    std::process::exit(0);
+            // First SIGINT/SIGTERM shuts down gracefully; exit right away if already shutting down.
+            if signals.forever().next().is_some() {
+                if !shutting_down.swap(true, Ordering::SeqCst) {
+                    tracing::info!("shutdown signal received — releasing resources");
+                    tauri::async_runtime::block_on(graceful_shutdown(engine));
                 }
-                tracing::info!("shutdown signal received — releasing resources");
-                tauri::async_runtime::block_on(graceful_shutdown(engine.clone()));
                 std::process::exit(0);
             }
         });
@@ -430,7 +442,6 @@ fn main() {
     let identity = load_persistent_identity();
     tracing::info!(pk = %identity.public_key_hex(), "local identity ready");
     let (engine, mut event_rx) = P2pEngine::with_identity(identity);
-    let engine = Arc::new(Mutex::new(engine));
     let shutting_down = Arc::new(AtomicBool::new(false));
 
     install_shutdown_handler(engine.clone(), shutting_down.clone());
@@ -447,6 +458,7 @@ fn main() {
             wait_for_engine,
             list_serial_ports,
             connect_serial,
+            verify_serial,
             connect_and_verify,
             confirm_peer_trusted,
             load_trusted_pubkeys,
@@ -501,25 +513,21 @@ fn main() {
             }
 
             let recv_dir = app.path().app_data_dir().ok().map(|d| d.join("received"));
+            let start_handle = handle.clone();
             tauri::async_runtime::spawn(async move {
-                let eng = eng.clone();
                 if let Some(recv) = recv_dir {
                     let _ = std::fs::create_dir_all(&recv);
-                    eng.lock().await.set_receive_dir(recv).await;
+                    eng.set_receive_dir(recv).await;
                 }
-                let start_err = {
-                    let e = eng.lock().await;
-                    e.start(9473).await.err()
-                };
-                if let Some(err) = start_err {
+                if let Err(err) = eng.start(srltcp_core::DEFAULT_QUIC_PORT).await {
                     tracing::error!(error = %err, "failed to start engine");
+                    let _ = start_handle.emit(
+                        "srltcp-event",
+                        serde_json::json!({ "type": "error", "message": format!("Network engine failed to start: {err}") }),
+                    );
                     return;
                 }
-                let ready_err = {
-                    let e = eng.lock().await;
-                    e.wait_until_ready(30).await.err()
-                };
-                if let Some(err) = ready_err {
+                if let Err(err) = eng.wait_until_ready(30).await {
                     tracing::error!(error = %err, "iroh not ready after start");
                 }
             });
@@ -605,6 +613,20 @@ fn main() {
                                 "id": id,
                                 "filename": filename,
                                 "peer_id": peer_id,
+                            })
+                        }
+                        EngineEvent::TransferFailed {
+                            id,
+                            filename,
+                            peer_id,
+                            reason,
+                        } => {
+                            serde_json::json!({
+                                "type": "transfer_failed",
+                                "id": id,
+                                "filename": filename,
+                                "peer_id": peer_id,
+                                "reason": reason,
                             })
                         }
                         EngineEvent::CallSignaling {

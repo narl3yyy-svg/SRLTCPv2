@@ -41,12 +41,20 @@ pub struct ReliabilityLayer {
     /// Duplicate ACK counter for fast retransmit.
     dup_ack_count: u32,
     last_ack: u16,
+    /// A frame exceeded MAX_RETRIES — ordered delivery is broken, the link must reset.
+    failed: bool,
 }
 
 struct InflightEntry {
     frame: Frame,
     sent_at: Instant,
     retries: u32,
+}
+
+impl Default for ReliabilityLayer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ReliabilityLayer {
@@ -62,6 +70,7 @@ impl ReliabilityLayer {
             window_size: DEFAULT_WINDOW_SIZE,
             dup_ack_count: 0,
             last_ack: 0,
+            failed: false,
         }
     }
 
@@ -236,7 +245,8 @@ impl ReliabilityLayer {
         for (seq, entry) in self.inflight.iter_mut() {
             if now.duration_since(entry.sent_at) >= self.rto {
                 if entry.retries >= MAX_RETRIES {
-                    warn!(seq, "max retries exceeded, dropping frame");
+                    warn!(seq, "max retries exceeded — link failed");
+                    self.failed = true;
                     continue;
                 }
                 entry.sent_at = now;
@@ -251,6 +261,10 @@ impl ReliabilityLayer {
             .retain(|_, e| e.retries < MAX_RETRIES);
 
         retransmits
+    }
+
+    pub fn has_failed(&self) -> bool {
+        self.failed
     }
 
     pub fn pending_count(&self) -> usize {
@@ -268,9 +282,9 @@ pub struct ReceiveResult {
     pub delivered: Vec<Bytes>,
 }
 
-/// Sequence comparison with wrap-around (u16 ring).
+/// Strict `a < b` with wrap-around (u16 ring).
 fn seq_lt(a: u16, b: u16) -> bool {
-    ((b.wrapping_sub(a)) as u32) < 0x8000
+    a != b && b.wrapping_sub(a) < 0x8000
 }
 
 fn seq_gt(a: u16, b: u16) -> bool {
@@ -310,6 +324,27 @@ mod tests {
         assert_eq!(r0.delivered.len(), 2);
         assert_eq!(&r0.delivered[0][..], b"first");
         assert_eq!(&r0.delivered[1][..], b"second");
+    }
+
+    #[test]
+    fn ack_releases_only_frames_below_cumulative_ack() {
+        let mut tx = ReliabilityLayer::new();
+        let mut rx = ReliabilityLayer::new();
+        let f0 = tx.prepare_send(Bytes::from_static(b"a")).unwrap();
+        let _f1 = tx.prepare_send(Bytes::from_static(b"b")).unwrap();
+        // Peer got only frame 0 → cumulative ACK 1 must keep frame 1 in flight.
+        let res = rx.on_receive(&f0);
+        for ack in res.ack_responses {
+            tx.on_receive(&ack);
+        }
+        assert_eq!(tx.pending_count(), 1);
+    }
+
+    #[test]
+    fn seq_compare_wraps() {
+        assert!(seq_lt(65535, 0));
+        assert!(!seq_lt(0, 65535));
+        assert!(!seq_lt(5, 5));
     }
 
     #[test]

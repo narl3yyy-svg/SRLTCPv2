@@ -92,9 +92,25 @@ Sender immediately retransmits the missing frame without waiting for timeout.
 
 ### Retransmission
 
-- **Timeout (RTO):** 200ms default, configurable
-- **Max retries:** 12 (then frame dropped with warning)
+- **Timeout (RTO):** `max(rto_ms, time to send one full window at the line rate + 200 ms)` —
+  e.g. ~3 s at 115200 baud, ~35 s at 9600, so slow radios do not retransmit frames still in flight
+- **Max retries:** 12 — then the link is declared lost and the peer is disconnected
+  (ordered delivery cannot continue past a missing frame)
 - **NACK-triggered:** Immediate retransmit, RTO timer reset
+
+### Message Fragmentation (v0.4.0)
+
+Every application message (an encrypted wire frame of any size up to 32 MiB) is split into
+DATA-frame payloads of at most 4096 bytes:
+
+```
+fragment payload: [flag: u8][data: 0..4095 bytes]
+flag 0x01 = more fragments follow, 0x00 = last fragment
+```
+
+Because the reliability layer delivers frames in order, the receiver simply concatenates
+fragments until it sees `0x00`. (Before v0.4.0 the transport wrote raw, unframed bytes, so
+serial links could not exchange messages.)
 
 ## Bandwidth Analysis
 
@@ -134,23 +150,17 @@ Overhead: 13/4109 = 0.32% framing + 4/4109 = 0.10% CRC ≈ 0.42%
 
 ## File Transfer Over Serial
 
-Large files use the CHUNK flag with a 4-byte chunk ID prefix:
-
-```
-CHUNK payload: [chunk_id: u32 BE][data: 0..4092 bytes]
-```
-
-Selective ACK bitmap sent as JSON control message after each window:
+Files use the same encrypted file-transfer messages as iroh (offer → chunks → per-chunk
+ACK), carried as ordinary fragmented messages. Over serial the sender uses 4000-byte chunks,
+keeps at most 4 chunks in flight, and resends a chunk only if its ACK has not arrived within
+30 s. Each ACK names just the chunk received:
 
 ```json
-{
-  "transfer_id": "uuid",
-  "received_chunks": [0, 1, 2],
-  "missing_chunks": [3, 7]
-}
+{ "transfer_id": "uuid", "received_chunks": [17], "missing_chunks": [] }
 ```
 
-Only missing chunks are retransmitted — critical for serial where re-sending a 10MB file would take minutes.
+Receivers write chunks straight to a `.part` file and verify SHA-256 before moving it into
+the downloads folder, so a dropped link never leaves a corrupt file behind.
 
 ## Resynchronization After Errors
 
@@ -168,7 +178,7 @@ On LAN/WAN (iroh), the serial reliability layer is **bypassed** — iroh provide
 ```
 Application Message
        │
-       ├── Serial: Envelope → AES encrypt → ReliabilityLayer → COBS+CRC → UART
+       ├── Serial: Envelope → AES encrypt → fragments → ReliabilityLayer → COBS+CRC → UART
        └── iroh:   Envelope → AES encrypt → iroh bidirectional stream
 ```
 
@@ -177,7 +187,7 @@ Application Message
 | Parameter | Default | Range | Notes |
 |-----------|---------|-------|-------|
 | `baud_rate` | 115200 | 9600–921600 | Higher = faster but more error-prone on long cables |
-| `rto_ms` | 200 | 50–2000 | Lower on clean links, higher on noisy ones |
+| `rto_ms` | 400 | 50–2000 | Floor; the effective RTO also scales with baud rate |
 | `window_size` | 8 | 1–32 | Larger windows improve throughput on clean links |
 | `max_payload` | 4096 | — | Fixed; larger messages must be chunked |
 

@@ -4,13 +4,20 @@
 
 SRLTCP is privacy-first communication software: no accounts, no central servers, and end-to-end encryption with a human-verifiable SAS step before you trust a peer. A single Rust core powers the desktop (Tauri) and Android (Kotlin/Compose) clients.
 
-**Current release: [v0.3.2](https://github.com/narl3yyy-svg/SRLTCPv2/releases/tag/v0.3.2)**
+**Current version: v0.4.0** (latest published binaries: [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases))
 
 ---
 
 ## Security status (read this)
 
-v0.3.2 focuses on **production hardening**:
+v0.4.0 is a **reliability and security fix release** (see [CHANGELOG.md](CHANGELOG.md)):
+
+- Bad or forged ciphertext can no longer crash the app; messages from a peer are held until you confirm the SAS
+- Received file names are sanitized (no writing outside the downloads folder); transfers stream from/to disk
+- Serial cable / radio links actually work (framing, fragmentation, retransmit), with in-app SAS pairing
+- Reconnect and simultaneous dialing are reliable; `./run.sh` builds your checkout instead of downloading an old binary
+
+Earlier hardening (v0.3.x):
 
 - **Persistent long-term identity** on desktop and Android (contacts survive restarts)
 - Secret **zeroization**, QR-refresh identity binding, serial receive-buffer DoS caps
@@ -34,7 +41,7 @@ v0.3.2 focuses on **production hardening**:
 
 ---
 
-## Quick start (no compiler)
+## Quick start
 
 ### Desktop (Linux / macOS)
 
@@ -50,13 +57,14 @@ Update later:
 git pull && ./run.sh --pull
 ```
 
-`run.sh` downloads the matching **prebuilt binary** from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases). Use `--rebuild` only when developing from source.
+`run.sh` builds **this checkout** locally (incremental — a few seconds when nothing changed) and launches it, so you always run the code you have. If Rust is not installed it falls back to the matching prebuilt binary from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases).
 
 | Flag | Purpose |
 |------|---------|
 | `--pull` | `git pull --ff-only` from `origin/main` before launch |
-| `--rebuild` | Compile from source, then run |
-| `--no-prebuilt` | Use only local `dist/` binaries |
+| `--rebuild` | Always compile from source (installs Rust via rustup if missing) |
+| `--prebuilt` | Skip compiling; use/download the Release binary |
+| `--no-prebuilt` | Never download from GitHub |
 
 ### Windows
 
@@ -71,7 +79,7 @@ run.bat
 Install the APK from [Releases](https://github.com/narl3yyy-svg/SRLTCPv2/releases/latest) (default is **arm64-v8a**, modern phones):
 
 ```bash
-adb install dist/SRLTCPv2-0.3.2.apk
+adb install dist/SRLTCPv2-0.4.0.apk
 ```
 
 Or build locally (JDK 17, Android SDK/NDK):
@@ -117,7 +125,7 @@ Saved verified contacts persist with per-peer chat history. On startup the app a
 
 ```
 SRLTCPv2/
-├── run.sh / run.bat              # Launch desktop (prebuilt auto-download)
+├── run.sh / run.bat              # Build this checkout and launch the desktop app
 ├── scripts/                      # build-desktop, build-android, release helpers
 ├── core/                         # Rust: crypto, iroh, serial, UniFFI
 ├── desktop/                      # Tauri v2 UI
@@ -130,7 +138,7 @@ SRLTCPv2/
 
 ## Building from source
 
-See [docs/BUILD.md](docs/BUILD.md). Desktop needs Rust 1.85+ and platform libraries (e.g. webkit2gtk on Linux).
+See [docs/BUILD.md](docs/BUILD.md). Desktop needs Rust 1.91+ and platform libraries (e.g. webkit2gtk on Linux).
 
 ```bash
 ./run.sh --rebuild
@@ -147,9 +155,9 @@ Pushing a version tag triggers CI to publish desktop prebuilts and the Android A
 
 ```bash
 # Bump version in Cargo.toml + android versionName/versionCode, then:
-git tag -a v0.3.2 -m "SRLTCP v0.3.2"
+git tag -a v0.4.0 -m "SRLTCP v0.4.0"
 git push origin main
-git push origin v0.3.2
+git push origin v0.4.0
 ```
 
 ---
